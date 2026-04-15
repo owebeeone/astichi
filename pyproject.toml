@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astichi"
+version = "0.1.0"
+description = "AST composition helpers: markers, hygiene, lifting, and lowering for ahead-of-time Python codegen"
+requires-python = ">=3.12"
+authors = [{ name = "astichi contributors" }]
+keywords = ["ast", "codegen", "composition", "compiler"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.hatch.build]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/astichi", "tests", "dev-docs", "scratch"]
+
+# Run: python -m pytest
+# If another installed package registers a broken pytest plugin, use:
+#   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+testpaths = ["tests"]
