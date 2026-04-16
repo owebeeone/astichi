@@ -241,6 +241,12 @@ def _infer_shape(node: ast.Call, parent: ast.AST | None) -> MarkerShape:
         return POSITIONAL_VARIADIC
     if isinstance(parent, ast.keyword) and parent.arg is None and parent.value is node:
         return NAMED_VARIADIC
+    if isinstance(parent, ast.Dict):
+        for i, v in enumerate(parent.values):
+            if v is node:
+                if parent.keys[i] is None:
+                    return NAMED_VARIADIC
+                break
     if isinstance(parent, ast.Expr) and parent.value is node:
         return BLOCK
     return SCALAR_EXPR

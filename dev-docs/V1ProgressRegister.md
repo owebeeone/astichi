@@ -158,19 +158,19 @@ Steps:
   - Goal: fluent API and ordering validation
   - Output artifact: fluent additive API and deterministic ordering behavior
   - Verification: focused builder API tests
-- [ ] `4d` Status: pending
+- [x] `4d` Status: complete
   - Goal: scope object attachment and preservation
   - Output artifact: scope-identity model and preserved-name handling
   - Verification: focused scope-identity tests
-- [ ] `4e` Status: pending
+- [x] `4e` Status: complete
   - Goal: structural expansion scope freshness
   - Output artifact: fresh-scope behavior for injected or expanded units
   - Verification: focused scope-freshness tests
-- [ ] `4f` Status: pending
+- [x] `4f` Status: complete
   - Goal: scope-collision renaming
   - Output artifact: scope-aware collision renaming required by `IdentifierHygieneRequirements.md`
   - Verification: focused scope-collision tests
-- [ ] `4g` Status: pending
+- [x] `4g` Status: complete
   - Goal: dict-context `astichi_hole` shape inference
   - Output artifact: updated `_infer_shape` detecting dict `**` context as
     `NAMED_VARIADIC`; explicit test coverage for dict key position as

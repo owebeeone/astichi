@@ -33,6 +33,48 @@ items = (*astichi_hole(item_list),)
     assert item_hole.shape.is_positional_variadic() is True
 
 
+def test_dict_double_star_hole_infers_named_variadic() -> None:
+    compiled = astichi.compile(
+        """
+d = {**astichi_hole(entries), other_key: 1}
+"""
+    )
+
+    holes = [m for m in compiled.markers if m.source_name == "astichi_hole"]
+    assert len(holes) == 1
+    assert holes[0].name_id == "entries"
+    assert holes[0].shape is not None
+    assert holes[0].shape.is_named_variadic() is True
+
+
+def test_dict_key_position_hole_infers_scalar_expr() -> None:
+    compiled = astichi.compile(
+        """
+d = {astichi_hole(single_key): sentinel, other_key: 2}
+"""
+    )
+
+    holes = [m for m in compiled.markers if m.source_name == "astichi_hole"]
+    assert len(holes) == 1
+    assert holes[0].name_id == "single_key"
+    assert holes[0].shape is not None
+    assert holes[0].shape.is_scalar_expr() is True
+
+
+def test_dict_value_position_hole_infers_scalar_expr() -> None:
+    compiled = astichi.compile(
+        """
+d = {some_key: astichi_hole(val)}
+"""
+    )
+
+    holes = [m for m in compiled.markers if m.source_name == "astichi_hole"]
+    assert len(holes) == 1
+    assert holes[0].name_id == "val"
+    assert holes[0].shape is not None
+    assert holes[0].shape.is_scalar_expr() is True
+
+
 def test_decorator_marker_shape_is_not_inferred_as_call_site_shape() -> None:
     compiled = astichi.compile(
         """
