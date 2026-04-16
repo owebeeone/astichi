@@ -159,11 +159,24 @@ def assign_scope_identity(
 ) -> ScopeAnalysis:
     """Assign scope identity to lexical name occurrences."""
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
+    marker_preserved_names = frozenset(
+        marker.name_id
+        for marker in composable.markers
+        if marker.source_name == "astichi_keep" and marker.name_id is not None
+    )
+    marker_external_names = frozenset(
+        marker.name_id
+        for marker in composable.markers
+        if marker.source_name == "astichi_bind_external" and marker.name_id is not None
+    )
+    effective_fresh_scope_nodes = fresh_scope_nodes + _marker_fresh_scope_nodes(
+        composable.tree
+    )
     visitor = _ScopeIdentityVisitor(
         ignored_name_nodes=ignored_name_nodes,
-        preserved_names=preserved_names,
-        external_names=external_names,
-        fresh_scope_nodes=fresh_scope_nodes,
+        preserved_names=frozenset(set(preserved_names) | set(marker_preserved_names)),
+        external_names=frozenset(set(external_names) | set(marker_external_names)),
+        fresh_scope_nodes=effective_fresh_scope_nodes,
     )
     visitor.visit(composable.tree)
     return ScopeAnalysis(occurrences=tuple(visitor.occurrences))
@@ -187,7 +200,19 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
             by_scope.items(),
             key=lambda item: item[1][0].ordinal,
         )
-        keep_scope_serial = ordered_scopes[0][0]
+        preserved_scopes = [
+            scope_serial
+            for scope_serial, scope_occurrences in ordered_scopes
+            if any(
+                occurrence.role == "preserved"
+                for occurrence in scope_occurrences
+            )
+        ]
+        keep_scope_serial = (
+            preserved_scopes[0]
+            if preserved_scopes
+            else ordered_scopes[0][0]
+        )
         for scope_serial, scope_occurrences in ordered_scopes:
             emitted_name = raw_name
             if scope_serial != keep_scope_serial:
@@ -212,6 +237,12 @@ def _ignored_name_nodes(markers: tuple[object, ...]) -> set[int]:
                 if isinstance(first_arg, ast.Name):
                     ignored.add(id(first_arg))
     return ignored
+
+
+def _marker_fresh_scope_nodes(tree: ast.Module) -> tuple[ast.AST, ...]:
+    collector = _FreshScopeCollector()
+    collector.visit(tree)
+    return tuple(collector.nodes)
 
 
 def _collect_local_bindings(tree: ast.Module) -> set[str]:
@@ -253,6 +284,35 @@ class _BindingCollector(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
             self.bindings.add(alias.asname or alias.name)
+
+
+class _FreshScopeCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.nodes: list[ast.AST] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if _has_insert_decorator(node.decorator_list):
+            self.nodes.append(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if _has_insert_decorator(node.decorator_list):
+            self.nodes.append(node)
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if _has_insert_decorator(node.decorator_list):
+            self.nodes.append(node)
+        self.generic_visit(node)
+
+
+def _has_insert_decorator(decorators: list[ast.expr]) -> bool:
+    for decorator in decorators:
+        if not isinstance(decorator, ast.Call):
+            continue
+        if isinstance(decorator.func, ast.Name) and decorator.func.id == "astichi_insert":
+            return True
+    return False
 
 
 class _ScopeBindingCollector(ast.NodeVisitor):

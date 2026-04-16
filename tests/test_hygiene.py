@@ -139,22 +139,19 @@ value = print + outer_name
 def test_fresh_scope_boundaries_give_internal_names_new_scope_but_preserve_outer_names() -> None:
     compiled = astichi.compile(
         """
+astichi_bind_external(outer_name)
 value = 1
 
+@astichi_insert(target_slot)
 def inner():
-    temp = value + outer_name
+    temp = astichi_keep(value) + outer_name
     return temp
 """
     )
-    function_node = compiled.tree.body[1]
+    function_node = compiled.tree.body[2]
     assert isinstance(function_node, ast.FunctionDef)
 
-    analysis = assign_scope_identity(
-        compiled,
-        preserved_names=frozenset({"value"}),
-        external_names=frozenset({"outer_name"}),
-        fresh_scope_nodes=(function_node,),
-    )
+    analysis = assign_scope_identity(compiled)
 
     value_occurrences = [
         occurrence
@@ -172,18 +169,15 @@ def inner():
         if occurrence.raw_name == "temp"
     ]
 
-    assert [occurrence.scope_id.serial for occurrence in value_occurrences] == [1, 1]
-    assert [occurrence.role for occurrence in value_occurrences] == [
-        "internal",
-        "preserved",
-    ]
+    assert [occurrence.scope_id.serial for occurrence in value_occurrences] == [1]
+    assert [occurrence.role for occurrence in value_occurrences] == ["internal"]
     assert [occurrence.scope_id.serial for occurrence in outer_occurrences] == [1]
     assert [occurrence.role for occurrence in outer_occurrences] == ["external"]
     assert {occurrence.scope_id.serial for occurrence in temp_occurrences} == {2}
     assert {occurrence.role for occurrence in temp_occurrences} == {"internal"}
 
 
-def test_scope_collision_renaming_uses_scope_identity_not_raw_name_alone() -> None:
+def test_plain_python_scope_without_astichi_boundary_is_not_renamed() -> None:
     compiled = astichi.compile(
         """
 value = 1
@@ -195,31 +189,75 @@ def inner():
 result = value
 """
     )
-    function_node = compiled.tree.body[1]
-    assert isinstance(function_node, ast.FunctionDef)
 
     analysis = assign_scope_identity(
         compiled,
-        fresh_scope_nodes=(function_node,),
     )
     rename_scope_collisions(analysis)
+    assert ast.unparse(compiled.tree) == (
+        "value = 1\n\n"
+        "def inner():\n"
+        "    value = 2\n"
+        "    return value\n"
+        "result = value"
+    )
 
-    outer_assign = compiled.tree.body[0]
-    assert isinstance(outer_assign, ast.Assign)
-    assert isinstance(outer_assign.targets[0], ast.Name)
-    assert outer_assign.targets[0].id == "value"
 
-    inner_assign = function_node.body[0]
-    assert isinstance(inner_assign, ast.Assign)
-    assert isinstance(inner_assign.targets[0], ast.Name)
-    assert inner_assign.targets[0].id.startswith("value__astichi_scoped_")
+def test_scope_collision_renaming_keeps_preserved_spelling_and_renames_other_scopes() -> None:
+    compiled = astichi.compile(
+        """
+value = 1
 
-    inner_return = function_node.body[1]
-    assert isinstance(inner_return, ast.Return)
-    assert isinstance(inner_return.value, ast.Name)
-    assert inner_return.value.id == inner_assign.targets[0].id
+@astichi_insert(target_slot)
+def inner():
+    value = 2
+    return value
 
-    outer_result = compiled.tree.body[2]
-    assert isinstance(outer_result, ast.Assign)
-    assert isinstance(outer_result.value, ast.Name)
-    assert outer_result.value.id == "value"
+result = astichi_keep(value)
+"""
+    )
+    function_node = compiled.tree.body[1]
+    assert isinstance(function_node, ast.FunctionDef)
+
+    analysis = assign_scope_identity(compiled)
+    rename_scope_collisions(analysis)
+    rendered = ast.unparse(compiled.tree)
+    assert "value = 1" in rendered
+    assert "value__astichi_scoped_1 = 2" in rendered
+    assert "return value__astichi_scoped_1" in rendered
+    assert "result = astichi_keep(value)" in rendered
+
+
+def test_scope_collision_renaming_handles_three_scopes_on_same_raw_name() -> None:
+    compiled = astichi.compile(
+        """
+value = 1
+
+@astichi_insert(outer_slot)
+def outer():
+    value = 2
+
+    @astichi_insert(inner_slot)
+    def inner():
+        value = 3
+        return value
+
+    return value
+
+result = astichi_keep(value)
+"""
+    )
+    outer_function = compiled.tree.body[1]
+    assert isinstance(outer_function, ast.FunctionDef)
+    inner_function = outer_function.body[1]
+    assert isinstance(inner_function, ast.FunctionDef)
+
+    analysis = assign_scope_identity(compiled)
+    rename_scope_collisions(analysis)
+    rendered = ast.unparse(compiled.tree)
+    assert "value = 1" in rendered
+    assert "value__astichi_scoped_1 = 2" in rendered
+    assert "return value__astichi_scoped_1" in rendered
+    assert "value__astichi_scoped_2 = 3" in rendered
+    assert "return value__astichi_scoped_2" in rendered
+    assert "result = astichi_keep(value)" in rendered
