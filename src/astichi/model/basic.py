@@ -27,7 +27,9 @@ class BasicComposable(Composable):
     supply_ports: tuple[SupplyPort, ...] = field(default_factory=tuple)
 
     def emit(self, *, provenance: bool = True) -> str:
-        raise NotImplementedError("BasicComposable.emit is not implemented yet")
+        from astichi.emit import emit_source
+
+        return emit_source(self.tree)
 
     def materialize(self) -> "BasicComposable":
         from astichi.materialize import materialize_composable
