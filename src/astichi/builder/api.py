@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from astichi.builder.graph import BuilderGraph
 
-def build() -> object:
+
+def build() -> BuilderGraph:
     """Create a new Astichi builder."""
-    raise NotImplementedError("astichi.build is not implemented yet")
+    return BuilderGraph()
