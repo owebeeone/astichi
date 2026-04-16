@@ -113,3 +113,17 @@ def test_fluent_and_raw_builder_operations_produce_equivalent_graph_state() -> N
 
     assert fluent.graph.instances == raw.instances
     assert fluent.graph.edges == raw.edges
+
+
+def test_fluent_equal_order_keeps_insertion_order() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("astichi_hole(slot)\n"))
+    builder.add.B(astichi.compile("value = 1\n"))
+    builder.add.C(astichi.compile("value = 2\n"))
+
+    first = builder.A.slot.add.B(order=10)
+    second = builder.A.slot.add.C(order=10)
+
+    assert builder.graph.edges == (first, second)
+    assert builder.graph.edges[0].source_instance == "B"
+    assert builder.graph.edges[1].source_instance == "C"
