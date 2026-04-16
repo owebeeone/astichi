@@ -870,7 +870,7 @@ Exit rules:
 - multiple inserts from the same composable do not collide on internal bindings
 - focused tests pass
 
-## 7. Milestone 5: Build, materialize, and loop expansion
+## 7. Milestone 5: Build and materialize
 
 Owner layer:
 
@@ -880,15 +880,13 @@ Milestone goal:
 
 - merge a builder graph into a new `Composable`
 - keep unresolved boundaries open after build
-- unroll supported compile-time loops
 - materialize a valid runnable/emittable artifact
 
 Milestone 5 exit gate:
 
 - `build()` returns a merged `Composable`
 - unresolved boundaries remain open after build
-- non-unrolled loops remain loops
-- supported loops unroll correctly
+- `astichi_for` loops remain as-is in the composable (loop expansion deferred)
 - materialize applies final hygiene closure
 - materialize rejects incomplete/incompatible inputs
 - end-to-end additive composition works
@@ -917,38 +915,30 @@ Verification target:
 Exit rules:
 
 - `build()` returns a `Composable`
-- unresolved holes/loops/demands remain when not discharged
+- unresolved holes/demands remain when not discharged
+- `astichi_for` loops remain as-is in the output
 - focused tests pass
 
-### 5b. Loop expansion
+### 5b. Loop expansion — deferred
 
-Owner layer:
+Status: deferred from V1
 
-- `materialize`
+Loop expansion (`astichi_for` unrolling and loop-expanded addressing) is
+deferred from this phase. The complexity of nested loop dependencies, domain
+resolution cascading, and copy hygiene exceeds the V1 scope.
 
-Goal:
+`astichi_for` remains a recognized marker. Loops remain as-is in the
+composable after `build()`. Users achieve the equivalent of unrolled loops by
+manually wiring multiple inserts to the same hole with explicit ordering.
 
-- support unrolling of V1 compile-time loop domains and loop-expanded
-  addressing
+If loop expansion is needed later, it should be introduced as a separate
+milestone with its own design pass covering:
 
-Output artifact:
-
-- unroll logic for:
-  - literals
-  - constant `range(...)`
-  - compile-time externals
-- loop-expanded addressing support
-
-Verification target:
-
-- focused loop-unroll tests
-
-Exit rules:
-
-- supported domains unroll correctly
-- non-unrolled loops remain in the resulting `Composable`
-- loop-expanded addresses become available where applicable
-- focused tests pass
+- top-down cascade unrolling for nested loops
+- loop variable substitution and constant folding
+- per-copy scope hygiene (analogous to expression-insert scope boundaries)
+- loop-expanded addressing handles
+- compile-time external value injection for loop domains
 
 ### 5c. `materialize()` hard gate
 

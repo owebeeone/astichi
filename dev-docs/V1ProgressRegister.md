@@ -114,7 +114,7 @@ Steps:
 
 ### Milestone 4: Builder graph and additive wiring
 
-- Status: in progress
+- Status: complete
 - Owner layer: builder/addressing, lowering/asttools (4g, 4h), model (4i),
   hygiene (4d–4f, 4j)
 - Goal:
@@ -193,23 +193,22 @@ Steps:
   - Verification: focused expression-insert scope-boundary tests
   - Note: depends on 4d–4f scope machinery
 
-### Milestone 5: Build, materialize, and loop expansion
+### Milestone 5: Build and materialize
 
 - Status: pending
 - Owner layer: build/materialize
 - Goal:
   - merge a builder graph into a new `Composable`
   - keep unresolved boundaries open after build
-  - unroll supported compile-time loops
   - materialize a valid runnable/emittable artifact
 - Exit criteria:
   - `build()` returns a merged `Composable`
-  - non-unrolled loops remain loops
-  - supported loops unroll correctly
+  - `astichi_for` loops remain as-is (loop expansion deferred)
   - materialization applies final hygiene closure
   - materialization rejects incomplete/incompatible inputs
   - end-to-end additive composition works
-- Notes: none
+- Notes: loop expansion (5b) deferred from V1; users manually wire multiple
+  inserts for equivalent functionality
 
 Steps:
 
@@ -217,10 +216,12 @@ Steps:
   - Goal: `build()` merge
   - Output artifact: merged `Composable`
   - Verification: focused build tests
-- [ ] `5b` Status: pending
+- [x] `5b` Status: deferred
   - Goal: loop expansion
-  - Output artifact: unroll logic and loop-expanded addressing
-  - Verification: focused loop-unroll tests
+  - Output artifact: deferred — `astichi_for` loops remain as-is
+  - Verification: n/a
+  - Note: deferred from V1; manual unrolling via multiple inserts is the
+    workaround
 - [ ] `5c` Status: pending
   - Goal: `materialize()` hard gate
   - Output artifact: materialized runnable/emittable artifact
