@@ -172,11 +172,18 @@ def assign_scope_identity(
     effective_fresh_scope_nodes = fresh_scope_nodes + _marker_fresh_scope_nodes(
         composable.tree
     )
+    fresh_scope_local_bindings: dict[int, frozenset[str]] = {}
+    for node in effective_fresh_scope_nodes:
+        if isinstance(node, ast.Call) and _is_expression_insert(node):
+            fresh_scope_local_bindings[id(node)] = _collect_expression_bindings(
+                node.args[1]
+            )
     visitor = _ScopeIdentityVisitor(
         ignored_name_nodes=ignored_name_nodes,
         preserved_names=frozenset(set(preserved_names) | set(marker_preserved_names)),
         external_names=frozenset(set(external_names) | set(marker_external_names)),
         fresh_scope_nodes=effective_fresh_scope_nodes,
+        fresh_scope_local_bindings=fresh_scope_local_bindings,
     )
     visitor.visit(composable.tree)
     return ScopeAnalysis(occurrences=tuple(visitor.occurrences))
@@ -305,6 +312,11 @@ class _FreshScopeCollector(ast.NodeVisitor):
             self.nodes.append(node)
         self.generic_visit(node)
 
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_expression_insert(node):
+            self.nodes.append(node)
+        self.generic_visit(node)
+
 
 def _has_insert_decorator(decorators: list[ast.expr]) -> bool:
     for decorator in decorators:
@@ -313,6 +325,23 @@ def _has_insert_decorator(decorators: list[ast.expr]) -> bool:
         if isinstance(decorator.func, ast.Name) and decorator.func.id == "astichi_insert":
             return True
     return False
+
+
+def _is_expression_insert(node: ast.Call) -> bool:
+    return (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "astichi_insert"
+        and len(node.args) == 2
+    )
+
+
+def _collect_expression_bindings(node: ast.AST) -> frozenset[str]:
+    """Collect Store-context names within an expression subtree."""
+    bindings: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            bindings.add(child.id)
+    return frozenset(bindings)
 
 
 class _ScopeBindingCollector(ast.NodeVisitor):
@@ -401,13 +430,16 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         preserved_names: frozenset[str],
         external_names: frozenset[str],
         fresh_scope_nodes: tuple[ast.AST, ...],
+        fresh_scope_local_bindings: dict[int, frozenset[str]] | None = None,
     ) -> None:
         self.ignored_name_nodes = ignored_name_nodes
         self.preserved_names = preserved_names
         self.external_names = external_names
         self.fresh_scope_node_ids = {id(node) for node in fresh_scope_nodes}
+        self.fresh_scope_local_bindings = fresh_scope_local_bindings or {}
         self.scope_counter = count(2)
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
+        self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
         self.python_bindings = _ScopeBindingCollector().bindings_by_scope
         self.python_scope_bindings: dict[int, frozenset[str]] = {}
         self.python_scope_stack: list[frozenset[str]] = []
@@ -479,6 +511,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         finally:
             if pushed_fresh:
                 self.scope_stack.pop()
+                self.astichi_scope_bindings_stack.pop()
             self.python_scope_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
@@ -491,11 +524,14 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         finally:
             if pushed_fresh:
                 self.scope_stack.pop()
+                self.astichi_scope_bindings_stack.pop()
 
     def _push_fresh_scope_if_needed(self, node: ast.AST) -> bool:
         if id(node) not in self.fresh_scope_node_ids:
             return False
         self.scope_stack.append(ScopeId(next(self.scope_counter)))
+        local = self.fresh_scope_local_bindings.get(id(node))
+        self.astichi_scope_bindings_stack.append(local)
         return True
 
     def _current_scope(self) -> ScopeId:
@@ -511,8 +547,18 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             return frozenset()
         return self.python_scope_stack[-1]
 
+    def _current_astichi_bindings(self) -> frozenset[str] | None:
+        for local in reversed(self.astichi_scope_bindings_stack):
+            if local is not None:
+                return local
+        return None
+
     def _load_role(self, raw_name: str) -> LexicalRole:
-        if raw_name in self._current_python_bindings():
+        astichi_local = self._current_astichi_bindings()
+        if astichi_local is not None:
+            if raw_name in astichi_local:
+                return "internal"
+        elif raw_name in self._current_python_bindings():
             return "internal"
         if raw_name in self.preserved_names:
             return "preserved"

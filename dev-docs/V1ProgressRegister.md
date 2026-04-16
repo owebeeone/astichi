@@ -8,10 +8,10 @@ action, and exit state.
 ## 1. Current status
 
 - Overall status: in progress
-- Active milestone: 4
-- Active sub-phase: 4d
-- Active implementation layer: hygiene
-- Current goal: complete scope-collision hygiene before build/materialize
+- Active milestone: 5
+- Active sub-phase: 5a
+- Active implementation layer: materialize
+- Current goal: merge a builder graph into a new Composable
 - Blockers: none recorded
 
 ## 2. Milestone register
@@ -176,17 +176,17 @@ Steps:
     `NAMED_VARIADIC`; explicit test coverage for dict key position as
     `SCALAR_EXPR`
   - Verification: focused dict-context shape tests
-- [ ] `4h` Status: pending
+- [x] `4h` Status: complete
   - Goal: expression-form `astichi_insert` marker recognition
   - Output artifact: dual-context `astichi_insert` recognition (call: 2 args,
     decorator: 1 arg); expression-insert shape always `SCALAR_EXPR`
   - Verification: focused expression-insert marker tests
-- [ ] `4i` Status: pending
+- [x] `4i` Status: complete
   - Goal: expression-insert supply port extraction
   - Output artifact: supply ports from expression inserts; updated placement
     compatibility (`"expr"` supply matches any `"expr"` demand sub-shape)
   - Verification: focused supply-port and compatibility tests
-- [ ] `4j` Status: pending
+- [x] `4j` Status: complete
   - Goal: expression-insert scope boundaries
   - Output artifact: fresh H5 scope object per expression insert; internal
     bindings scoped to insert (H6); free names retain outer scope (H7)

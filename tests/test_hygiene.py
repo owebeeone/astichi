@@ -228,6 +228,89 @@ result = astichi_keep(value)
     assert "result = astichi_keep(value)" in rendered
 
 
+def test_expression_insert_receives_fresh_scope_for_internal_bindings() -> None:
+    compiled = astichi.compile(
+        """
+value = 1
+result = astichi_insert(target, (x := 2, x + value))
+"""
+    )
+
+    analysis = assign_scope_identity(compiled)
+
+    x_occurrences = [
+        o for o in analysis.occurrences if o.raw_name == "x"
+    ]
+    value_occurrences = [
+        o for o in analysis.occurrences if o.raw_name == "value"
+    ]
+
+    assert len(x_occurrences) == 2
+    assert {o.scope_id.serial for o in x_occurrences} == {2}
+    assert {o.role for o in x_occurrences} == {"internal"}
+
+    store_values = [o for o in value_occurrences if o.binding_kind == "binding"]
+    load_values = [o for o in value_occurrences if o.binding_kind == "reference"]
+    assert len(store_values) == 1
+    assert store_values[0].scope_id.serial == 1
+    assert len(load_values) == 1
+    assert load_values[0].scope_id.serial != 2
+
+
+def test_expression_insert_free_names_retain_outer_scope() -> None:
+    compiled = astichi.compile(
+        """
+outer = 1
+result = astichi_insert(target, outer + 1)
+"""
+    )
+
+    analysis = assign_scope_identity(compiled)
+
+    outer_occurrences = [
+        o for o in analysis.occurrences if o.raw_name == "outer"
+    ]
+    assert len(outer_occurrences) == 2
+    store_outer = [o for o in outer_occurrences if o.binding_kind == "binding"]
+    load_outer = [o for o in outer_occurrences if o.binding_kind == "reference"]
+    assert store_outer[0].scope_id.serial == 1
+    assert load_outer[0].scope_id.serial != 2
+
+
+def test_multiple_expression_inserts_get_distinct_scopes() -> None:
+    compiled = astichi.compile(
+        """
+a = astichi_insert(slot_a, (x := 1, x))
+b = astichi_insert(slot_b, (x := 2, x))
+"""
+    )
+
+    analysis = assign_scope_identity(compiled)
+
+    x_occurrences = [
+        o for o in analysis.occurrences if o.raw_name == "x"
+    ]
+    scopes = {o.scope_id.serial for o in x_occurrences}
+    assert len(scopes) == 2
+
+
+def test_expression_insert_collision_renaming() -> None:
+    compiled = astichi.compile(
+        """
+value = 1
+result = astichi_insert(target, (value := 2, value))
+outcome = astichi_keep(value)
+"""
+    )
+
+    analysis = assign_scope_identity(compiled)
+    rename_scope_collisions(analysis)
+    rendered = ast.unparse(compiled.tree)
+    assert "value = 1" in rendered
+    assert "outcome = astichi_keep(value)" in rendered
+    assert "value__astichi_scoped_" in rendered
+
+
 def test_scope_collision_renaming_handles_three_scopes_on_same_raw_name() -> None:
     compiled = astichi.compile(
         """
