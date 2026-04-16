@@ -27,9 +27,8 @@ sources = ["src"]
 [tool.hatch.build.targets.sdist]
 include = ["src/astichi", "tests", "dev-docs", "scratch"]
 
-# Run: python -m pytest
-# If another installed package registers a broken pytest plugin, use:
-#   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
+# Run: uv run --with pytest pytest -q
+# Focused: uv run --with pytest pytest <test-path> -q
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
 testpaths = ["tests"]

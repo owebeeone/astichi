@@ -1,10 +1,10 @@
-# Astichi API design complete
+# Astichi API design V1
 
 This document is the normative API/design statement for Astichi phase 1.
 
 For rationale, alternatives, and explanatory narrative, see:
 
-- `astichi/dev-docs/AstichiApiDesignProposal.md`
+- `astichi/dev-docs/historical/AstichiApiDesignProposal.md`
 - `astichi/dev-docs/IdentifierHygieneRequirements.md`
 
 ## 1. Scope
@@ -324,7 +324,7 @@ Ordering rules:
 ## 6. Name classification and hygiene
 
 Astichi must implement lexical hygiene according to
-`IdentifierHygieneRequirements.md`.
+`astichi/dev-docs/IdentifierHygieneRequirements.md`.
 
 Phase-1 name classes:
 
