@@ -134,6 +134,115 @@ builder.instance(composable1, id=A).instance(composable2, id=B).instance(composa
 - **Edge direction semantics** — dataflow only vs dominance / “runs before” vs both (must align with §2.5).
 - **Error model** — builder invalidation vs errors at `build()` vs errors only at `materialize()`.
 
+### 3.5 Builder ergonomics: fluent and handle-oriented
+
+The builder API should support both fluent chaining and broken-out handles with
+the same semantics.
+
+Fluent style should work for compact cases:
+
+```python
+result = (
+    astichi_build()
+    .add.A(loop_example)
+    .add.B(print_example)
+    .A.init.add.B(order=10)
+    .A.first[0].add.B(order=10)
+    .A.third.add.B(order=10)
+    .build()
+)
+```
+
+Broken-out handles should work for larger cases:
+
+```python
+builder = astichi_build()
+builder.add.A(loop_example)
+builder.add.B(print_example)
+
+a = builder.A
+
+a.init.add.B(order=10)
+a.first[0].add.B(order=10)
+a.third.add.B(order=10)
+
+result = builder.build()
+```
+
+The intended handle layers are:
+
+- builder handle
+- instance handle, e.g. `builder.A`
+- target handle, e.g. `builder.A.first[0]`
+
+These should be real handle objects, not merely transient chain nodes. That is
+what allows chaining and decomposition to coexist without diverging semantics.
+
+This fluent surface is intentionally the high-level language. Underneath it
+there should be a plain explicit raw API with the same semantics and much
+higher boilerplate.
+
+That raw API is the assembler-like layer:
+
+- suitable for implementation internals
+- suitable for testing/debugging/tooling
+- expected to be more verbose and less pleasant
+
+The fluent API should be understood as a constrained DSL over that lower-level
+builder graph API, not as the semantic core itself.
+
+### 3.6 Proposal-level guardrails
+
+The following points should be recorded now so they are not omitted later,
+even though the final normative semantics belong in the design document rather
+than this proposal.
+
+- A composed result is itself a `Composable`.
+- If a loop introduced by `astichi_for(...)` is not unrolled during a build, it
+  should remain as a loop in the resulting `Composable`.
+- `build()` should not force eager unrolling merely because a loop exists.
+- Unresolved holes, loops, and related marker-lowered structure should survive
+  into the resulting `Composable` when they are not discharged by the current
+  build.
+- Marker-bearing Python should lower into the internal port / instance /
+  binding model through an explicit pipeline:
+  parse Python AST -> recognize markers -> classify names -> lower into the
+  builder/composable model.
+- Source fidelity matters. Provenance should be preserved as part of the
+  internal composable/build model, not treated as an afterthought.
+- Source emission should be able to include or omit provenance metadata with a
+  simple boolean policy, e.g. `emit(provenance=True)` vs
+  `emit(provenance=False)`.
+- The current default direction is `provenance=True`.
+- If provenance is emitted, the source should end with a simple reserved
+  one-parameter call such as `astichi_provenance_payload("...")`.
+- That payload is for AST/provenance restoration only. Holes, binds, inserts,
+  and related semantics must be rediscovered from reparsing the source itself.
+- If provenance is emitted, the payload should be compressed. The exact
+  serialization/compression details are implementation concerns, not public API
+  surface.
+- The source file is authoritative. If the emitted source has been edited and
+  its AST shape no longer matches the payload, provenance restoration should
+  fail with an error instructing the user to remove the
+  `astichi_provenance_payload(...)` call.
+- In that edited-source case, the file's current source locations are
+  authoritative; prior provenance is not recovered.
+- `astichi.compile(...)` should also accept source-origin location parameters
+  alongside the source string so compilation can preserve the true originating
+  file and line context. The important directional inputs are:
+  - source string
+  - file name
+  - starting line number
+  - starting column/offset
+- This is needed for cases where the snippet came from another source container
+  such as a `.yidl` file and diagnostics should point back to that file rather
+  than to an artificial intermediate string location.
+- First-level targeting and loop-instance indexing are the current solid
+  addressing story. Deeper descendant traversal is still exploratory and should
+  not be treated as locked by this proposal.
+- Phase-1 loop-domain support should stay narrow: literals, constant
+  `range(...)`, and compile-time externals are the current intended baseline.
+
 ---
 
 ## 4. Emission modes: full source vs markers; round-trip
@@ -148,5 +257,227 @@ builder.instance(composable1, id=A).instance(composable2, id=B).instance(composa
 **Open `build()` / boundary Composables:** marker emission is especially useful when **mandatory** holes remain: markers label **unsatisfied** demands so downstream tools can diff or complete wiring before `materialize()`.
 
 ---
+
+## 5. Marker surface (proposed)
+
+The current proposed source-facing marker set is:
+
+```python
+astichi_hole(name)
+astichi_bind_once(name, expr)
+astichi_bind_shared(name, expr)
+astichi_bind_external(name)
+astichi_keep(name)
+astichi_export(name)
+astichi_for(domain)
+@astichi_insert(hole_name, order=10)
+```
+
+These forms are intentionally Python-shaped. They are the marker vocabulary
+that snippet authors write; the internal `Composable` / port model remains the
+lowered representation.
+
+The argument to `astichi_hole(name)` names the hole. It is not a hole-kind
+enum. In source syntax it is an identifier-like reference, not a string
+literal. Earlier placeholder examples such as `block` and `expr` should be
+read only as provisional names, not as normative shape tags.
+
+Holes are constrained by default.
+
+- plain `astichi_hole(name)` in expression position means a scalar
+  expression hole
+- `*astichi_hole(name)` means variadic positional expansion
+- `**astichi_hole(name)` means variadic named expansion
+
+Astichi should infer the required hole shape from the containing Python AST
+context rather than from a larger surface marker taxonomy.
+
+That means:
+
+- one hole marker is enough
+- `*` and `**` are the explicit widening syntax
+- unsupported starred/double-starred contexts must be rejected early
+- any desired marker form must still parse as valid Python for the target
+  Python versions
+
+`astichi_bind_external("name")` is the marker for compile-time external
+inputs. Those externals may include:
+
+- constants
+- plain lists or tuples
+- field/domain lists prepared by the caller
+- other compile-time values that drive insertion, selection, or unrolling
+
+`astichi_keep(name)` is the marker for a preserved lexical name. It means:
+
+- keep this identifier spelling unchanged
+- do not hygienically rename it
+- do not let another composable capture or collide with it
+
+This is a name-preservation rule, not a Python scope rule. It does not imply
+module-global lookup by itself.
+
+### 5.1 Canonical example
+
+```python
+@astichi_insert(class_body, order=10)
+def build_total_property():
+    astichi_bind_external(field_values)
+    astichi_bind_shared(sum, 0)
+
+    for x in astichi_for(field_values):
+        sum += x
+
+    astichi_export(sum)
+
+
+class Subject:
+    astichi_hole(body)
+
+    @property
+    def total(self):
+        value = astichi_hole(value_slot)
+        return value
+```
+
+```python
+for s in astichi_keep(sys).argv:
+    astichi_hole(output_function)(s)
+```
+
+```python
+value = astichi_hole(value_slot)
+result = func(*astichi_hole(arg_list), **astichi_hole(kwarg_list))
+items = (*astichi_hole(item_list),)
+```
+
+This example fixes the intended surface shape:
+
+- `astichi_hole(body)` is a named hole used here in block position
+- `@astichi_insert(..., order=...)` targets that site deterministically
+- `astichi_bind_external(field_values)` declares a compile-time external
+  input, such as a constant-domain list supplied by the caller
+- `astichi_bind_shared(sum, 0)` declares an accumulator that survives loop
+  expansion
+- `for x in astichi_for(field_values):` is the canonical Python-shaped
+  iteration marker
+- `astichi_keep(sys)` marks a preserved lexical root name that must not be
+  captured or renamed by composition
+- `astichi_export(sum)` makes the final value available to the enclosing
+  composition step
+- `astichi_hole(value_slot)` is a named hole used here in scalar expression
+  position
+- plain `astichi_hole(...)` is scalar by default
+- `*astichi_hole(...)` widens that hole to positional variadic expansion
+- `**astichi_hole(...)` widens that hole to named variadic expansion
+
+### 5.2 Hole shape and real Python AST
+
+Astichi should only rely on source forms that parse as real Python AST.
+
+The intended phase-1 mapping is:
+
+- `x = astichi_hole(value)`
+  means one expression node/value in ordinary expression position
+- `func(*astichi_hole(args))`
+  means a positional variadic hole in a starred argument position
+- `func(**astichi_hole(kwargs))`
+  means a named variadic hole in a double-star keyword position
+- `items = (*astichi_hole(item_list),)`
+  means a starred-sequence hole in a tuple-display position
+
+Astichi should parse ordinary Python AST first, then recognize marker patterns
+in context. The surrounding AST node type determines what kind of insertion
+contract the hole has.
+
+This also means unsupported contexts are not “almost supported.” If the syntax
+does not parse as valid Python, or if the surrounding AST shape is not one of
+the explicitly supported insertion contexts, Astichi should reject it.
+
+Empirical note from a real `ast.parse(...)` probe:
+
+- `*astichi_hole(bases)` in a class header lands in `ClassDef.bases` as a
+  `Starred(...)` expression
+- `metaclass=astichi_hole(meta)` lands in `ClassDef.keywords` as
+  `keyword(arg="metaclass", value=...)`
+- `**astichi_hole(class_kwargs)` lands in `ClassDef.keywords` as
+  `keyword(arg=None, value=...)`
+- `func(*astichi_hole(args), **astichi_hole(kwargs))` uses the same call
+  shapes: `Starred(...)` in `Call.args` and `keyword(arg=None, value=...)` in
+  `Call.keywords`
+- `astichi_keep(sys).argv` parses as an `Attribute(...)` rooted at a
+  `Call(astichi_keep, [Name("sys")])`, so keep-marker recognition should run
+  before ordinary free-name classification inside that subtree
+
+### 5.3 Name classification
+
+Astichi needs an explicit name-classification pass.
+
+The intended classes are:
+
+- local/generated bindings
+- explicitly preserved names via `astichi_keep(name)`
+- compile-time externals declared via `astichi_bind_external("name")`
+- unresolved free names
+
+Composition/materialization context may also provide a set of preserved names.
+Those are ambient names that should be treated as auto-kept roots for that
+composition run.
+
+Conceptually:
+
+```python
+ComposeContext(
+    preserved_names={"print", "len", "range", "sys"},
+)
+```
+
+The rule is lexical:
+
+- if a free identifier is explicitly kept, preserve it
+- if a free identifier is in the context-provided preserved-name set, preserve
+  it
+- otherwise treat it according to strict/permissive mode
+
+If a local binding collides with a preserved name:
+
+- strict mode: error
+- permissive mode: hygiene-rename the local binding and its local references
+
+This is what prevents a composed fragment from accidentally stealing the
+spelling of a preserved root such as `sys`.
+
+### 5.4 Strict and permissive mode
+
+Strict mode:
+
+- unresolved free identifiers are an error unless explicitly kept, explicitly
+  declared external, or preserved by the composition context
+
+Permissive mode:
+
+- unresolved free identifiers may be promoted to implied named demands
+
+Conceptually:
+
+```python
+for x in bar:
+    print(x)
+```
+
+may lower as if `bar` were an implied demand, while `print` remains preserved
+through the context-preserved-name set.
+
+### 5.5 Immediate open question
+
+One unresolved question is exactly how `astichi_bind_external("name")` binds
+to supplied compile-time values.
+
+In particular, the design still needs to pin down how plain compile-time
+values such as lists are supplied so they can drive:
+
+- const-unroll
+- const insertion
+- strategy evaluation during code-generation research
 
 _(Further sections: operator taxonomy, scope graph API vs Composable surface, marker grammar spec, emission vs compile adapters—TBD.)_
