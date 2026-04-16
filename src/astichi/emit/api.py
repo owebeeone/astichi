@@ -45,3 +45,30 @@ def extract_provenance(source: str) -> ast.Module | None:
             payload = line[len(PROVENANCE_PREFIX) :].strip()
             return decode_provenance(payload)
     return None
+
+
+class RoundTripError(Exception):
+    """Raised when emitted source does not match its provenance AST."""
+
+
+def verify_round_trip(source: str) -> None:
+    """Verify emitted source re-parses to match its embedded provenance."""
+    provenance_tree = extract_provenance(source)
+    if provenance_tree is None:
+        raise RoundTripError("source has no embedded provenance comment")
+
+    source_lines = [
+        line
+        for line in source.splitlines()
+        if not line.startswith(PROVENANCE_PREFIX)
+    ]
+    clean_source = "\n".join(source_lines) + "\n"
+    reparsed = ast.parse(clean_source)
+
+    expected = ast.dump(provenance_tree)
+    actual = ast.dump(reparsed)
+    if expected != actual:
+        raise RoundTripError(
+            f"round-trip mismatch:\n  expected: {expected[:200]}\n"
+            f"  actual:   {actual[:200]}"
+        )

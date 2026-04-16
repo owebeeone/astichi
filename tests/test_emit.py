@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 import astichi
-from astichi.emit import decode_provenance, encode_provenance, extract_provenance
+from astichi.emit import (
+    RoundTripError,
+    decode_provenance,
+    encode_provenance,
+    extract_provenance,
+    verify_round_trip,
+)
 
 
 def test_emit_produces_valid_python() -> None:
@@ -82,3 +90,35 @@ def test_extract_provenance_from_emitted_source() -> None:
 def test_extract_provenance_returns_none_without_comment() -> None:
     source = "x = 1\n"
     assert extract_provenance(source) is None
+
+
+def test_verify_round_trip_passes_for_valid_source() -> None:
+    compiled = astichi.compile("x = 1\ny = x + 2\n")
+    source = compiled.emit(provenance=True)
+    verify_round_trip(source)
+
+
+def test_verify_round_trip_rejects_missing_provenance() -> None:
+    with pytest.raises(RoundTripError, match="no embedded provenance"):
+        verify_round_trip("x = 1\n")
+
+
+def test_verify_round_trip_rejects_tampered_source() -> None:
+    compiled = astichi.compile("x = 1\n")
+    source = compiled.emit(provenance=True)
+    tampered = source.replace("x = 1", "x = 999")
+    with pytest.raises(RoundTripError, match="round-trip mismatch"):
+        verify_round_trip(tampered)
+
+
+def test_verify_round_trip_after_full_pipeline() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Impl(astichi.compile("result = 42\n"))
+    builder.Root.body.add.Impl()
+
+    built = builder.build()
+    materialized = built.materialize()
+    source = materialized.emit(provenance=True)
+
+    verify_round_trip(source)
