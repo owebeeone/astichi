@@ -62,7 +62,31 @@ The builder owns:
 The builder does not own the semantic source of markers; those come from the
 compiled snippet source.
 
-### 2.3 Handles
+### 2.3 Demands and supplies
+
+Astichi composition is defined in terms of:
+
+- demand ports
+- supply ports
+
+Demand ports are places in a `Composable` that can accept composition input.
+Examples:
+
+- holes
+- implied demands
+- unresolved imports into the composition boundary
+
+Supply ports are values/bindings a `Composable` can offer to other
+`Composable`s. Examples:
+
+- explicit exports
+- definitional outputs lowered from snippet structure
+- other implementation-defined supply points created during lowering
+
+`astichi_export(...)` is the explicit source-surface mechanism for creating a
+named supply port. It is not the only possible internal supply shape.
+
+### 2.4 Handles
 
 The builder API has three handle layers:
 
@@ -82,6 +106,32 @@ t = a.second[0, 1]
 
 These are real handles, not transient chain artifacts.
 
+### 2.5 Port compatibility
+
+Every composition edge must satisfy port compatibility checks before build or
+materialization succeeds.
+
+Phase-1 compatibility dimensions are:
+
+- syntactic placement
+- constness/mutability
+- variadic vs scalar shape
+
+Syntactic placement includes at least:
+
+- expression position vs block position
+- load/RHS-safe position vs store/LHS-required position
+- positional variadic expansion vs named variadic expansion
+
+Constness/mutability checks exist to prevent structurally valid but semantically
+unsafe splices, including:
+
+- inserting a read-only expression where a mutation target is required
+- inserting a named expansion where a positional expansion is required
+- inserting scalar content where a variadic site is required
+
+Unsupported or incompatible pairings are hard errors.
+
 ## 3. High-level and raw APIs
 
 Astichi exposes two equivalent API layers:
@@ -99,6 +149,24 @@ The raw API:
 - is suitable for implementation internals, testing, and tooling
 
 Every fluent operation must have an equivalent raw API operation.
+
+## 3.1 Edge semantics
+
+Phase-1 builder edges are additive composition edges.
+
+An additive edge means:
+
+- the source `Composable` is inserted at the addressed demand site
+- execution order is determined by the enclosing target order rules
+- lower `order` runs/appears before higher `order` in the same variadic target
+
+Phase 1 does not attempt a richer generalized effect/dominance algebra.
+Instead:
+
+- block/variadic insertion order is explicit
+- incompatible placements are rejected by port compatibility checks
+- materialization must emit a deterministic runs-before order for accepted
+  additive edges
 
 ## 4. Compile API
 
