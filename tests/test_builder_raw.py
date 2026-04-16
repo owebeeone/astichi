@@ -7,7 +7,7 @@ from astichi.builder import AdditiveEdge, BuilderGraph, InstanceRecord, TargetRe
 
 
 def test_build_returns_raw_builder_graph() -> None:
-    builder = astichi.build()
+    builder = BuilderGraph()
 
     assert isinstance(builder, BuilderGraph)
     assert builder.instances == ()
@@ -15,7 +15,7 @@ def test_build_returns_raw_builder_graph() -> None:
 
 
 def test_raw_builder_graph_registers_named_instances() -> None:
-    builder = astichi.build()
+    builder = BuilderGraph()
     left = astichi.compile("value = 1\n")
     right = astichi.compile("astichi_hole(slot)\n")
 
@@ -28,7 +28,7 @@ def test_raw_builder_graph_registers_named_instances() -> None:
 
 
 def test_raw_builder_graph_rejects_invalid_or_duplicate_instance_names() -> None:
-    builder = astichi.build()
+    builder = BuilderGraph()
     comp = astichi.compile("value = 1\n")
 
     with pytest.raises(ValueError, match="valid identifier"):
@@ -40,7 +40,7 @@ def test_raw_builder_graph_rejects_invalid_or_duplicate_instance_names() -> None
 
 
 def test_raw_builder_graph_registers_additive_edges() -> None:
-    builder = astichi.build()
+    builder = BuilderGraph()
     root = astichi.compile("astichi_hole(slot)\n")
     child = astichi.compile("value = 1\n")
     builder.add_instance("A", root)
@@ -63,7 +63,7 @@ def test_raw_builder_graph_registers_additive_edges() -> None:
 
 
 def test_raw_builder_graph_rejects_edges_with_unknown_instances() -> None:
-    builder = astichi.build()
+    builder = BuilderGraph()
     builder.add_instance("A", astichi.compile("astichi_hole(slot)\n"))
 
     with pytest.raises(ValueError, match="unknown source instance: B"):

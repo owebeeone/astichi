@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from astichi.builder.graph import BuilderGraph
+from astichi.builder.handles import BuilderHandle
 
 
-def build() -> BuilderGraph:
+def build() -> BuilderHandle:
     """Create a new Astichi builder."""
-    return BuilderGraph()
+    return BuilderHandle()
