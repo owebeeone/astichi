@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from astichi.builder.graph import AdditiveEdge, BuilderGraph, TargetRef
 from astichi.model import Composable
+from astichi.model.basic import BasicComposable
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,12 @@ class BuilderHandle:
     @property
     def add(self) -> AddProxy:
         return AddProxy(graph=self.graph)
+
+    def build(self) -> BasicComposable:
+        """Merge the builder graph into a single composable."""
+        from astichi.materialize import build_merge
+
+        return build_merge(self.graph)
 
     def __getattr__(self, name: str) -> InstanceHandle:
         if name.startswith("_"):
