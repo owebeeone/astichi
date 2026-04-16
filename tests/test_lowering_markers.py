@@ -80,3 +80,42 @@ def test_marker_validation_rejects_non_identifier_name_args() -> None:
 astichi_hole("body")
 """
         )
+
+
+def test_compile_recognizes_definitional_name_sites() -> None:
+    compiled = astichi.compile(
+        """
+class name_param__astichi__:
+    pass
+
+
+def a_func_name__astichi__():
+    return 1
+"""
+    )
+
+    definitional = [
+        marker for marker in compiled.markers if marker.source_name == "astichi_definitional_name"
+    ]
+
+    assert [marker.context for marker in definitional] == [
+        "definitional",
+        "definitional",
+    ]
+    assert [marker.name_id for marker in definitional] == [
+        "name_param",
+        "a_func_name",
+    ]
+
+
+def test_invalid_definitional_name_site_fails_clearly() -> None:
+    with pytest.raises(
+        ValueError,
+        match="identifier prefix before __astichi__",
+    ):
+        astichi.compile(
+            """
+class __astichi__:
+    pass
+"""
+        )

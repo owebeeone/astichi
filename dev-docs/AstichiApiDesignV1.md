@@ -205,6 +205,27 @@ astichi_for(domain)
 @astichi_insert(target, order=10)
 ```
 
+Phase-1 also supports identifier-only definitional binding sites using the
+reserved `__astichi__` name form in grammar-required identifier positions.
+
+Initial supported positions:
+
+- class names
+- function names
+
+Examples:
+
+```python
+class name_param__astichi__:
+    pass
+
+
+def a_func_name__astichi__():
+    pass
+```
+
+These are not normal expression holes. They are identifier-only binding sites.
+
 ### 5.1 `astichi_hole(name)`
 
 `astichi_hole(name)` marks a hole.
@@ -225,6 +246,20 @@ Astichi must only rely on marker forms that parse as valid Python for the
 target Python versions.
 
 Unsupported contexts must fail early.
+
+### 5.1a Identifier-only definitional sites
+
+Phase-1 definitional-name support is limited to grammar-required identifier
+positions.
+
+Rules:
+
+- these sites are not expression holes
+- these sites must be recognized syntactically from the identifier spelling
+- phase-1 supported positions are:
+  - `class <name>`
+  - `def <name>`
+- broader identifier-site support is deferred
 
 ### 5.2 `astichi_bind_once(name, expr)`
 

@@ -46,6 +46,10 @@ Steps:
   - Goal: AST-context shape inference
   - Output artifact: shape inference metadata/helpers
   - Verification: focused shape-inference tests
+- [x] `1d` Status: complete
+  - Goal: identifier-only definitional site recognition
+  - Output artifact: lowered records for supported class/function definitional names
+  - Verification: focused definitional-name recognition tests
 
 ### Milestone 2: Name classification and hygiene
 

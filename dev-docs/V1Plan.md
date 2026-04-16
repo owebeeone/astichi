@@ -60,6 +60,7 @@ Milestone goal:
 
 - parse source into Python AST
 - recognize V1 markers
+- recognize V1 identifier-only definitional binding sites
 - capture compile-origin metadata
 - infer marker shape from AST context
 
@@ -67,6 +68,8 @@ Milestone 1 exit gate:
 
 - `astichi.compile(...)` entrypoint exists
 - marker recognition is implemented for the V1 marker surface
+- identifier-only definitional binding sites are recognized for phase-1
+  supported positions
 - compile-origin metadata is carried through lowering
 - AST-context shape inference works for scalar, `*`, and `**` cases
 - focused lowering tests pass
@@ -140,6 +143,9 @@ Output artifact:
   - `astichi_export`
   - `astichi_for`
   - `@astichi_insert`
+- definitional-name recognition for:
+  - `class <name>__astichi__`
+  - `def <name>__astichi__`
 
 Verification target:
 
@@ -149,6 +155,8 @@ Implementation rule:
 
 - marker recognition in this step is purely syntactic
 - recognize only bare-name call/decorator forms
+- recognize identifier-only definitional sites syntactically from the reserved
+  `__astichi__` spelling in supported grammar-required identifier positions
 - use one centralized marker registry keyed by reserved source marker names
 - preferred shape:
   - `dict[str, MarkerSpec]`
@@ -161,6 +169,7 @@ Implementation rule:
 Exit rules:
 
 - every V1 marker is recognized
+- phase-1 identifier-only definitional sites are recognized
 - recognized marker names/targets are extracted correctly
 - invalid marker shapes fail clearly
 - focused tests pass
@@ -192,6 +201,42 @@ Exit rules:
 
 - scalar, `*`, and `**` shapes are inferred correctly
 - unsupported contexts fail early
+- focused tests pass
+
+### 1d. Identifier-only definitional site recognition
+
+Owner layer:
+
+- `lowering`
+
+Goal:
+
+- recognize phase-1 identifier-only definitional binding sites
+
+Output artifact:
+
+- recognition support for:
+  - `class <name>__astichi__`
+  - `def <name>__astichi__`
+- lowered records describing those definitional-name sites
+
+Verification target:
+
+- focused tests over supported class/function definitional-name forms
+
+Implementation rule:
+
+- recognition in this step is purely syntactic
+- detect the reserved `__astichi__` spelling in grammar-required identifier
+  positions only
+- do not generalize this step into arbitrary identifier-site handling
+- do not model these as ordinary expression holes
+
+Exit rules:
+
+- supported class/function definitional sites are recognized
+- recognized names are extracted correctly
+- unsupported/invalid uses fail clearly
 - focused tests pass
 
 ## 4. Milestone 2: Name classification and hygiene

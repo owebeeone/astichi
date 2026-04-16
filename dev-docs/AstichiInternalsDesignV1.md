@@ -111,6 +111,7 @@ Owns:
 
 - recognition of Astichi markers
 - extraction of marker metadata
+- recognition of identifier-only definitional binding sites
 - shape inference from AST context
 - lowered marker records/IR
 - source-surface to internal-structure bridge

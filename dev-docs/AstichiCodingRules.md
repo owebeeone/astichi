@@ -128,7 +128,13 @@ Examples:
 astichi_hole(body)
 astichi_bind_external(items)
 astichi_export(result)
+class name_param__astichi__:
+    pass
 ```
+
+Identifier-only definitional binding sites are also part of the source DSL in
+phase 1. They are not string markers and they are not ordinary expression
+holes.
 
 ### 5.2 Prefer semantic queries over tag comparison
 

@@ -20,9 +20,12 @@ class MarkerSpec(ABC):
     def is_name_bearing(self) -> bool:
         return False
 
+    def is_definitional_site(self) -> bool:
+        return False
+
     @abstractmethod
-    def validate_call(self, node: ast.Call) -> None:
-        """Validate that the call shape is legal for this marker."""
+    def validate_node(self, node: ast.AST) -> None:
+        """Validate that the node shape is legal for this marker."""
 
 
 class _SimpleMarker(MarkerSpec):
@@ -45,7 +48,9 @@ class _SimpleMarker(MarkerSpec):
     def is_name_bearing(self) -> bool:
         return self._name_bearing
 
-    def validate_call(self, node: ast.Call) -> None:
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError(f"{self.source_name} must be recognized from an ast.Call")
         if len(node.args) != self._positional_args:
             raise ValueError(
                 f"{self.source_name} expects {self._positional_args} positional arguments"
@@ -56,6 +61,32 @@ class _SimpleMarker(MarkerSpec):
                 raise ValueError(
                     f"{self.source_name} requires a bare identifier-like first argument"
                 )
+
+
+class _DefinitionalNameMarker(MarkerSpec):
+    source_name = "astichi_definitional_name"
+    suffix = "__astichi__"
+
+    def is_name_bearing(self) -> bool:
+        return True
+
+    def is_definitional_site(self) -> bool:
+        return True
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            raise TypeError(
+                "astichi_definitional_name must be recognized from a class/def node"
+            )
+        if not node.name.endswith(self.suffix):
+            raise ValueError(
+                "astichi_definitional_name requires the reserved __astichi__ suffix"
+            )
+        base_name = node.name[: -len(self.suffix)]
+        if not base_name.isidentifier():
+            raise ValueError(
+                "astichi_definitional_name requires an identifier prefix before __astichi__"
+            )
 
 
 HOLE = _SimpleMarker("astichi_hole", positional_args=1, name_bearing=True)
@@ -72,6 +103,7 @@ FOR = _SimpleMarker("astichi_for", positional_args=1)
 INSERT = _SimpleMarker(
     "astichi_insert", positional_args=1, decorator_only=True
 )
+DEFINITIONAL_NAME = _DefinitionalNameMarker()
 
 MARKERS_BY_NAME: dict[str, MarkerSpec] = {
     marker.source_name: marker
@@ -93,7 +125,7 @@ class RecognizedMarker:
     """Recognized marker record."""
 
     spec: MarkerSpec
-    node: ast.Call
+    node: ast.AST
     context: str
     shape: MarkerShape | None = None
 
@@ -105,9 +137,15 @@ class RecognizedMarker:
     def name_id(self) -> str | None:
         if not self.spec.is_name_bearing():
             return None
-        first_arg = self.node.args[0]
-        if isinstance(first_arg, ast.Name):
-            return first_arg.id
+        if isinstance(self.node, ast.Call):
+            first_arg = self.node.args[0]
+            if isinstance(first_arg, ast.Name):
+                return first_arg.id
+            return None
+        if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            suffix = "__astichi__"
+            if self.node.name.endswith(suffix):
+                return self.node.name[: -len(suffix)]
         return None
 
 
@@ -132,7 +170,7 @@ class _MarkerVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         marker = _marker_from_call(node)
         if marker is not None and not marker.is_decorator_only():
-            marker.validate_call(node)
+            marker.validate_node(node)
             self.markers.append(
                 RecognizedMarker(
                     spec=marker,
@@ -144,14 +182,17 @@ class _MarkerVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_definitional_name(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_definitional_name(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._visit_definitional_name(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
@@ -164,7 +205,7 @@ class _MarkerVisitor(ast.NodeVisitor):
                 continue
             if not marker.is_decorator_only():
                 continue
-            marker.validate_call(decorator)
+            marker.validate_node(decorator)
             self.markers.append(
                 RecognizedMarker(
                     spec=marker,
@@ -173,6 +214,21 @@ class _MarkerVisitor(ast.NodeVisitor):
                     shape=None,
                 )
             )
+
+    def _visit_definitional_name(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> None:
+        if not node.name.endswith(DEFINITIONAL_NAME.suffix):
+            return
+        DEFINITIONAL_NAME.validate_node(node)
+        self.markers.append(
+            RecognizedMarker(
+                spec=DEFINITIONAL_NAME,
+                node=node,
+                context="definitional",
+                shape=None,
+            )
+        )
 
     def _parent(self) -> ast.AST | None:
         if len(self._stack) < 2:
