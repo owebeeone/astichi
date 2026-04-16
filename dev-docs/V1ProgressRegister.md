@@ -7,11 +7,11 @@ action, and exit state.
 
 ## 1. Current status
 
-- Overall status: not started
-- Active milestone: none
-- Active sub-phase: none
-- Active implementation layer: none
-- Current goal: establish the implementation plan and begin milestone 1
+- Overall status: in progress
+- Active milestone: 1
+- Active sub-phase: 1c
+- Active implementation layer: asttools/lowering
+- Current goal: complete milestone 1 AST-context shape inference
 - Blockers: none recorded
 
 ## 2. Milestone register
@@ -34,11 +34,11 @@ action, and exit state.
 
 Steps:
 
-- [ ] `1a` Status: pending
+- [x] `1a` Status: complete
   - Goal: compile entrypoint skeleton
   - Output artifact: real `astichi.compile(...)` wrapper with origin metadata
   - Verification: focused frontend tests
-- [ ] `1b` Status: pending
+- [x] `1b` Status: complete
   - Goal: marker recognition
   - Output artifact: marker records for V1 markers
   - Verification: focused lowering tests

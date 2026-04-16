@@ -94,16 +94,19 @@ Output artifact:
 Verification target:
 
 - focused tests for argument intake and basic parse success/failure
-- verify file name, line number, and first-line column details are correctly
-  allocated to parsed AST nodes
+- verify file name metadata and line-number rebasing are correct
+- verify `offset` is accepted and preserved in origin metadata
 
 Implementation rule:
 
 - do not rebase AST line numbers by walking the parsed tree in this step
-- implement source-origin positioning by constructing padded parse input:
+- implement line rebasing by constructing padded parse input:
   - prepend `line_number - 1` newlines
-  - prepend `offset` spaces before the first logical source line
   - pass `file_name` directly to `ast.parse(..., filename=file_name)`
+- do not prepend leading spaces for `offset` in module-mode parsing; Python
+  treats indented top-level source as `IndentationError`
+- in phase 1a, `offset` is preserved as source-origin metadata rather than
+  forcing a top-level column rebasing trick
 
 Exit rules:
 
@@ -111,7 +114,8 @@ Exit rules:
 - origin metadata parameters are accepted and stored in a frontend-owned
   structure
 - at least one parse-success and one parse-failure test exist
-- tests verify the padded-source origin behavior
+- tests verify the padded-source line-number behavior
+- tests verify `offset` preservation in origin metadata
 - focused tests pass
 
 ### 1b. Marker recognition
