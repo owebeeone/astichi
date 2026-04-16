@@ -1,4 +1,4 @@
-"""Build merge for Astichi V1."""
+"""Build merge and materialization for Astichi V1."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import ast
 import copy
 
 from astichi.builder.graph import BuilderGraph
-from astichi.hygiene import analyze_names
+from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
 from astichi.lowering import recognize_markers
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
@@ -172,3 +172,37 @@ def _recurse_compound(
             )
     elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         stmt.body = _replace_holes_in_body(stmt.body, replacements)
+
+
+def materialize_composable(composable: BasicComposable) -> BasicComposable:
+    """Materialize a composable: validate completeness and apply final hygiene."""
+    mandatory_holes = [
+        port for port in composable.demand_ports if "hole" in port.sources
+    ]
+    if mandatory_holes:
+        names = ", ".join(port.name for port in mandatory_holes)
+        raise ValueError(f"mandatory holes remain unresolved: {names}")
+
+    tree = copy.deepcopy(composable.tree)
+    markers = recognize_markers(tree)
+    provisional = BasicComposable(
+        tree=tree, origin=composable.origin, markers=markers
+    )
+
+    analysis = assign_scope_identity(provisional)
+    rename_scope_collisions(analysis)
+
+    markers = recognize_markers(tree)
+    post_hygiene = BasicComposable(
+        tree=tree, origin=composable.origin, markers=markers
+    )
+    classification = analyze_names(post_hygiene, mode="permissive")
+
+    return BasicComposable(
+        tree=tree,
+        origin=composable.origin,
+        markers=markers,
+        classification=classification,
+        demand_ports=extract_demand_ports(markers, classification),
+        supply_ports=extract_supply_ports(markers),
+    )

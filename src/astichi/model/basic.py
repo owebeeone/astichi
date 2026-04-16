@@ -29,5 +29,7 @@ class BasicComposable(Composable):
     def emit(self, *, provenance: bool = True) -> str:
         raise NotImplementedError("BasicComposable.emit is not implemented yet")
 
-    def materialize(self) -> object:
-        raise NotImplementedError("BasicComposable.materialize is not implemented yet")
+    def materialize(self) -> "BasicComposable":
+        from astichi.materialize import materialize_composable
+
+        return materialize_composable(self)

@@ -1,0 +1,41 @@
+# Marker overview
+
+Markers are **valid Python** syntax: calls and decorators your snippet uses so
+astichi can find holes, binds, and composition sites. Import them from
+**`astichi.markers`** so snippets remain ordinary Python modules.
+
+**Hole shape** (scalar vs variadic vs block) is inferred from **AST context**,
+not from encoding a “kind” in the hole name.
+
+**Normative list:**
+**[AstichiApiDesignV1.md §5](../../dev-docs/AstichiApiDesignV1.md)**.
+
+## Phase-1 marker vocabulary
+
+```text
+astichi_hole(name)
+astichi_bind_once(name, expr)
+astichi_bind_shared(name, expr)
+astichi_bind_external(name)
+astichi_keep(name)
+astichi_export(name)
+astichi_for(domain)
+@astichi_insert(target, order=…)
+```
+
+## Identifier arguments
+
+For `name` / `target` / bind keys: use a **bare identifier** in source (a
+`Name` in the AST), **not** a string literal. The identifier **names** the hole
+or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
+
+## Per-topic reference
+
+| Topic | Page |
+|-------|------|
+| Holes, `*`, `**`, block position | [marker-holes.md](marker-holes.md) |
+| Binds and exports | [marker-binds-and-exports.md](marker-binds-and-exports.md) |
+| Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
+| Preserved names | [marker-keep.md](marker-keep.md) |
+
+Unsupported starred / double-starred contexts are **hard errors** in V1.
