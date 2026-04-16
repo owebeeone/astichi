@@ -6,6 +6,8 @@ import ast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from astichi.asttools import BLOCK, NAMED_VARIADIC, POSITIONAL_VARIADIC, SCALAR_EXPR, MarkerShape
+
 
 class MarkerSpec(ABC):
     """Behavior-bearing marker capability object."""
@@ -93,6 +95,7 @@ class RecognizedMarker:
     spec: MarkerSpec
     node: ast.Call
     context: str
+    shape: MarkerShape | None = None
 
     @property
     def source_name(self) -> str:
@@ -117,12 +120,27 @@ def _marker_from_call(node: ast.Call) -> MarkerSpec | None:
 class _MarkerVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.markers: list[RecognizedMarker] = []
+        self._stack: list[ast.AST] = []
+
+    def visit(self, node: ast.AST) -> object:
+        self._stack.append(node)
+        try:
+            return super().visit(node)
+        finally:
+            self._stack.pop()
 
     def visit_Call(self, node: ast.Call) -> None:
         marker = _marker_from_call(node)
         if marker is not None and not marker.is_decorator_only():
             marker.validate_call(node)
-            self.markers.append(RecognizedMarker(spec=marker, node=node, context="call"))
+            self.markers.append(
+                RecognizedMarker(
+                    spec=marker,
+                    node=node,
+                    context="call",
+                    shape=_infer_shape(node, self._parent()),
+                )
+            )
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -148,8 +166,28 @@ class _MarkerVisitor(ast.NodeVisitor):
                 continue
             marker.validate_call(decorator)
             self.markers.append(
-                RecognizedMarker(spec=marker, node=decorator, context="decorator")
+                RecognizedMarker(
+                    spec=marker,
+                    node=decorator,
+                    context="decorator",
+                    shape=None,
+                )
             )
+
+    def _parent(self) -> ast.AST | None:
+        if len(self._stack) < 2:
+            return None
+        return self._stack[-2]
+
+
+def _infer_shape(node: ast.Call, parent: ast.AST | None) -> MarkerShape:
+    if isinstance(parent, ast.Starred) and parent.value is node:
+        return POSITIONAL_VARIADIC
+    if isinstance(parent, ast.keyword) and parent.arg is None and parent.value is node:
+        return NAMED_VARIADIC
+    if isinstance(parent, ast.Expr) and parent.value is node:
+        return BLOCK
+    return SCALAR_EXPR
 
 
 def recognize_markers(tree: ast.AST) -> tuple[RecognizedMarker, ...]:

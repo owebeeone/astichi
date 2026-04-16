@@ -8,17 +8,17 @@ action, and exit state.
 ## 1. Current status
 
 - Overall status: in progress
-- Active milestone: 1
-- Active sub-phase: 1c
-- Active implementation layer: asttools/lowering
-- Current goal: complete milestone 1 AST-context shape inference
+- Active milestone: 2
+- Active sub-phase: 2a
+- Active implementation layer: hygiene
+- Current goal: begin milestone 2 name classification and lexical hygiene
 - Blockers: none recorded
 
 ## 2. Milestone register
 
 ### Milestone 1: Lowering pipeline
 
-- Status: pending
+- Status: complete
 - Owner layer: compile/lowering
 - Goal:
   - parse source into Python AST
@@ -42,7 +42,7 @@ Steps:
   - Goal: marker recognition
   - Output artifact: marker records for V1 markers
   - Verification: focused lowering tests
-- [ ] `1c` Status: pending
+- [x] `1c` Status: complete
   - Goal: AST-context shape inference
   - Output artifact: shape inference metadata/helpers
   - Verification: focused shape-inference tests
