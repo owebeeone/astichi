@@ -115,22 +115,34 @@ Steps:
 ### Milestone 4: Builder graph and additive wiring
 
 - Status: in progress
-- Owner layer: builder/addressing
+- Owner layer: builder/addressing, lowering/asttools (4g, 4h), model (4i),
+  hygiene (4d–4f, 4j)
 - Goal:
   - add named instances
   - implement root-instance-first handles
   - implement additive edges and order validation
   - expose fluent and raw APIs
-  - complete the missing scope-collision hygiene work needed before build and materialize
+  - complete the missing scope-collision hygiene work needed before build and
+    materialize
+  - extend `astichi_hole` shape inference to cover dict display `**` context
+  - implement expression-form `astichi_insert` marker recognition
+  - implement expression-insert supply port extraction
+  - implement expression-insert scope boundaries per H5
 - Exit criteria:
   - instance/target handles work
   - additive edges are inspectable
   - lower `order` comes before higher `order`
   - equal `order` on the same target preserves insertion order
   - fluent/raw equivalence is test-covered
+  - `astichi_hole` in dict `**` context correctly infers `NAMED_VARIADIC`
+  - expression-form `astichi_insert` is recognized with 2 positional args
+  - expression inserts produce supply ports with placement `"expr"`
+  - expression-insert sites are treated as H5 scope boundaries
 - Notes:
   - loop-expanded addressing is completed in milestone 5
   - `4d`–`4f` are hygiene-owned follow-up work required before step 5
+  - `4g`–`4j` implement expression-insert support per
+    `AstichiApiDesignV1-InsertExpression.md` sections 10–12
 
 Steps:
 
@@ -158,6 +170,28 @@ Steps:
   - Goal: scope-collision renaming
   - Output artifact: scope-aware collision renaming required by `IdentifierHygieneRequirements.md`
   - Verification: focused scope-collision tests
+- [ ] `4g` Status: pending
+  - Goal: dict-context `astichi_hole` shape inference
+  - Output artifact: updated `_infer_shape` detecting dict `**` context as
+    `NAMED_VARIADIC`; explicit test coverage for dict key position as
+    `SCALAR_EXPR`
+  - Verification: focused dict-context shape tests
+- [ ] `4h` Status: pending
+  - Goal: expression-form `astichi_insert` marker recognition
+  - Output artifact: dual-context `astichi_insert` recognition (call: 2 args,
+    decorator: 1 arg); expression-insert shape always `SCALAR_EXPR`
+  - Verification: focused expression-insert marker tests
+- [ ] `4i` Status: pending
+  - Goal: expression-insert supply port extraction
+  - Output artifact: supply ports from expression inserts; updated placement
+    compatibility (`"expr"` supply matches any `"expr"` demand sub-shape)
+  - Verification: focused supply-port and compatibility tests
+- [ ] `4j` Status: pending
+  - Goal: expression-insert scope boundaries
+  - Output artifact: fresh H5 scope object per expression insert; internal
+    bindings scoped to insert (H6); free names retain outer scope (H7)
+  - Verification: focused expression-insert scope-boundary tests
+  - Note: depends on 4d–4f scope machinery
 
 ### Milestone 5: Build, materialize, and loop expansion
 

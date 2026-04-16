@@ -458,6 +458,9 @@ Exit rules:
 Owner layer:
 
 - `builder`
+- `lowering` / `asttools` (4g, 4h)
+- `model` (4i)
+- `hygiene` (4d–4f, 4j)
 
 Milestone goal:
 
@@ -467,6 +470,14 @@ Milestone goal:
 - expose fluent and raw APIs
 - complete the missing scope-collision hygiene work needed before build and
   materialize
+- extend `astichi_hole` shape inference to cover dict display `**` context
+- implement expression-form `astichi_insert` marker recognition
+- implement expression-insert supply port extraction
+- implement expression-insert scope boundaries per H5
+
+Design reference:
+
+- `astichi/dev-docs/AstichiApiDesignV1-InsertExpression.md` sections 10–12
 
 Milestone 4 exit gate:
 
@@ -477,7 +488,12 @@ Milestone 4 exit gate:
 - fluent and raw APIs are equivalent for covered cases
 - scope-collision renaming required by
   `IdentifierHygieneRequirements.md` is implemented for phase 1
+- `astichi_hole` in dict `**` context correctly infers `NAMED_VARIADIC`
+- expression-form `astichi_insert` is recognized with 2 positional args
+- expression inserts produce supply ports with placement `"expr"`
+- expression-insert sites are treated as H5 scope boundaries
 - focused builder tests pass
+- focused expression-insert tests pass
 - full test suite passes
 
 ### 4a. Raw builder graph
@@ -679,6 +695,179 @@ Exit rules:
 - same identifier plus same scope identity lowers to the same emitted binding
 - same identifier plus different scope identity lowers to different emitted
   names
+- focused tests pass
+
+### 4g. Dict-context `astichi_hole` shape inference
+
+Owner layer:
+
+- `lowering`
+- `asttools`
+
+Goal:
+
+- extend `_infer_shape` to detect `astichi_hole` inside dict display `**`
+  context as `NAMED_VARIADIC`
+- add explicit test coverage for dict key position as `SCALAR_EXPR`
+
+Output artifact:
+
+- updated `_infer_shape` with dict `**` context detection
+- explicit test coverage for dict-context hole shapes
+
+Verification target:
+
+- focused tests for dict display hole shapes
+
+Implementation note:
+
+- Python dict `**` unpacking uses `Dict(keys=[..., None], values=[..., expr])`
+  — a `None` key in `ast.Dict.keys` indicates `**` expansion
+- this is distinct from function call `**` which uses
+  `keyword(arg=None, value=expr)` and is already handled
+- the check must find the call node's index in `parent.values` and verify that
+  `parent.keys[index] is None`
+- dict key position `{astichi_hole(k): v}` already infers correctly as
+  `SCALAR_EXPR` through the existing fallback; add explicit test to lock this
+
+Exit rules:
+
+- `{**astichi_hole(entries)}` infers `NAMED_VARIADIC`
+- `{astichi_hole(key): value}` infers `SCALAR_EXPR`
+- focused tests pass
+
+### 4h. Expression-form `astichi_insert` marker recognition
+
+Owner layer:
+
+- `lowering`
+
+Goal:
+
+- recognize `astichi_insert` in call-expression context with 2 positional
+  arguments (target, expr), in addition to the existing decorator context with
+  1 positional argument
+
+Output artifact:
+
+- updated marker recognition for `astichi_insert` in both decorator and call
+  contexts
+- call context: 2 positional args (target, expr), shape always `SCALAR_EXPR`
+- decorator context: 1 positional arg (target), shape `None` (unchanged)
+- `target` must be a bare identifier in both contexts
+
+Verification target:
+
+- focused marker-recognition tests for expression-form inserts
+
+Implementation note:
+
+- the current `INSERT` spec has `decorator_only=True` and `positional_args=1`
+- the expression form requires a dual-context marker that accepts call context
+  with 2 args and decorator context with 1 arg
+- shape for expression-form inserts must be `SCALAR_EXPR` regardless of
+  syntactic position, overriding the default `_infer_shape` rule that would
+  assign `BLOCK` to standalone expression statements
+- the `order` keyword argument must be accepted in both contexts
+- `target` (first arg) must be validated as a bare identifier in call context
+  the same way it is in decorator context
+
+Exit rules:
+
+- `astichi_insert(target, expr)` is recognized as a call-context insert marker
+- `astichi_insert(target, expr, order=10)` is recognized with `order` keyword
+- `@astichi_insert(target)` continues to work unchanged
+- expression-insert shape is always `SCALAR_EXPR`
+- standalone expression statement `astichi_insert(target, expr)` does not
+  incorrectly infer `BLOCK`
+- focused tests pass
+
+### 4i. Expression-insert supply port extraction
+
+Owner layer:
+
+- `model`
+
+Goal:
+
+- extract supply ports from expression-insert markers
+- validate placement compatibility for expression-insert supply against
+  expression-placement demand
+
+Output artifact:
+
+- updated `extract_supply_ports` to produce supply ports from expression insert
+  markers with shape `SCALAR_EXPR`, placement `"expr"`, mutability `"const"`,
+  source `"insert"`
+- updated port compatibility: `"expr"` supply matches `"expr"` demand
+  regardless of sub-shape (scalar, positional variadic, named variadic)
+
+Verification target:
+
+- focused supply-port extraction tests
+- focused placement-compatibility tests
+
+Implementation note:
+
+- expression-insert markers are recognized in 4h; this step consumes the
+  recognized marker records to produce supply ports
+- fine-grained cardinality constraints (scalar hole rejects multiple inserts,
+  named variadic hole requires dict-valued inserts) are deferred to
+  builder/materialize layers
+- `validate_port_pair` currently checks `demand.shape is supply.shape` by
+  identity; this must be relaxed for expression inserts where a `SCALAR_EXPR`
+  supply can feed any expression-placement demand
+
+Exit rules:
+
+- expression inserts produce inspectable supply ports
+- `"expr"` supply matches `"expr"` demand for any sub-shape
+- `"expr"` supply does not match `"block"` demand
+- `"block"` supply does not match `"expr"` demand
+- focused tests pass
+
+### 4j. Expression-insert scope boundaries
+
+Owner layer:
+
+- `hygiene`
+
+Goal:
+
+- treat expression-insert sites as H5 scope boundaries
+- each expression insert receives a fresh scope object for internal bindings
+- free names in the insert expression retain their original scope identity
+
+Output artifact:
+
+- updated scope-identity model recognizing expression-insert markers as
+  scope-boundary-introducing sites
+- fresh scope object per expression insert
+- internal bindings (including walrus) scoped to the insert (H6)
+- free names retain original scope identity (H7)
+
+Verification target:
+
+- focused scope-boundary tests for expression inserts
+
+Implementation note:
+
+- depends on 4d–4f scope machinery being complete
+- expression inserts are injected AST chunks under H5
+- two expression inserts from the same composable must get distinct scope
+  objects even when targeting the same hole
+- this is analogous to 4e (structural expansion scope freshness) applied to
+  expression-insert structural units
+- the decorator form already introduces a scope boundary through Python's
+  def/class scope; the expression form introduces an Astichi-level boundary
+  without a Python-level scope
+
+Exit rules:
+
+- each expression insert receives a fresh scope identity for internal names
+- internal bindings within an expression insert are scoped to that insert
+- free names retain outer scope identity
+- multiple inserts from the same composable do not collide on internal bindings
 - focused tests pass
 
 ## 7. Milestone 5: Build, materialize, and loop expansion
