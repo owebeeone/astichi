@@ -6,8 +6,8 @@ import ast
 from dataclasses import dataclass
 from typing import Literal
 
-from astichi.frontend.compiled import FrontendComposable
 from astichi.lowering import RecognizedMarker
+from astichi.model.basic import BasicComposable
 
 Mode = Literal["strict", "permissive"]
 
@@ -40,7 +40,7 @@ class HygieneResult:
 
 
 def analyze_names(
-    composable: FrontendComposable,
+    composable: BasicComposable,
     *,
     mode: Mode = "strict",
     preserved_names: frozenset[str] = frozenset(),
@@ -100,7 +100,7 @@ def analyze_names(
 
 
 def rewrite_hygienically(
-    composable: FrontendComposable,
+    composable: BasicComposable,
     *,
     preserved_names: frozenset[str] = frozenset(),
     mode: Mode = "strict",

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import ast
 
-from astichi.frontend.compiled import CompileOrigin, FrontendComposable
+from astichi.frontend.compiled import FrontendComposable
+from astichi.hygiene import analyze_names
 from astichi.lowering import recognize_markers
-from astichi.model import Composable
+from astichi.model import (
+    BasicComposable,
+    Composable,
+    CompileOrigin,
+    extract_demand_ports,
+    extract_supply_ports,
+)
 
 
 def _single_line_source(source: str) -> bool:
@@ -63,4 +70,18 @@ def compile(
             ),
             filename=origin.file_name,
         )
-    return FrontendComposable(tree=tree, origin=origin, markers=recognize_markers(tree))
+    markers = recognize_markers(tree)
+    provisional = BasicComposable(
+        tree=tree,
+        origin=origin,
+        markers=markers,
+    )
+    classification = analyze_names(provisional, mode="permissive")
+    return FrontendComposable(
+        tree=tree,
+        origin=origin,
+        markers=markers,
+        classification=classification,
+        demand_ports=extract_demand_ports(markers, classification),
+        supply_ports=extract_supply_ports(markers),
+    )

@@ -8,6 +8,9 @@ from abc import ABC
 class MarkerShape(ABC):
     """Behavior-bearing marker usage shape."""
 
+    def __init__(self, name: str) -> None:
+        self.name = name
+
     def is_scalar_expr(self) -> bool:
         return False
 
@@ -22,21 +25,33 @@ class MarkerShape(ABC):
 
 
 class _ScalarExprShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("scalar_expr")
+
     def is_scalar_expr(self) -> bool:
         return True
 
 
 class _PositionalVariadicShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("positional_variadic")
+
     def is_positional_variadic(self) -> bool:
         return True
 
 
 class _NamedVariadicShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("named_variadic")
+
     def is_named_variadic(self) -> bool:
         return True
 
 
 class _BlockShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("block")
+
     def is_block(self) -> bool:
         return True
 
