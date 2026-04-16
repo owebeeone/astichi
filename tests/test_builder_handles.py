@@ -3,7 +3,16 @@ from __future__ import annotations
 import pytest
 
 import astichi
-from astichi.builder import AddProxy, BuilderHandle, InstanceHandle, TargetHandle, TargetRef
+from astichi.builder import (
+    AddProxy,
+    AddToTargetProxy,
+    AdditiveEdge,
+    BuilderHandle,
+    BuilderGraph,
+    InstanceHandle,
+    TargetHandle,
+    TargetRef,
+)
 
 
 def test_build_returns_builder_handle_with_empty_graph() -> None:
@@ -66,3 +75,41 @@ def test_target_handle_indexing_requires_integer_path_items() -> None:
 
     with pytest.raises(TypeError, match="target path indexes must be integers"):
         _ = builder.A.first["bad"]
+
+
+def test_target_handle_exposes_fluent_add_proxy() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("astichi_hole(slot)\n"))
+    builder.add.B(astichi.compile("value = 1\n"))
+
+    edge = builder.A.slot.add.B(order=10)
+
+    assert isinstance(builder.A.slot.add, AddToTargetProxy)
+    assert edge == AdditiveEdge(
+        target=TargetRef(root_instance="A", target_name="slot"),
+        source_instance="B",
+        order=10,
+    )
+    assert builder.graph.edges == (edge,)
+
+
+def test_fluent_and_raw_builder_operations_produce_equivalent_graph_state() -> None:
+    root = astichi.compile("astichi_hole(slot)\n")
+    child = astichi.compile("value = 1\n")
+
+    fluent = astichi.build()
+    fluent.add.A(root)
+    fluent.add.B(child)
+    fluent.A.slot.add.B(order=10)
+
+    raw = BuilderGraph()
+    raw.add_instance("A", root)
+    raw.add_instance("B", child)
+    raw.add_additive_edge(
+        target=TargetRef(root_instance="A", target_name="slot"),
+        source_instance="B",
+        order=10,
+    )
+
+    assert fluent.graph.instances == raw.instances
+    assert fluent.graph.edges == raw.edges

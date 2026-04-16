@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from astichi.builder.graph import BuilderGraph, TargetRef
+from astichi.builder.graph import AdditiveEdge, BuilderGraph, TargetRef
 from astichi.model import Composable
 
 
@@ -14,6 +14,10 @@ class TargetHandle:
 
     graph: BuilderGraph = field(compare=False, repr=False)
     target: TargetRef
+
+    @property
+    def add(self) -> "AddToTargetProxy":
+        return AddToTargetProxy(graph=self.graph, target=self.target)
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "TargetHandle":
         """Return a new target handle with an accumulated path."""
@@ -69,6 +73,37 @@ class AddProxy:
         if name.startswith("_"):
             raise AttributeError(name)
         return _NamedAdder(graph=self.graph, instance_name=name)
+
+
+@dataclass(frozen=True)
+class _NamedTargetAdder:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    target: TargetRef
+    source_instance: str
+
+    def __call__(self, *, order: int = 0) -> AdditiveEdge:
+        return self.graph.add_additive_edge(
+            target=self.target,
+            source_instance=self.source_instance,
+            order=order,
+        )
+
+
+@dataclass(frozen=True)
+class AddToTargetProxy:
+    """Dedicated proxy for target.add.<Name>(order=...) syntax."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    target: TargetRef
+
+    def __getattr__(self, name: str) -> _NamedTargetAdder:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return _NamedTargetAdder(
+            graph=self.graph,
+            target=self.target,
+            source_instance=name,
+        )
 
 
 @dataclass

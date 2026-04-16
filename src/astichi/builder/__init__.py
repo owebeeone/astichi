@@ -2,10 +2,17 @@
 
 from astichi.builder.api import build
 from astichi.builder.graph import AdditiveEdge, BuilderGraph, InstanceRecord, TargetRef
-from astichi.builder.handles import AddProxy, BuilderHandle, InstanceHandle, TargetHandle
+from astichi.builder.handles import (
+    AddProxy,
+    AddToTargetProxy,
+    BuilderHandle,
+    InstanceHandle,
+    TargetHandle,
+)
 
 __all__ = [
     "AddProxy",
+    "AddToTargetProxy",
     "AdditiveEdge",
     "BuilderGraph",
     "BuilderHandle",

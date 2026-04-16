@@ -78,3 +78,23 @@ def test_raw_builder_graph_rejects_edges_with_unknown_instances() -> None:
             target=TargetRef(root_instance="C", target_name="slot"),
             source_instance="B",
         )
+
+
+def test_raw_builder_graph_rejects_equal_order_conflicts_on_same_target() -> None:
+    builder = BuilderGraph()
+    builder.add_instance("A", astichi.compile("astichi_hole(slot)\n"))
+    builder.add_instance("B", astichi.compile("value = 1\n"))
+    builder.add_instance("C", astichi.compile("value = 2\n"))
+
+    builder.add_additive_edge(
+        target=TargetRef(root_instance="A", target_name="slot"),
+        source_instance="B",
+        order=10,
+    )
+
+    with pytest.raises(ValueError, match="equal-order additive edge conflict"):
+        builder.add_additive_edge(
+            target=TargetRef(root_instance="A", target_name="slot"),
+            source_instance="C",
+            order=10,
+        )

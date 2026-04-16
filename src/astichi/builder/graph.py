@@ -62,6 +62,12 @@ class BuilderGraph:
             raise ValueError(f"unknown target root instance: {target.root_instance}")
         if source_instance not in self._instances:
             raise ValueError(f"unknown source instance: {source_instance}")
+        for existing in self._edges:
+            if existing.target == target and existing.order == order:
+                raise ValueError(
+                    "equal-order additive edge conflict for "
+                    f"{target.root_instance}.{target.target_name}{target.path}: {order}"
+                )
         edge = AdditiveEdge(
             target=target,
             source_instance=source_instance,
