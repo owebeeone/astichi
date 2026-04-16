@@ -48,7 +48,7 @@ Goal: Build the mutable composition graph.
 
 4.3 Fluent Builder API: Wrap the raw API in the fluent, chained syntax (builder.add.A(...).A.init.add.B(order=10)).
 
-4.4 Ordering Validation: Enforce that variadic targets require an order and reject equal-order conflicts.
+4.4 Ordering Validation: Enforce deterministic ordering for variadic targets; lower `order` comes first and equal `order` preserves insertion order.
 
 Validation: Tests should construct builder graphs and assert that the internal edge list represents the correct directional wiring and structural ordering.
 

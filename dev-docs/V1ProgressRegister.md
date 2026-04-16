@@ -8,10 +8,10 @@ action, and exit state.
 ## 1. Current status
 
 - Overall status: in progress
-- Active milestone: 2
-- Active sub-phase: 2a
+- Active milestone: 4
+- Active sub-phase: 4d
 - Active implementation layer: hygiene
-- Current goal: begin milestone 2 name classification and lexical hygiene
+- Current goal: complete scope-collision hygiene before build/materialize
 - Blockers: none recorded
 
 ## 2. Milestone register
@@ -53,37 +53,39 @@ Steps:
 
 ### Milestone 2: Name classification and hygiene
 
-- Status: pending
+- Status: complete with follow-up
 - Owner layer: name classification/hygiene
 - Goal:
   - classify identifiers
   - implement strict/permissive handling
   - implement hygienic renaming
+  - establish the phase-1 hygiene machinery
 - Exit criteria:
   - classification order is implemented
   - keep-name preservation works
   - collision handling is test-covered
   - hygiene tests pass
-- Notes: none
+- Notes: scope-collision completion is tracked separately as milestone-4 follow-up work
 
 Steps:
 
-- [ ] `2a` Status: pending
+- [x] `2a` Status: complete
   - Goal: classification pass
   - Output artifact: classification routine and records
   - Verification: focused classification tests
-- [ ] `2b` Status: pending
+- [x] `2b` Status: complete
   - Goal: strict vs permissive handling
   - Output artifact: mode-aware unresolved-name behavior
   - Verification: focused strict/permissive tests
-- [ ] `2c` Status: pending
+- [x] `2c` Status: complete with follow-up
   - Goal: hygienic renaming
   - Output artifact: rename transformer or equivalent rewritten structure
   - Verification: focused hygiene tests
+  - Note: scope-collision completion is deferred to `4d`–`4f`
 
 ### Milestone 3: Ports and composable carrier
 
-- Status: pending
+- Status: complete
 - Owner layer: composable/ports
 - Goal:
   - define immutable `Composable`
@@ -97,49 +99,65 @@ Steps:
 
 Steps:
 
-- [ ] `3a` Status: pending
+- [x] `3a` Status: complete
   - Goal: demand and supply port structures
   - Output artifact: immutable port types/metadata
   - Verification: focused model tests
-- [ ] `3b` Status: pending
+- [x] `3b` Status: complete
   - Goal: port extraction
   - Output artifact: extracted demand/supply ports on compiled snippets
   - Verification: focused port-extraction tests
-- [ ] `3c` Status: pending
+- [x] `3c` Status: complete
   - Goal: compatibility validation and composable carrier
   - Output artifact: concrete `Composable` backing plus compatibility checks
   - Verification: focused compatibility/composable tests
 
 ### Milestone 4: Builder graph and additive wiring
 
-- Status: pending
+- Status: in progress
 - Owner layer: builder/addressing
 - Goal:
   - add named instances
   - implement root-instance-first handles
   - implement additive edges and order validation
   - expose fluent and raw APIs
+  - complete the missing scope-collision hygiene work needed before build and materialize
 - Exit criteria:
   - instance/target handles work
   - additive edges are inspectable
-  - equal-order conflicts fail
+  - lower `order` comes before higher `order`
+  - equal `order` on the same target preserves insertion order
   - fluent/raw equivalence is test-covered
-- Notes: loop-expanded addressing is completed in milestone 5
+- Notes:
+  - loop-expanded addressing is completed in milestone 5
+  - `4d`–`4f` are hygiene-owned follow-up work required before step 5
 
 Steps:
 
-- [ ] `4a` Status: pending
+- [x] `4a` Status: complete
   - Goal: raw builder graph
   - Output artifact: mutable graph, instance registry, additive edges
   - Verification: focused raw-builder tests
-- [ ] `4b` Status: pending
+- [x] `4b` Status: complete
   - Goal: root-instance-first handles
   - Output artifact: builder/instance/target handles
   - Verification: focused addressing tests
-- [ ] `4c` Status: pending
+- [x] `4c` Status: complete
   - Goal: fluent API and ordering validation
-  - Output artifact: fluent additive API and order-conflict checks
+  - Output artifact: fluent additive API and deterministic ordering behavior
   - Verification: focused builder API tests
+- [ ] `4d` Status: pending
+  - Goal: scope object attachment and preservation
+  - Output artifact: scope-identity model and preserved-name handling
+  - Verification: focused scope-identity tests
+- [ ] `4e` Status: pending
+  - Goal: structural expansion scope freshness
+  - Output artifact: fresh-scope behavior for injected or expanded units
+  - Verification: focused scope-freshness tests
+- [ ] `4f` Status: pending
+  - Goal: scope-collision renaming
+  - Output artifact: scope-aware collision renaming required by `IdentifierHygieneRequirements.md`
+  - Verification: focused scope-collision tests
 
 ### Milestone 5: Build, materialize, and loop expansion
 
@@ -154,6 +172,7 @@ Steps:
   - `build()` returns a merged `Composable`
   - non-unrolled loops remain loops
   - supported loops unroll correctly
+  - materialization applies final hygiene closure
   - materialization rejects incomplete/incompatible inputs
   - end-to-end additive composition works
 - Notes: none

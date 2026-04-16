@@ -12,6 +12,7 @@ Read these first:
 - `astichi/AGENTS.md`
 - `astichi/dev-docs/AstichiCodingRules.md`
 - `astichi/dev-docs/AstichiApiDesignV1.md`
+- `astichi/dev-docs/IdentifierHygieneRequirements.md`
 - `astichi/dev-docs/AstichiV1Milestones.md`
 - `astichi/dev-docs/V1Plan.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
@@ -22,6 +23,7 @@ You must be familiar with:
 - roll-build terminology
 - the phase-1 Astichi marker surface
 - the additive-first builder model
+- the identifier hygiene requirements and scope-collision rules
 - source-authority and provenance rules
 - implementation boundary rules
 

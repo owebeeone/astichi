@@ -159,6 +159,8 @@ An additive edge means:
 - the source `Composable` is inserted at the addressed demand site
 - execution order is determined by the enclosing target order rules
 - lower `order` runs/appears before higher `order` in the same variadic target
+- equal `order` on the same target is resolved by insertion order: first come,
+  first served
 
 Phase 1 does not attempt a richer generalized effect/dominance algebra.
 Instead:
@@ -167,6 +169,12 @@ Instead:
 - incompatible placements are rejected by port compatibility checks
 - materialization must emit a deterministic runs-before order for accepted
   additive edges
+
+Scope identity and scope-collision hygiene are applied authoritatively during
+`materialize()`, when wrapper and structural scope boundaries are resolved into
+final lexical naming. The scope/hygiene engine itself is an internal component
+and may be implemented and tested in isolation before `materialize()`
+integration.
 
 ## 4. Compile API
 
@@ -354,7 +362,8 @@ Replacement semantics are not part of phase 1.
 Ordering rules:
 
 - lower `order` comes first
-- equal-order conflicts on the same variadic target are errors
+- equal `order` on the same target is resolved by insertion order: first come,
+  first served
 
 ## 6. Name classification and hygiene
 
@@ -642,7 +651,6 @@ Phase-1 hard errors include:
 - unsupported starred/double-starred marker contexts
 - invalid `astichi_keep(...)` argument form
 - unresolved free identifiers in strict mode
-- equal-order conflicts on the same variadic target
 - compile-time loop unpacking failure
 - provenance restoration against edited/non-matching source
 

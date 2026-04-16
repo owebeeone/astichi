@@ -7,6 +7,7 @@ It expands the milestone document into step-by-step implementation work.
 Related documents:
 
 - `astichi/dev-docs/AstichiApiDesignV1.md`
+- `astichi/dev-docs/IdentifierHygieneRequirements.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
 - `astichi/dev-docs/AstichiInternalsDesignV1.md`
 - `astichi/dev-docs/AstichiV1Milestones.md`
@@ -38,10 +39,13 @@ Each milestone must declare:
 
 ## 2. Global execution rules
 
-- No single implementation step should require more than roughly 400 lines of
+- As a planning guideline, no single implementation substep (for example
+  `1a`, `2b`, `3c`) should normally require more than roughly 400 lines of
   production-code change.
-- If a step grows beyond that size, split it into another milestone-aligned
-  substep before implementing.
+- The 400-line guideline applies per substep, not per whole milestone.
+- If a substep grows materially beyond that size, prefer splitting it into
+  another milestone-aligned substep before implementing unless there is a
+  clear reason not to.
 - Each step should first be verified at the layer that owns it.
 - Focused tests are required per step unless the step is intentionally
   preparatory and non-behavioral.
@@ -250,6 +254,8 @@ Milestone goal:
 - classify identifiers
 - implement strict/permissive handling
 - implement hygienic renaming
+- establish the phase-1 hygiene machinery required by
+  `IdentifierHygieneRequirements.md`
 
 Milestone 2 exit gate:
 
@@ -257,6 +263,8 @@ Milestone 2 exit gate:
 - keep-name preservation works
 - strict/permissive behavior is test-covered
 - collision handling is correct
+- the phase-1 hygiene machinery exists even if final scope-collision closure is
+  deferred
 - focused hygiene tests pass
 - full test suite passes
 
@@ -323,6 +331,8 @@ Owner layer:
 Goal:
 
 - rename local/generated bindings safely against preserved names and collisions
+- implement the first phase of the hygiene machinery required by
+  `IdentifierHygieneRequirements.md`
 
 Output artifact:
 
@@ -337,6 +347,8 @@ Exit rules:
 - kept names preserve spelling
 - colliding locals are renamed correctly
 - resulting lowered structure is inspectable in tests
+- later scope-collision completion work is explicitly left to a dedicated
+  follow-up step
 - focused tests pass
 
 ## 5. Milestone 3: Ports and composable carrier
@@ -453,6 +465,8 @@ Milestone goal:
 - implement root-instance-first handles
 - implement additive edges and order validation
 - expose fluent and raw APIs
+- complete the missing scope-collision hygiene work needed before build and
+  materialize
 
 Milestone 4 exit gate:
 
@@ -461,6 +475,8 @@ Milestone 4 exit gate:
 - additive edges are inspectable
 - order validation works
 - fluent and raw APIs are equivalent for covered cases
+- scope-collision renaming required by
+  `IdentifierHygieneRequirements.md` is implemented for phase 1
 - focused builder tests pass
 - full test suite passes
 
@@ -542,8 +558,127 @@ Verification target:
 Exit rules:
 
 - fluent additive operations work
-- equal-order conflicts fail
+- lower `order` comes before higher `order`
+- equal `order` on the same target preserves insertion order
 - fluent and raw APIs produce equivalent graph state
+- focused tests pass
+
+### 4d. Scope object attachment and preservation
+
+Owner layer:
+
+- `hygiene`
+
+Goal:
+
+- attach scope identity to lexical names and preserve external names correctly
+- implement and test the scope engine in isolation before `materialize()`
+  integration
+
+Output artifact:
+
+- scope-object or equivalent identity model for lexical names
+- annotation or equivalent attachment of scope identity before later expansion
+  or injection work
+- explicit preserved-name handling aligned with
+  `IdentifierHygieneRequirements.md`
+
+Verification target:
+
+- focused scope-identity and preserved-name tests
+
+Implementation note:
+
+- prefer a single `O(n)` traversal over relevant AST nodes
+- use simple opaque scope identities (for example stable integer ids), not a
+  rich object graph
+- record lexical name occurrences as `(raw_name, scope_id, role, node)`
+- do not make scope objects own per-name collision state as the primary model
+- preserved or external names should retain outer scope identity rather than
+  receiving the newly introduced internal scope identity
+
+Exit rules:
+
+- lexical name identity is not keyed by raw identifier string alone
+- internal lexical names can carry fresh scope identity
+- preserved or external lexical names retain outer scope identity
+- the scope engine behavior is directly testable without invoking
+  `materialize()`
+- focused tests pass
+
+### 4e. Structural expansion scope freshness
+
+Owner layer:
+
+- `hygiene`
+
+Goal:
+
+- ensure structurally expanded or injected units receive fresh scope identity
+- implement and test expansion-scope behavior in isolation before
+  `materialize()` integration
+
+Output artifact:
+
+- scope-freshness behavior for injected or structurally expanded units
+- explicit handling aligned with H5, H6, and H7 of
+  `IdentifierHygieneRequirements.md`
+
+Verification target:
+
+- focused expansion or injection scope-freshness tests
+
+Implementation note:
+
+- fresh scope identity should be introduced only at explicit Astichi structural
+  boundaries in phase 1
+- treat wrapper or insertion boundaries as the primary fresh-scope triggers
+- do not widen this step into full general Python scope inference beyond what
+  the hygiene engine needs
+
+Exit rules:
+
+- each injected or structurally expanded unit receives fresh scope identity for
+  internal lexical names
+- external lexical names do not receive the new scope identity
+- focused tests pass
+
+### 4f. Scope-collision renaming
+
+Owner layer:
+
+- `hygiene`
+
+Goal:
+
+- complete scope-collision renaming before build and materialize proceed
+- complete and test scope-collision renaming before `materialize()`
+  integration
+
+Output artifact:
+
+- scope-aware collision renaming across injected or structurally expanded units
+- phase-1 lowering rule satisfying H8, H9, and H10 of
+  `IdentifierHygieneRequirements.md`
+
+Verification target:
+
+- focused scope-collision renaming tests
+
+Implementation note:
+
+- after scope assignment, group lexical occurrences by raw Python name
+- partition each raw-name group by effective scope identity
+- same raw name plus same scope identity may share one emitted name
+- same raw name plus different scope identity must lower to different emitted
+  names
+- prefer grouping and partitioning over pointer-style collision graphs
+
+Exit rules:
+
+- same identifier plus same scope identity lowers to the same emitted binding
+- same identifier plus different scope identity lowers to different emitted
+  names
 - focused tests pass
 
 ## 7. Milestone 5: Build, materialize, and loop expansion
@@ -565,6 +700,7 @@ Milestone 5 exit gate:
 - unresolved boundaries remain open after build
 - non-unrolled loops remain loops
 - supported loops unroll correctly
+- materialize applies final hygiene closure
 - materialize rejects incomplete/incompatible inputs
 - end-to-end additive composition works
 - focused materialize tests pass
@@ -635,10 +771,13 @@ Goal:
 
 - produce a runnable/emittable artifact and enforce final compatibility and
   hygiene
+- apply final hygiene closure before runnable or emittable output is produced
+- invoke the already-tested scope/hygiene engine as part of final closure
 
 Output artifact:
 
 - `materialize()` implementation
+- final hygiene-closure integration
 
 Verification target:
 
@@ -650,6 +789,9 @@ Exit rules:
 - mandatory unresolved holes fail
 - incompatible composition fails
 - accepted compositions produce a valid artifact
+- materialize applies final hygiene closure using the machinery required by
+  `IdentifierHygieneRequirements.md`
+- the scope engine is integrated here rather than first created here
 - focused tests pass
 
 ## 8. Milestone 6: Emit and provenance
