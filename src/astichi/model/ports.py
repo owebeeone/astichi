@@ -94,6 +94,17 @@ def extract_supply_ports(
                 )
             )
             continue
+        if marker.source_name == "astichi_insert" and marker.context == "call":
+            ports.append(
+                SupplyPort(
+                    name=marker.name_id,
+                    shape=SCALAR_EXPR,
+                    placement="expr",
+                    mutability="const",
+                    sources=frozenset({"insert"}),
+                )
+            )
+            continue
         if marker.source_name == "astichi_definitional_name":
             ports.append(
                 SupplyPort(
@@ -114,7 +125,7 @@ def validate_port_pair(demand: DemandPort, supply: SupplyPort) -> None:
             f"incompatible port placement for {demand.name}: "
             f"{demand.placement} != {supply.placement}"
         )
-    if demand.shape is not supply.shape:
+    if demand.placement != "expr" and demand.shape is not supply.shape:
         raise ValueError(
             f"incompatible port shape for {demand.name}: "
             f"{demand.shape.name} != {supply.shape.name}"

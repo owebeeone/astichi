@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import astichi
-from astichi.asttools import BLOCK, SCALAR_EXPR
+from astichi.asttools import BLOCK, NAMED_VARIADIC, POSITIONAL_VARIADIC, SCALAR_EXPR
 from astichi.model import BasicComposable, DemandPort, IDENTIFIER, SupplyPort, validate_port_pair
 
 
@@ -74,13 +74,19 @@ def test_validate_port_pair_rejects_shape_placement_and_mutability_mismatch() ->
     )
     validate_port_pair(demand, good_supply)
 
+    block_demand = DemandPort(
+        name="block_slot",
+        shape=BLOCK,
+        placement="block",
+        mutability="const",
+    )
     with pytest.raises(ValueError, match="incompatible port shape"):
         validate_port_pair(
-            demand,
+            block_demand,
             SupplyPort(
-                name="value_slot",
-                shape=IDENTIFIER,
-                placement="expr",
+                name="block_slot",
+                shape=SCALAR_EXPR,
+                placement="block",
                 mutability="const",
             ),
         )
@@ -106,3 +112,82 @@ def test_validate_port_pair_rejects_shape_placement_and_mutability_mismatch() ->
                 mutability="mutable",
             ),
         )
+
+
+def test_expression_insert_produces_supply_port() -> None:
+    compiled = astichi.compile(
+        """
+value = astichi_insert(target_slot, 42)
+"""
+    )
+
+    supply = [p for p in compiled.supply_ports if p.name == "target_slot"]
+    assert len(supply) == 1
+    assert supply[0].shape is SCALAR_EXPR
+    assert supply[0].placement == "expr"
+    assert supply[0].mutability == "const"
+    assert "insert" in supply[0].sources
+
+
+def test_decorator_insert_does_not_produce_supply_port() -> None:
+    compiled = astichi.compile(
+        """
+@astichi_insert(block_target)
+def inject():
+    return 1
+"""
+    )
+
+    supply = [p for p in compiled.supply_ports if p.name == "block_target"]
+    assert len(supply) == 0
+
+
+def test_expr_supply_matches_expr_demand_any_sub_shape() -> None:
+    scalar_supply = SupplyPort(
+        name="slot",
+        shape=SCALAR_EXPR,
+        placement="expr",
+        mutability="const",
+    )
+    for demand_shape in (SCALAR_EXPR, POSITIONAL_VARIADIC, NAMED_VARIADIC):
+        demand = DemandPort(
+            name="slot",
+            shape=demand_shape,
+            placement="expr",
+            mutability="const",
+        )
+        validate_port_pair(demand, scalar_supply)
+
+
+def test_expr_supply_does_not_match_block_demand() -> None:
+    demand = DemandPort(
+        name="slot",
+        shape=BLOCK,
+        placement="block",
+        mutability="const",
+    )
+    supply = SupplyPort(
+        name="slot",
+        shape=SCALAR_EXPR,
+        placement="expr",
+        mutability="const",
+    )
+    with pytest.raises(ValueError, match="incompatible port placement"):
+        validate_port_pair(demand, supply)
+
+
+def test_block_supply_does_not_match_expr_demand() -> None:
+    demand = DemandPort(
+        name="slot",
+        shape=SCALAR_EXPR,
+        placement="expr",
+        mutability="const",
+    )
+    supply = SupplyPort(
+        name="slot",
+        shape=BLOCK,
+        placement="block",
+        mutability="const",
+    )
+    with pytest.raises(ValueError, match="incompatible port placement"):
+        validate_port_pair(demand, supply)
