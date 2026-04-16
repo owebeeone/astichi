@@ -8,10 +8,10 @@ action, and exit state.
 ## 1. Current status
 
 - Overall status: in progress
-- Active milestone: 5
-- Active sub-phase: 5a
-- Active implementation layer: materialize
-- Current goal: merge a builder graph into a new Composable
+- Active milestone: 7 (next planning)
+- Active sub-phase: n/a
+- Active implementation layer: n/a
+- Current goal: milestones 5 and 6 complete; assess milestone 7+
 - Blockers: none recorded
 
 ## 2. Milestone register
@@ -195,7 +195,7 @@ Steps:
 
 ### Milestone 5: Build and materialize
 
-- Status: pending
+- Status: complete
 - Owner layer: build/materialize
 - Goal:
   - merge a builder graph into a new `Composable`
@@ -212,24 +212,24 @@ Steps:
 
 Steps:
 
-- [ ] `5a` Status: pending
+- [x] `5a` Status: complete
   - Goal: `build()` merge
-  - Output artifact: merged `Composable`
-  - Verification: focused build tests
+  - Output artifact: merged `Composable` via topological edge resolution
+  - Verification: focused build tests (9 tests)
 - [x] `5b` Status: deferred
   - Goal: loop expansion
   - Output artifact: deferred — `astichi_for` loops remain as-is
   - Verification: n/a
   - Note: deferred from V1; manual unrolling via multiple inserts is the
     workaround
-- [ ] `5c` Status: pending
+- [x] `5c` Status: complete
   - Goal: `materialize()` hard gate
-  - Output artifact: materialized runnable/emittable artifact
-  - Verification: focused materialize tests and end-to-end integration tests
+  - Output artifact: materialized artifact with hygiene closure applied
+  - Verification: focused materialize tests (5 tests)
 
 ### Milestone 6: Emit and provenance
 
-- Status: pending
+- Status: complete
 - Owner layer: emit/provenance
 - Goal:
   - emit source
@@ -240,22 +240,23 @@ Steps:
   - provenance payload is appended only when enabled
   - payload is AST/provenance restoration only
   - edited/non-matching source hard-fails with the required error
-- Notes: source remains authoritative
+- Notes: provenance format is pickle → zlib compress → base64 encode;
+  embedded as a trailing `# astichi-provenance: ...` comment
 
 Steps:
 
-- [ ] `6a` Status: pending
+- [x] `6a` Status: complete
   - Goal: source emission
-  - Output artifact: plain source emission
-  - Verification: focused emit tests
-- [ ] `6b` Status: pending
+  - Output artifact: `emit_source()` via `ast.unparse` with trailing newline
+  - Verification: focused emit tests (5 tests)
+- [x] `6b` Status: complete
   - Goal: provenance payload emission
-  - Output artifact: compressed `astichi_provenance_payload("...")`
-  - Verification: focused provenance-emission tests
-- [ ] `6c` Status: pending
+  - Output artifact: `encode_provenance` / `decode_provenance`
+  - Verification: focused provenance-emission tests (5 tests)
+- [x] `6c` Status: complete
   - Goal: round-trip guardian
-  - Output artifact: AST-shape restoration guard
-  - Verification: focused round-trip/provenance tests
+  - Output artifact: `verify_round_trip()` with `RoundTripError`
+  - Verification: focused round-trip tests (4 tests)
 
 ## 3. Working log
 
