@@ -86,4 +86,75 @@ def insert_block():
 
     insert_marker = compiled.markers[0]
     assert insert_marker.source_name == "astichi_insert"
+    assert insert_marker.context == "decorator"
     assert insert_marker.shape is None
+
+
+def test_expression_insert_is_recognized_as_call_context() -> None:
+    compiled = astichi.compile(
+        """
+value = astichi_insert(target_slot, 42)
+"""
+    )
+
+    inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
+    assert len(inserts) == 1
+    assert inserts[0].context == "call"
+    assert inserts[0].name_id == "target_slot"
+    assert inserts[0].shape is not None
+    assert inserts[0].shape.is_scalar_expr() is True
+
+
+def test_expression_insert_with_order_keyword() -> None:
+    compiled = astichi.compile(
+        """
+value = astichi_insert(target_slot, some_expr, order=10)
+"""
+    )
+
+    inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
+    assert len(inserts) == 1
+    assert inserts[0].context == "call"
+    assert inserts[0].name_id == "target_slot"
+
+
+def test_expression_insert_standalone_statement_is_scalar_not_block() -> None:
+    compiled = astichi.compile(
+        """
+astichi_insert(target_slot, some_expr)
+"""
+    )
+
+    inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
+    assert len(inserts) == 1
+    assert inserts[0].context == "call"
+    assert inserts[0].shape is not None
+    assert inserts[0].shape.is_scalar_expr() is True
+    assert inserts[0].shape.is_block() is False
+
+
+def test_decorator_insert_still_works_alongside_expression_insert() -> None:
+    compiled = astichi.compile(
+        """
+@astichi_insert(block_target)
+def inject_block():
+    return 1
+
+value = astichi_insert(expr_target, 42)
+"""
+    )
+
+    inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
+    assert len(inserts) == 2
+
+    decorator_inserts = [m for m in inserts if m.context == "decorator"]
+    call_inserts = [m for m in inserts if m.context == "call"]
+
+    assert len(decorator_inserts) == 1
+    assert decorator_inserts[0].name_id == "block_target"
+    assert decorator_inserts[0].shape is None
+
+    assert len(call_inserts) == 1
+    assert call_inserts[0].name_id == "expr_target"
+    assert call_inserts[0].shape is not None
+    assert call_inserts[0].shape.is_scalar_expr() is True

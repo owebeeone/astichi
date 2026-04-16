@@ -9,7 +9,9 @@ from astichi.lowering import MARKERS_BY_NAME
 def test_marker_registry_exposes_behavior_objects_by_source_name() -> None:
     assert "astichi_hole" in MARKERS_BY_NAME
     assert MARKERS_BY_NAME["astichi_hole"].is_name_bearing() is True
-    assert MARKERS_BY_NAME["astichi_insert"].is_decorator_only() is True
+    insert = MARKERS_BY_NAME["astichi_insert"]
+    assert insert.is_name_bearing() is True
+    assert insert.is_decorator_only() is False
 
 
 def test_compile_recognizes_v1_markers() -> None:
@@ -54,7 +56,7 @@ def insert_block():
         "result",
         None,
         "inner",
-        None,
+        "target_slot",
     ]
 
     assert compiled.markers[-1].context == "decorator"

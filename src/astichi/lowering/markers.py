@@ -23,6 +23,18 @@ class MarkerSpec(ABC):
     def is_definitional_site(self) -> bool:
         return False
 
+    def accepts_call_context(self, node: ast.Call) -> bool:
+        """Whether this marker accepts the given call node in call-expression context."""
+        return not self.is_decorator_only()
+
+    def accepts_decorator_context(self, node: ast.Call) -> bool:
+        """Whether this marker accepts the given call node in decorator context."""
+        return self.is_decorator_only()
+
+    def call_context_shape(self) -> MarkerShape | None:
+        """Fixed shape override for call context, or None to use _infer_shape."""
+        return None
+
     @abstractmethod
     def validate_node(self, node: ast.AST) -> None:
         """Validate that the node shape is legal for this marker."""
@@ -89,6 +101,38 @@ class _DefinitionalNameMarker(MarkerSpec):
             )
 
 
+class _InsertMarker(MarkerSpec):
+    """Dual-context insert marker: decorator (1 arg) and expression (2 args)."""
+
+    source_name = "astichi_insert"
+
+    def is_name_bearing(self) -> bool:
+        return True
+
+    def accepts_call_context(self, node: ast.Call) -> bool:
+        return len(node.args) == 2
+
+    def accepts_decorator_context(self, node: ast.Call) -> bool:
+        return len(node.args) == 1
+
+    def call_context_shape(self) -> MarkerShape | None:
+        return SCALAR_EXPR
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError("astichi_insert must be recognized from an ast.Call")
+        if len(node.args) not in (1, 2):
+            raise ValueError(
+                "astichi_insert expects 1 positional argument (decorator) "
+                "or 2 positional arguments (expression)"
+            )
+        first_arg = node.args[0]
+        if not isinstance(first_arg, ast.Name):
+            raise ValueError(
+                "astichi_insert requires a bare identifier as the target argument"
+            )
+
+
 HOLE = _SimpleMarker("astichi_hole", positional_args=1, name_bearing=True)
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(
@@ -100,9 +144,7 @@ BIND_EXTERNAL = _SimpleMarker(
 KEEP = _SimpleMarker("astichi_keep", positional_args=1, name_bearing=True)
 EXPORT = _SimpleMarker("astichi_export", positional_args=1, name_bearing=True)
 FOR = _SimpleMarker("astichi_for", positional_args=1)
-INSERT = _SimpleMarker(
-    "astichi_insert", positional_args=1, decorator_only=True
-)
+INSERT = _InsertMarker()
 DEFINITIONAL_NAME = _DefinitionalNameMarker()
 
 MARKERS_BY_NAME: dict[str, MarkerSpec] = {
@@ -169,14 +211,17 @@ class _MarkerVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         marker = _marker_from_call(node)
-        if marker is not None and not marker.is_decorator_only():
+        if marker is not None and marker.accepts_call_context(node):
             marker.validate_node(node)
+            shape = marker.call_context_shape()
+            if shape is None:
+                shape = _infer_shape(node, self._parent())
             self.markers.append(
                 RecognizedMarker(
                     spec=marker,
                     node=node,
                     context="call",
-                    shape=_infer_shape(node, self._parent()),
+                    shape=shape,
                 )
             )
         self.generic_visit(node)
@@ -203,7 +248,7 @@ class _MarkerVisitor(ast.NodeVisitor):
             marker = _marker_from_call(decorator)
             if marker is None:
                 continue
-            if not marker.is_decorator_only():
+            if not marker.accepts_decorator_context(decorator):
                 continue
             marker.validate_node(decorator)
             self.markers.append(
