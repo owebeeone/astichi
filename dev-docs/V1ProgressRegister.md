@@ -32,6 +32,21 @@ action, and exit state.
   - valid/invalid marker placement tests pass
 - Notes: none
 
+Steps:
+
+- [ ] `1a` Status: pending
+  - Goal: compile entrypoint skeleton
+  - Output artifact: real `astichi.compile(...)` wrapper with origin metadata
+  - Verification: focused frontend tests
+- [ ] `1b` Status: pending
+  - Goal: marker recognition
+  - Output artifact: marker records for V1 markers
+  - Verification: focused lowering tests
+- [ ] `1c` Status: pending
+  - Goal: AST-context shape inference
+  - Output artifact: shape inference metadata/helpers
+  - Verification: focused shape-inference tests
+
 ### Milestone 2: Name classification and hygiene
 
 - Status: pending
@@ -47,6 +62,21 @@ action, and exit state.
   - hygiene tests pass
 - Notes: none
 
+Steps:
+
+- [ ] `2a` Status: pending
+  - Goal: classification pass
+  - Output artifact: classification routine and records
+  - Verification: focused classification tests
+- [ ] `2b` Status: pending
+  - Goal: strict vs permissive handling
+  - Output artifact: mode-aware unresolved-name behavior
+  - Verification: focused strict/permissive tests
+- [ ] `2c` Status: pending
+  - Goal: hygienic renaming
+  - Output artifact: rename transformer or equivalent rewritten structure
+  - Verification: focused hygiene tests
+
 ### Milestone 3: Ports and composable carrier
 
 - Status: pending
@@ -60,6 +90,21 @@ action, and exit state.
   - demand/supply ports are inspectable
   - incompatible pairings hard-fail
 - Notes: none
+
+Steps:
+
+- [ ] `3a` Status: pending
+  - Goal: demand and supply port structures
+  - Output artifact: immutable port types/metadata
+  - Verification: focused model tests
+- [ ] `3b` Status: pending
+  - Goal: port extraction
+  - Output artifact: extracted demand/supply ports on compiled snippets
+  - Verification: focused port-extraction tests
+- [ ] `3c` Status: pending
+  - Goal: compatibility validation and composable carrier
+  - Output artifact: concrete `Composable` backing plus compatibility checks
+  - Verification: focused compatibility/composable tests
 
 ### Milestone 4: Builder graph and additive wiring
 
@@ -76,6 +121,21 @@ action, and exit state.
   - equal-order conflicts fail
   - fluent/raw equivalence is test-covered
 - Notes: loop-expanded addressing is completed in milestone 5
+
+Steps:
+
+- [ ] `4a` Status: pending
+  - Goal: raw builder graph
+  - Output artifact: mutable graph, instance registry, additive edges
+  - Verification: focused raw-builder tests
+- [ ] `4b` Status: pending
+  - Goal: root-instance-first handles
+  - Output artifact: builder/instance/target handles
+  - Verification: focused addressing tests
+- [ ] `4c` Status: pending
+  - Goal: fluent API and ordering validation
+  - Output artifact: fluent additive API and order-conflict checks
+  - Verification: focused builder API tests
 
 ### Milestone 5: Build, materialize, and loop expansion
 
@@ -94,6 +154,21 @@ action, and exit state.
   - end-to-end additive composition works
 - Notes: none
 
+Steps:
+
+- [ ] `5a` Status: pending
+  - Goal: `build()` merge
+  - Output artifact: merged `Composable`
+  - Verification: focused build tests
+- [ ] `5b` Status: pending
+  - Goal: loop expansion
+  - Output artifact: unroll logic and loop-expanded addressing
+  - Verification: focused loop-unroll tests
+- [ ] `5c` Status: pending
+  - Goal: `materialize()` hard gate
+  - Output artifact: materialized runnable/emittable artifact
+  - Verification: focused materialize tests and end-to-end integration tests
+
 ### Milestone 6: Emit and provenance
 
 - Status: pending
@@ -108,6 +183,21 @@ action, and exit state.
   - payload is AST/provenance restoration only
   - edited/non-matching source hard-fails with the required error
 - Notes: source remains authoritative
+
+Steps:
+
+- [ ] `6a` Status: pending
+  - Goal: source emission
+  - Output artifact: plain source emission
+  - Verification: focused emit tests
+- [ ] `6b` Status: pending
+  - Goal: provenance payload emission
+  - Output artifact: compressed `astichi_provenance_payload("...")`
+  - Verification: focused provenance-emission tests
+- [ ] `6c` Status: pending
+  - Goal: round-trip guardian
+  - Output artifact: AST-shape restoration guard
+  - Verification: focused round-trip/provenance tests
 
 ## 3. Working log
 

@@ -13,10 +13,9 @@ Read these first:
 - `astichi/dev-docs/AstichiCodingRules.md`
 - `astichi/dev-docs/AstichiApiDesignV1.md`
 - `astichi/dev-docs/AstichiV1Milestones.md`
+- `astichi/dev-docs/V1Plan.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
 - `astichi/dev-docs/V1ProgressRegister.md`
-
-When the V1 plan document exists, read that too before beginning work.
 
 You must be familiar with:
 

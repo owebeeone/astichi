@@ -130,7 +130,42 @@ astichi_bind_external(items)
 astichi_export(result)
 ```
 
-### 5.2 Preserve lexical keep semantics
+### 5.2 Prefer semantic queries over tag comparison
+
+When a classification/marker object represents semantics, do not write code in
+the style of:
+
+```python
+kind == HOLE
+kind in (HOLE, OTHER_HOLE)
+```
+
+Prefer semantic queries and behavior-bearing objects instead.
+
+Examples:
+
+```python
+kind.is_hole()
+kind.requires_variadic_shape()
+kind.validate_call(node)
+kind.lower(node, ctx)
+```
+
+The goal is to avoid brittle tag switching that turns into ad hoc `if/elif`
+trees as new variants are added.
+
+If a new marker style or semantic variant appears later, the preferred outcome
+is:
+
+- new behavior on the marker object
+- new semantic query
+
+not:
+
+- more tuple-membership checks
+- more raw name comparisons spread through the codebase
+
+### 5.3 Preserve lexical keep semantics
 
 `astichi_keep(name)` means:
 
@@ -140,7 +175,7 @@ astichi_export(result)
 
 Do not weaken this during implementation for convenience.
 
-### 5.3 Follow the hygiene requirements document
+### 5.4 Follow the hygiene requirements document
 
 Lexical hygiene must satisfy:
 
