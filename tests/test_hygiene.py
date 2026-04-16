@@ -212,7 +212,7 @@ result = value
     inner_assign = function_node.body[0]
     assert isinstance(inner_assign, ast.Assign)
     assert isinstance(inner_assign.targets[0], ast.Name)
-    assert inner_assign.targets[0].id.startswith("__astichi_scoped_value_")
+    assert inner_assign.targets[0].id.startswith("value__astichi_scoped_")
 
     inner_return = function_node.body[1]
     assert isinstance(inner_return, ast.Return)

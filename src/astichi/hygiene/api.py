@@ -191,9 +191,7 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
         for scope_serial, scope_occurrences in ordered_scopes:
             emitted_name = raw_name
             if scope_serial != keep_scope_serial:
-                emitted_name = (
-                    f"__astichi_scoped_{raw_name}_{next(emitted_counter)}"
-                )
+                emitted_name = f"{raw_name}__astichi_scoped_{next(emitted_counter)}"
             for occurrence in scope_occurrences:
                 if isinstance(occurrence.node, ast.Name):
                     occurrence.node.id = emitted_name
