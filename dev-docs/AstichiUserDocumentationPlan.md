@@ -132,3 +132,7 @@ wording: `dev-docs/AstichiApiDesignV1.md` §…”
 
 - **Initial plan** — created as authoring outline; `docs/` tree to be populated
   per this plan.
+- **API + reference first** — `docs/README.md`, `docs/guide/using-the-api.md`,
+  and `docs/reference/*` (public API, compile, composable, builder, markers,
+  materialize/emit, classification, errors) added. **`docs/guide/install-and-setup.md`**
+  intentionally not written yet.

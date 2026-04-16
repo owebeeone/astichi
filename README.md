@@ -31,4 +31,4 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 
 ## Status
 
-Early skeleton (`0.1.0`): placeholder module and smoke tests only.
+Early development (`0.1.0`): frontend, lowering, and tests evolving toward V1.
