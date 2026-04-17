@@ -649,3 +649,52 @@ def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
         ),
     ):
         builder.build()
+
+
+def test_6c_assign_surface_connects_dangling_pass_across_build_stages() -> None:
+    # Issue 006 6c assign surface: multi-stage composition. Stage 1
+    # builds a composable whose `astichi_pass(counter)` declaration is
+    # dangling — no edge in stage 1 consumes it, so the supply
+    # survives on the merged composable as a port. Stage 2 re-uses
+    # that composable as an instance and adds a sibling reader that
+    # declares `astichi_import(counter)`; `builder.assign` wires them
+    # fully-qualified across the stage boundary.
+    producer_src = """
+astichi_pass(counter)
+
+counter = 42
+"""
+    stage1 = astichi.build()
+    stage1.add.Producer(astichi.compile(producer_src))
+    stage1_composable = stage1.build()
+
+    # The merged stage-1 composable still advertises `counter` as an
+    # IDENTIFIER supply port with source_tag="pass" — the marker and
+    # the port survive through `build_merge` because nothing in stage
+    # 1 consumed them.
+    counter_supply = [
+        port for port in stage1_composable.supply_ports if port.name == "counter"
+    ]
+    assert counter_supply, (
+        "stage 1 should advertise the dangling `counter` pass as a "
+        "supply port on the merged composable"
+    )
+    assert "pass" in counter_supply[0].sources
+
+    reader_src = """
+astichi_import(counter)
+
+result = counter * 2
+"""
+    stage2 = astichi.build()
+    stage2.add.Producer(stage1_composable)
+    stage2.add.Reader(astichi.compile(reader_src, keep_names=["result"]))
+    # Connect the Reader's dangling import demand in stage 2 to the
+    # Producer's dangling pass supply from stage 1. The producer
+    # composable does not have to be re-inspected by the user: the
+    # fully-qualified assign names the supplier by (instance, name).
+    stage2.assign.Reader.counter.to().Producer.counter
+
+    namespace = _exec_emitted(stage2.build().materialize())
+    assert namespace["counter"] == 42
+    assert namespace["result"] == 84
