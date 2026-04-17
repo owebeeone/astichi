@@ -89,21 +89,28 @@ value = print
     assert assigned_names[0] == loaded_names[0]
 
 
-def test_definitional_name_sites_do_not_become_plain_locals() -> None:
+def test_identifier_suffix_sites_are_local_bindings_and_preserved() -> None:
+    # Issue 005 §4 / §9: suffixed class/def names register as normal local
+    # bindings (so Load refs resolve locally instead of leaking as implied
+    # demands), and the stripped base goes into the preserved set so a
+    # post-strip `name_param` / `a_func_name` cannot collide with any
+    # competing free binding hygiene sees.
     compiled = astichi.compile(
         """
-class name_param__astichi__:
+class name_param__astichi_keep__:
     pass
 
 
-def a_func_name__astichi__():
+def a_func_name__astichi_arg__():
     return 1
 """
     )
 
     classification = analyze_names(compiled, mode="permissive")
-    assert "name_param__astichi__" not in classification.locals
-    assert "a_func_name__astichi__" not in classification.locals
+    assert "name_param__astichi_keep__" in classification.locals
+    assert "a_func_name__astichi_arg__" in classification.locals
+    assert "name_param" in classification.preserved
+    assert "a_func_name" in classification.preserved
 
 
 def test_scope_identity_preserves_free_names_but_keeps_local_bindings_internal() -> None:

@@ -393,24 +393,21 @@ class _SameScopeBindingCollector(ast.NodeVisitor):
         return
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
         if node.returns is not None:
             self.visit(node.returns)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
         if node.returns is not None:
             self.visit(node.returns)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
         for base in node.bases:

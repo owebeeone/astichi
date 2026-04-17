@@ -84,40 +84,59 @@ astichi_hole("body")
         )
 
 
-def test_compile_recognizes_definitional_name_sites() -> None:
+def test_compile_recognizes_keep_and_arg_identifier_sites() -> None:
+    # Issue 005 §1: `__astichi_keep__` and `__astichi_arg__` suffixes on
+    # class/def names both register as `"definitional"`-context markers,
+    # discriminated by `source_name`.
     compiled = astichi.compile(
         """
-class name_param__astichi__:
+class kept__astichi_keep__:
     pass
 
 
-def a_func_name__astichi__():
+def arg_func__astichi_arg__():
     return 1
 """
     )
 
-    definitional = [
-        marker for marker in compiled.markers if marker.source_name == "astichi_definitional_name"
+    suffix_markers = [
+        marker
+        for marker in compiled.markers
+        if marker.source_name
+        in ("astichi_keep_identifier", "astichi_arg_identifier")
     ]
 
-    assert [marker.context for marker in definitional] == [
+    assert [marker.context for marker in suffix_markers] == [
         "definitional",
         "definitional",
     ]
-    assert [marker.name_id for marker in definitional] == [
-        "name_param",
-        "a_func_name",
+    assert [(marker.source_name, marker.name_id) for marker in suffix_markers] == [
+        ("astichi_keep_identifier", "kept"),
+        ("astichi_arg_identifier", "arg_func"),
     ]
 
 
-def test_invalid_definitional_name_site_fails_clearly() -> None:
+def test_invalid_keep_identifier_site_fails_clearly() -> None:
     with pytest.raises(
         ValueError,
-        match="identifier prefix before __astichi__",
+        match=r"identifier prefix before __astichi_keep__",
     ):
         astichi.compile(
             """
-class __astichi__:
+class __astichi_keep__:
+    pass
+"""
+        )
+
+
+def test_invalid_arg_identifier_site_fails_clearly() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"identifier prefix before __astichi_arg__",
+    ):
+        astichi.compile(
+            """
+class __astichi_arg__:
     pass
 """
         )

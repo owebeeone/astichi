@@ -118,9 +118,10 @@ class _SimpleMarker(MarkerSpec):
                 )
 
 
-class _DefinitionalNameMarker(MarkerSpec):
-    source_name = "astichi_definitional_name"
-    suffix = "__astichi__"
+class _SuffixIdentifierMarker(MarkerSpec):
+    """Base for the identifier-shape suffix markers (issue 005 §1)."""
+
+    suffix: str
 
     def is_name_bearing(self) -> bool:
         return True
@@ -128,26 +129,53 @@ class _DefinitionalNameMarker(MarkerSpec):
     def is_definitional_site(self) -> bool:
         return True
 
-    def is_hygiene_directive(self) -> bool:
-        # Legacy suffix-form marker. Call-form is inert (stripped during
-        # materialize). Treated as hygiene for unroll-body safety; issue 005
-        # will replace this with __astichi_keep__ on the same footing.
-        return True
-
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             raise TypeError(
-                "astichi_definitional_name must be recognized from a class/def node"
+                f"{self.source_name} must be recognized from a class/def node"
             )
         if not node.name.endswith(self.suffix):
             raise ValueError(
-                "astichi_definitional_name requires the reserved __astichi__ suffix"
+                f"{self.source_name} requires the reserved {self.suffix} suffix"
             )
         base_name = node.name[: -len(self.suffix)]
         if not base_name.isidentifier():
             raise ValueError(
-                "astichi_definitional_name requires an identifier prefix before __astichi__"
+                f"{self.source_name} requires an identifier prefix before {self.suffix}"
             )
+
+
+class _KeepIdentifierMarker(_SuffixIdentifierMarker):
+    """`name__astichi_keep__` — pin an identifier through hygiene (issue 005 §1)."""
+
+    source_name = "astichi_keep_identifier"
+    suffix = "__astichi_keep__"
+
+    def is_hygiene_directive(self) -> bool:
+        # Hygiene directive: the stripped name is preserved, suffixed sites are
+        # auto-unique. Allows N copies inside an `astichi_for` body without
+        # rename conflicts; the strip pass runs once post-hygiene.
+        return True
+
+
+class _ArgIdentifierMarker(_SuffixIdentifierMarker):
+    """`name__astichi_arg__` — unresolved identifier slot (issue 005 §1).
+
+    Demand port of shape=IDENTIFIER; requires resolution (wiring, builder
+    `arg_names=`, or `.bind_identifier(...)`) before materialize. 5a only
+    lands the surface + gate; resolution is 5c/5d.
+    """
+
+    source_name = "astichi_arg_identifier"
+    suffix = "__astichi_arg__"
+
+    def is_hygiene_directive(self) -> bool:
+        # An arg slot is not a rename directive: hygiene leaves the suffixed
+        # name alone because the suffix is auto-unique, and the resolve pass
+        # (5c) rewrites every occurrence to the supplied identifier.
+        # Treated as permitted inside unroll bodies so existing unroll users
+        # don't regress; per-iteration arg semantics are refined in 5b.
+        return True
 
 
 class _InsertMarker(MarkerSpec):
@@ -203,7 +231,15 @@ KEEP = _SimpleMarker(
 EXPORT = _SimpleMarker("astichi_export", positional_args=1, name_bearing=True)
 FOR = _SimpleMarker("astichi_for", positional_args=1)
 INSERT = _InsertMarker()
-DEFINITIONAL_NAME = _DefinitionalNameMarker()
+KEEP_IDENTIFIER = _KeepIdentifierMarker()
+ARG_IDENTIFIER = _ArgIdentifierMarker()
+
+# Suffix-form markers recognised on class/def names (issue 005). Iterated
+# in registration order so the first matching suffix wins.
+SUFFIX_IDENTIFIER_MARKERS: tuple[_SuffixIdentifierMarker, ...] = (
+    KEEP_IDENTIFIER,
+    ARG_IDENTIFIER,
+)
 
 # Canonical registry of every marker Astichi knows about. Consumers that
 # need to enumerate markers (e.g. the unroller) iterate this tuple and
@@ -218,12 +254,13 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     EXPORT,
     FOR,
     INSERT,
-    DEFINITIONAL_NAME,
+    KEEP_IDENTIFIER,
+    ARG_IDENTIFIER,
 )
 
 # Markers recognized from an `ast.Call` node by `accepts_call_context` /
-# `accepts_decorator_context`. Excludes suffix-form markers like
-# `DEFINITIONAL_NAME` which are matched from a class/def node.
+# `accepts_decorator_context`. Excludes suffix-form markers like the
+# identifier-shape ones, which are matched from a class/def node.
 MARKERS_BY_NAME: dict[str, MarkerSpec] = {
     marker.source_name: marker
     for marker in (
@@ -237,6 +274,19 @@ MARKERS_BY_NAME: dict[str, MarkerSpec] = {
         INSERT,
     )
 }
+
+
+def strip_identifier_suffix(name: str) -> tuple[str, _SuffixIdentifierMarker | None]:
+    """Return `(base_name, marker)` if `name` carries an identifier-shape
+    suffix marker (`__astichi_keep__` / `__astichi_arg__`); otherwise
+    `(name, None)`.
+    """
+    for marker in SUFFIX_IDENTIFIER_MARKERS:
+        if name.endswith(marker.suffix):
+            base = name[: -len(marker.suffix)]
+            if base.isidentifier():
+                return base, marker
+    return name, None
 
 
 @dataclass(frozen=True)
@@ -262,9 +312,9 @@ class RecognizedMarker:
                 return first_arg.id
             return None
         if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            suffix = "__astichi__"
-            if self.node.name.endswith(suffix):
-                return self.node.name[: -len(suffix)]
+            base, suffix_marker = strip_identifier_suffix(self.node.name)
+            if suffix_marker is not None:
+                return base
         return None
 
 
@@ -304,17 +354,17 @@ class _MarkerVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_definitional_name(node)
+        self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_definitional_name(node)
+        self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._visit_definitional_name(node)
+        self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
@@ -337,15 +387,23 @@ class _MarkerVisitor(ast.NodeVisitor):
                 )
             )
 
-    def _visit_definitional_name(
+    def _visit_suffix_identifier(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
     ) -> None:
-        if not node.name.endswith(DEFINITIONAL_NAME.suffix):
+        suffix_marker: _SuffixIdentifierMarker | None = None
+        for candidate in SUFFIX_IDENTIFIER_MARKERS:
+            if node.name.endswith(candidate.suffix):
+                suffix_marker = candidate
+                break
+        if suffix_marker is None:
             return
-        DEFINITIONAL_NAME.validate_node(node)
+        # Validator enforces a legal identifier prefix; a bare suffix
+        # (e.g. `class __astichi_keep__:`) raises with a clear diagnostic
+        # rather than being silently ignored.
+        suffix_marker.validate_node(node)
         self.markers.append(
             RecognizedMarker(
-                spec=DEFINITIONAL_NAME,
+                spec=suffix_marker,
                 node=node,
                 context="definitional",
                 shape=None,

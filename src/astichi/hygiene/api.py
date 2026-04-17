@@ -86,12 +86,25 @@ def analyze_names(
         for marker in composable.markers
         if marker.source_name == "astichi_keep" and marker.name_id is not None
     )
+    identifier_suffix_preserved = frozenset(
+        marker.name_id
+        for marker in composable.markers
+        # Issue 005 §4: the stripped identifier-shape suffix names
+        # (`foo__astichi_keep__` / `foo__astichi_arg__`) must be pinned in
+        # the preserved set before hygiene runs, so competing free `foo`s
+        # get renamed away and the later strip pass introduces `foo`
+        # without collision.
+        if marker.source_name in ("astichi_keep_identifier", "astichi_arg_identifier")
+        and marker.name_id is not None
+    )
     externals = frozenset(
         marker.name_id
         for marker in composable.markers
         if marker.source_name == "astichi_bind_external" and marker.name_id is not None
     )
-    preserved = frozenset(set(kept) | set(preserved_names))
+    preserved = frozenset(
+        set(kept) | set(preserved_names) | set(identifier_suffix_preserved)
+    )
 
     unresolved: set[str] = set()
     for node in ast.walk(composable.tree):
@@ -162,7 +175,12 @@ def assign_scope_identity(
     marker_preserved_names = frozenset(
         marker.name_id
         for marker in composable.markers
-        if marker.source_name == "astichi_keep" and marker.name_id is not None
+        if (
+            marker.source_name == "astichi_keep"
+            or marker.source_name
+            in ("astichi_keep_identifier", "astichi_arg_identifier")
+        )
+        and marker.name_id is not None
     )
     marker_external_names = frozenset(
         marker.name_id
@@ -270,18 +288,15 @@ class _BindingCollector(ast.NodeVisitor):
         self.bindings.add(node.arg)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -404,20 +419,17 @@ class _SingleScopeBindingCollector(ast.NodeVisitor):
             self.bindings.add(alias.asname or alias.name)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        if not node.name.endswith("__astichi__"):
-            self.bindings.add(node.name)
+        self.bindings.add(node.name)
         for decorator in node.decorator_list:
             self.visit(decorator)
 

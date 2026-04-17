@@ -80,16 +80,16 @@ result = astichi_keep(value)
 
 
 def test_materialize_strips_residual_markers() -> None:
-    """Per CompositionUnification.md §6: astichi_keep / astichi_export /
-    astichi_definitional_name are stripped from the tree. Export port
-    records survive on the composable."""
+    """Per CompositionUnification.md §6: `astichi_keep` / `astichi_export`
+    call-form markers are stripped from the tree. Export port records
+    survive on the composable. The legacy `astichi_definitional_name`
+    call form is retired (issue 005) and no longer silently stripped."""
     compiled = astichi.compile(
         """
 value = 1
 astichi_keep(value)
 result = 2
 astichi_export(result)
-astichi_definitional_name(result)
 """
     )
 
@@ -98,9 +98,78 @@ astichi_definitional_name(result)
 
     assert "astichi_keep" not in rendered
     assert "astichi_export" not in rendered
-    assert "astichi_definitional_name" not in rendered
 
     assert "result" in {port.name for port in materialized.supply_ports}
+
+
+def test_materialize_strips_keep_identifier_suffix_from_class_and_refs() -> None:
+    # Issue 005 §4 / §5 step 4: the keep-identifier strip pass runs after
+    # hygiene and rewrites every class/def binding and Load reference
+    # carrying the `__astichi_keep__` suffix back to the stripped base.
+    compiled = astichi.compile(
+        """
+class foo__astichi_keep__:
+    pass
+
+
+alias = foo__astichi_keep__
+"""
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "__astichi_keep__" not in rendered
+    assert "class foo" in rendered
+    assert "alias = foo" in rendered
+
+
+def test_materialize_rejects_unresolved_arg_identifier_suffix() -> None:
+    # Issue 005 §5 step 1 / §7: unresolved `__astichi_arg__` slots fail
+    # the materialize gate before hygiene runs. The error lists every
+    # occurrence of the parameter so the user sees its full reach.
+    compiled = astichi.compile(
+        """
+class target__astichi_arg__:
+    pass
+
+
+ref = target__astichi_arg__
+"""
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"unresolved identifier-arg slots.*target__astichi_arg__",
+    ):
+        compiled.materialize()
+
+
+def test_materialize_preserves_stripped_keep_name_against_collision() -> None:
+    # Issue 005 §4: when a free name would collide with the post-strip
+    # keep name, hygiene renames the free name away. The keep-suffixed
+    # binding survives unchanged until the strip pass rewrites it.
+    compiled = astichi.compile(
+        """
+class foo__astichi_keep__:
+    pass
+
+
+foo = 1
+
+
+value = foo
+"""
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "__astichi_keep__" not in rendered
+    assert "class foo:" in rendered
+    # The competing free `foo` must be renamed; the Load reference
+    # follows the rename so `value = foo_<n>` (not the class).
+    assert rendered.count("class foo:") == 1
 
 
 def test_materialize_allows_implied_demands() -> None:

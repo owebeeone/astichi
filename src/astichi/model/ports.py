@@ -75,6 +75,21 @@ def extract_demand_ports(
                 )
             )
             continue
+        if marker.source_name == "astichi_arg_identifier":
+            # Issue 005 §2 / §9.1: `__astichi_arg__` sites are demand ports
+            # (IDENTIFIER shape). Port-merging per (stripped_name, scope)
+            # is 5b; 5a emits one port per occurrence and relies on the
+            # default demand-port merge for collapsing duplicates by name.
+            ports.append(
+                DemandPort(
+                    name=marker.name_id,
+                    shape=IDENTIFIER,
+                    placement="identifier",
+                    mutability="const",
+                    sources=frozenset({"arg"}),
+                )
+            )
+            continue
     for implied in classification.implied_demands:
         ports.append(
             DemandPort(
@@ -118,16 +133,6 @@ def extract_supply_ports(
                 )
             )
             continue
-        if marker.source_name == "astichi_definitional_name":
-            ports.append(
-                SupplyPort(
-                    name=marker.name_id,
-                    shape=IDENTIFIER,
-                    placement="identifier",
-                    mutability="const",
-                    sources=frozenset({"definitional"}),
-                )
-            )
     return _merge_supply_ports(ports)
 
 

@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from astichi.builder.graph import AdditiveEdge, BuilderGraph, InstanceRecord
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
 from astichi.lowering import recognize_markers
+from astichi.lowering.markers import (
+    ARG_IDENTIFIER,
+    KEEP_IDENTIFIER,
+    strip_identifier_suffix,
+)
 from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
@@ -770,6 +775,24 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
             f"{names}; call composable.bind(...) before materializing."
         )
 
+    unresolved_args = _find_unresolved_arg_identifiers(composable.tree)
+    if unresolved_args:
+        # Issue 005 §5 step 1 / §7: unresolved `__astichi_arg__` sites are a
+        # hard gate error. Each entry carries every textual occurrence of the
+        # parameter so the user sees the full reach of the unresolved slot.
+        # 5a covers only class/def names; 5b extends coverage to ast.Name /
+        # ast.arg / ast.Attribute and per-occurrence diagnostics.
+        parts: list[str] = []
+        for name, lines in unresolved_args:
+            rendered_lines = ", ".join(str(lineno) for lineno in lines)
+            parts.append(
+                f"{name}__astichi_arg__ at line(s) {rendered_lines}"
+            )
+        raise ValueError(
+            "unresolved identifier-arg slots (call .bind_identifier(...) "
+            "or wire the arg before materialize): " + "; ".join(parts)
+        )
+
     unmatched_block_shells = _find_unmatched_block_insert_shells(composable.tree)
     unmatched_expr_inserts = _find_unmatched_expression_inserts(composable.tree)
     if unmatched_block_shells or unmatched_expr_inserts:
@@ -816,6 +839,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     supply_ports = extract_supply_ports(pre_strip_markers)
 
     _strip_residual_markers(tree)
+    _strip_keep_identifier_suffix(tree)
 
     markers = recognize_markers(tree)
     post_strip = BasicComposable(
@@ -1026,7 +1050,7 @@ class _BlockInsertFlattener(ast.NodeTransformer):
 
 
 _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
-    {"astichi_keep", "astichi_export", "astichi_definitional_name"}
+    {"astichi_keep", "astichi_export"}
 )
 
 
@@ -1044,7 +1068,7 @@ def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
 
 
 def _strip_residual_markers(tree: ast.AST) -> None:
-    """Strip `astichi_keep` / `astichi_export` / `astichi_definitional_name`.
+    """Strip `astichi_keep` / `astichi_export` call-form markers.
 
     Per `AstichiApiDesignV1-CompositionUnification.md §6`:
     - statement form (e.g. `astichi_export(x)`) is removed;
@@ -1054,6 +1078,11 @@ def _strip_residual_markers(tree: ast.AST) -> None:
     Port records for these markers are extracted before this pass
     runs, so stripping the call sites does not lose supply-port
     metadata on the returned composable.
+
+    Identifier-shape suffix markers (`__astichi_keep__` /
+    `__astichi_arg__`, issue 005) are handled by separate passes:
+    `_strip_keep_identifier_suffix` runs after this one, and the
+    arg-unresolved gate rejects any residual `__astichi_arg__`.
     """
     _ResidualMarkerStripper().visit(tree)
 
@@ -1093,6 +1122,72 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         if inner is not None:
             return self.visit(copy.deepcopy(inner))
         return self.generic_visit(node)
+
+
+def _find_unresolved_arg_identifiers(
+    tree: ast.AST,
+) -> list[tuple[str, tuple[int, ...]]]:
+    """Return unresolved `__astichi_arg__` slots grouped by stripped name.
+
+    Issue 005 §5 step 1 / §7: every class/def name carrying the arg suffix
+    that reaches the materialize gate without being resolved (wiring,
+    builder `arg_names=`, or `.bind_identifier(...)`) is a hard error.
+    5a covers suffix occurrences on `ast.ClassDef` / `ast.FunctionDef` /
+    `ast.AsyncFunctionDef` names; 5b extends the scan to `ast.Name` /
+    `ast.arg` / `ast.Attribute` per §1 of the issue.
+    """
+    by_name: dict[str, list[int]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        base, marker = strip_identifier_suffix(node.name)
+        if marker is not ARG_IDENTIFIER:
+            continue
+        lineno = getattr(node, "lineno", 0)
+        by_name.setdefault(base, []).append(lineno)
+    return [
+        (name, tuple(sorted(set(lines))))
+        for name, lines in sorted(by_name.items())
+    ]
+
+
+def _strip_keep_identifier_suffix(tree: ast.AST) -> None:
+    """Strip `__astichi_keep__` from every identifier carrying it.
+
+    Issue 005 §4 / §5 step 4: after hygiene + residual-marker stripping,
+    every class/def name and matching `ast.Name` Load/Store reference
+    bearing the keep suffix is rewritten to the stripped base. The
+    stripped name was added to `preserved_names` before hygiene (see
+    `analyze_names`), so any competing `foo` has already been renamed
+    and the rewrite cannot introduce a collision. 5a handles class /
+    def names and `ast.Name.id` occurrences; 5b extends the walk to
+    `ast.arg` and `ast.Attribute` positions.
+    """
+    _KeepIdentifierSuffixStripper().visit(tree)
+
+
+class _KeepIdentifierSuffixStripper(ast.NodeTransformer):
+    def _strip(self, name: str) -> str:
+        base, marker = strip_identifier_suffix(name)
+        return base if marker is KEEP_IDENTIFIER else name
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        node.name = self._strip(node.name)
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        node.name = self._strip(node.name)
+        return self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        node.name = self._strip(node.name)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        node.id = self._strip(node.id)
+        return node
 
 
 def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:

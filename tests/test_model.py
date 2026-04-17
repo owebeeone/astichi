@@ -15,18 +15,26 @@ value = missing_name
 astichi_export(result)
 
 
-class class_name__astichi__:
+class class_name__astichi_arg__:
     pass
 """
     )
 
     assert isinstance(compiled, astichi.Composable)
     assert isinstance(compiled, BasicComposable)
-    assert [port.name for port in compiled.demand_ports] == ["body", "missing_name"]
-    assert [port.name for port in compiled.supply_ports] == ["class_name", "result"]
-    assert compiled.demand_ports[0].shape is BLOCK
-    assert compiled.demand_ports[1].shape is SCALAR_EXPR
-    assert compiled.supply_ports[0].shape is IDENTIFIER
+    # Issue 005 §2: `__astichi_arg__` sites expose IDENTIFIER-shape
+    # demand ports; order is name-sorted by `_merge_demand_ports`.
+    assert [port.name for port in compiled.demand_ports] == [
+        "body",
+        "class_name",
+        "missing_name",
+    ]
+    assert [port.name for port in compiled.supply_ports] == ["result"]
+    demand_by_name = {port.name: port for port in compiled.demand_ports}
+    assert demand_by_name["body"].shape is BLOCK
+    assert demand_by_name["missing_name"].shape is SCALAR_EXPR
+    assert demand_by_name["class_name"].shape is IDENTIFIER
+    assert demand_by_name["class_name"].sources == frozenset({"arg"})
     assert compiled.classification is not None
 
 
@@ -70,18 +78,22 @@ value = astichi_hole(slot)
         )
 
 
-def test_compile_rejects_incompatible_supply_port_declarations() -> None:
+def test_compile_rejects_incompatible_demand_port_declarations_across_shapes() -> None:
+    # Issue 005 retires the IDENTIFIER supply branch (previously backed by
+    # `__astichi__` / `astichi_definitional_name`). The cross-shape
+    # collision path is now demand-side: a scalar-expr bind-external slot
+    # and an identifier-shape `__astichi_arg__` slot with the same name.
     with pytest.raises(
         ValueError,
-        match="incompatible supply-port declarations for result",
+        match="incompatible demand-port declarations for result",
     ):
         astichi.compile(
             """
-astichi_export(result)
+astichi_bind_external(result)
 
 
-def result__astichi__():
-    return 1
+class result__astichi_arg__:
+    pass
 """
         )
 

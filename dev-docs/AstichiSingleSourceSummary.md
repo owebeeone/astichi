@@ -24,14 +24,23 @@ items.
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
   - V2 Phase 3 polish has not started.
+  - Identifier cluster `005` `5a` complete: the legacy `__astichi__` suffix
+    and `astichi_definitional_name` call form are retired; new class/def
+    suffix markers `__astichi_keep__` (hygiene directive, strip pass after
+    hygiene) and `__astichi_arg__` (IDENTIFIER-shape demand port + gate
+    before hygiene) are live. Per-occurrence scope grouping, wider node
+    coverage, and the resolver API are still `5b`/`5c`/`5d`.
 - Test status as of 2026-04-17:
-  - full suite: `241 passed, 1 xfailed`
+  - full suite: `245 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - start the identifier cluster — `005` (within-scope identifier slots via
-    `__astichi_arg__` / `__astichi_keep__`) and/or `006` (cross-scope threading
-    via `astichi_import` / `astichi_pass`); see §11.2 and issues 005/006
+  - continue the identifier cluster — `005` `5b` (grouped
+    `(stripped_name, scope)` occurrence tracking in ports; broaden
+    suffix recognition to `ast.Name` / `ast.arg` / `ast.Attribute`),
+    then `5c` / `5d`; `006` (cross-scope threading via `astichi_import` /
+    `astichi_pass`) follows once identifier surfaces are complete. See
+    §11.2 and issues 005/006.
 
 ## 2. Governing principle and non-negotiable rules
 
@@ -612,10 +621,18 @@ Recommended execution order:
    - dual pinning for `astichi_pass`
    - interaction-matrix rejection rules
 2. Identifier slots foundation from 005
-   - change the legacy identifier marker into the real identifier-demand model
-   - add grouped occurrence tracking per `(stripped_name, Astichi scope)`
-   - move identifier resolution into materialize before hygiene
-   - add keep-strip pass after hygiene
+   - `5a` **done**: legacy `__astichi__` / `astichi_definitional_name`
+     surface retired; new `__astichi_keep__` / `__astichi_arg__` suffix
+     markers live on class/def names; arg-demand port + materialize gate
+     + keep-strip pass all in place.
+   - `5b` next: grouped occurrence tracking per `(stripped_name, Astichi
+     scope)`; broaden suffix recognition to `ast.Name` / `ast.arg` /
+     `ast.Attribute`; one `DemandPort(shape=IDENTIFIER)` per scope.
+   - `5c` identifier resolution pass in materialize (before hygiene):
+     atomic substitution across every occurrence per `(name, scope)`.
+   - `5d` builder / composable API: `arg_names=` / `keep_names=` on
+     `astichi.compile` and `builder.add`; `.bind_identifier(**names)` on
+     composables; `wire_identifier(...)` on builder slot handles.
 3. Boundary-threading implementation for 006
    - add `astichi_import`
    - add `astichi_pass`
@@ -682,8 +699,10 @@ Do this, in order:
 
 1. read this file only
 2. confirm the current suite still passes
-3. Phase 2 (`2a`–`2e`) is closed; pick up at the identifier cluster (§11.2)
-4. implement the identifier cluster in the order from §11.2
+3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is in flight.
+   `005` `5a` is done — pick up at `5b` (grouped occurrence tracking +
+   wider node-type coverage) next.
+4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup
 

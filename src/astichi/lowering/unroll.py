@@ -21,8 +21,10 @@ Rejects at unroll time:
 - port-creating or binding name-bearing markers inside a loop body
   (`UnrollRevision.md` §4.3): `astichi_export`, `astichi_bind_external`,
   `astichi_bind_once`, `astichi_bind_shared`, `astichi_insert`. Hygiene
-  directives (`astichi_keep`, `astichi_definitional_name`) are idempotent
-  and permitted.
+  directives (`astichi_keep`, and the identifier-shape suffixes
+  `__astichi_keep__` / `__astichi_arg__` per issue 005) are idempotent
+  and permitted; per-iteration refinement of arg semantics inside loops
+  is deferred to 5b.
 - `astichi_for` loops with an `else` clause (V2 reserves the shape)
 """
 
