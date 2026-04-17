@@ -48,7 +48,7 @@ def wrap(callback__astichi_arg__):
 
 
 def test_compile_arg_names_rejects_unknown_slot_name() -> None:
-    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ / astichi_import slot named `missing`"):
         astichi.compile(
             """
 def wrap(callback__astichi_arg__):

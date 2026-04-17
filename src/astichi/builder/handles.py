@@ -113,7 +113,49 @@ class _NamedTargetAdder:
     target: TargetRef
     source_instance: str
 
-    def __call__(self, *, order: int = 0) -> AdditiveEdge:
+    def __call__(
+        self,
+        *,
+        order: int = 0,
+        arg_names: Mapping[str, str] | None = None,
+        keep_names: Iterable[str] | None = None,
+    ) -> AdditiveEdge:
+        """Wire ``self.source_instance`` into ``self.target`` additively.
+
+        Issue 006 6c: when the source instance declares an
+        ``astichi_import(name)`` boundary (equivalently an
+        ``name__astichi_arg__`` suffix slot), ``arg_names`` names the
+        outer-scope identifier the import should resolve to. Identity
+        mappings (``{"total": "total"}``) are the common case — the
+        user states which scope provides the name, while the value
+        matches the inner declaration. Non-identity mappings
+        (``{"total": "accumulator"}``) additionally rename the inner
+        references to the outer name before hygiene runs.
+
+        ``keep_names`` is the same surface as
+        ``builder.add.<Name>(piece, keep_names=...)`` but scoped to
+        the contributing instance. Both maps union with any bindings
+        already attached to the instance via compile-time ``arg_names=``
+        or an earlier ``builder.add.<Name>(...)`` call; conflicts
+        raise.
+        """
+        if arg_names is not None or keep_names is not None:
+            record = self.graph._instances.get(self.source_instance)
+            if record is None:
+                raise ValueError(
+                    f"unknown source instance: {self.source_instance}"
+                )
+            piece = record.composable
+            if not isinstance(piece, BasicComposable):
+                raise TypeError(
+                    "arg_names/keep_names require a BasicComposable "
+                    f"instance; got {type(piece).__name__}"
+                )
+            if keep_names is not None:
+                piece = piece.with_keep_names(keep_names)
+            if arg_names is not None:
+                piece = piece.bind_identifier(arg_names)
+            self.graph.replace_instance(self.source_instance, piece)
         return self.graph.add_additive_edge(
             target=self.target,
             source_instance=self.source_instance,

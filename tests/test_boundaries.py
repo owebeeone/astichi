@@ -355,3 +355,148 @@ def shell_block():
         pass
 """
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue 006 6c: import resolution + stripping + builder-edge arg_names.
+# ---------------------------------------------------------------------------
+
+
+_ACCUM_ROOT_SRC = """
+total = 0
+astichi_hole(body)
+result = total
+"""
+
+
+def _accum_step_src(value: int) -> str:
+    return (
+        "astichi_import(total)\n"
+        "\n"
+        f"total = total + {value}\n"
+    )
+
+
+def _exec_emitted(composable) -> dict[str, object]:
+    source = composable.emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<test>", "exec"), namespace)  # noqa: S102
+    return namespace
+
+
+def test_6c_import_threading_unifies_total_across_shells() -> None:
+    # Issue 006 6c: three StepN shells each declare
+    # `astichi_import(total)`. With the hygiene fix classifying
+    # Store/Load of `total` to the outer Astichi scope, the shells'
+    # Stores collapse onto Root's `total` instead of renaming to
+    # shell-local `total__astichi_scoped_N`.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.add.Step2(astichi.compile(_accum_step_src(2)))
+    builder.add.Step3(astichi.compile(_accum_step_src(3)))
+    builder.Root.body.add.Step1(order=0, arg_names={"total": "total"})
+    builder.Root.body.add.Step2(order=1, arg_names={"total": "total"})
+    builder.Root.body.add.Step3(order=2, arg_names={"total": "total"})
+
+    materialized = builder.build().materialize()
+    namespace = _exec_emitted(materialized)
+
+    assert namespace["total"] == 6
+    assert namespace["result"] == 6
+
+
+def test_6c_materialize_strips_astichi_import_statements() -> None:
+    # Issue 006 6c: residual `astichi_import(name)` Expr statements
+    # must not appear in the emitted source — the residual-marker
+    # stripper deletes them after port extraction and hygiene.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.Root.body.add.Step1(order=0, arg_names={"total": "total"})
+
+    source = builder.build().materialize().emit(provenance=False)
+
+    assert "astichi_import" not in source
+    assert "astichi_pass" not in source
+
+
+def test_6c_non_identity_arg_names_renames_import_to_outer_target() -> None:
+    # Issue 006 6c: `arg_names={"total": "accumulator"}` rewrites every
+    # `total` Name/arg inside the declaring shell body to `accumulator`
+    # before hygiene runs, threading the Stores onto an outer
+    # `accumulator` binding.
+    root_src = """
+accumulator = 0
+astichi_hole(body)
+result = accumulator
+"""
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(root_src, keep_names=["accumulator", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.add.Step2(astichi.compile(_accum_step_src(2)))
+    builder.Root.body.add.Step1(
+        order=0, arg_names={"total": "accumulator"}
+    )
+    builder.Root.body.add.Step2(
+        order=1, arg_names={"total": "accumulator"}
+    )
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+    assert "total" not in source
+    namespace = _exec_emitted(materialized)
+    assert namespace["accumulator"] == 3
+    assert namespace["result"] == 3
+
+
+def test_6c_default_scope_import_threads_without_explicit_arg_names() -> None:
+    # Issue 006 6c: without any explicit wiring the import defaults
+    # to "same name in outer scope". The shell body's Store/Load of
+    # `total` still threads onto Root's `total`.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.Root.body.add.Step1(order=0)
+
+    namespace = _exec_emitted(builder.build().materialize())
+    assert namespace["total"] == 1
+    assert namespace["result"] == 1
+
+
+def test_6c_builder_arg_names_rejects_unknown_import_slot() -> None:
+    # Issue 006 6c: the target-adder arg_names map is validated by
+    # `BasicComposable.bind_identifier`, which now accepts both
+    # `__astichi_arg__`- and `astichi_import`-sourced IDENTIFIER
+    # demand ports. An unknown slot still raises.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+
+    with pytest.raises(
+        ValueError,
+        match=r"no __astichi_arg__ / astichi_import slot named `missing`",
+    ):
+        builder.Root.body.add.Step1(order=0, arg_names={"missing": "total"})
+
+
+def test_6c_compile_arg_names_accepts_import_sourced_demand() -> None:
+    # Issue 006 6c: `astichi.compile(..., arg_names={"total": "total"})`
+    # is valid for a piece whose only IDENTIFIER demand comes from an
+    # `astichi_import` declaration (no `__astichi_arg__` suffix
+    # anywhere).
+    compiled = astichi.compile(
+        _accum_step_src(5),
+        arg_names={"total": "total"},
+    )
+    assert compiled.arg_bindings == (("total", "total"),)

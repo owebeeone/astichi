@@ -157,20 +157,24 @@ class BasicComposable(Composable):
         if not resolved:
             return self
 
+        # Issue 006 6c: accept IDENTIFIER demand ports sourced from
+        # either `__astichi_arg__` suffix slots or `astichi_import`
+        # declarations — they share the same wiring surface.
         arg_demand_names = {
             port.name
             for port in self.demand_ports
-            if "arg" in port.sources
+            if "arg" in port.sources or "import" in port.sources
         }
         existing = dict(self.arg_bindings)
         for key, value in resolved.items():
             if key not in arg_demand_names:
                 known = tuple(sorted(arg_demand_names))
                 raise ValueError(
-                    f"no __astichi_arg__ slot named `{key}`; known "
-                    f"identifier-arg demands on this composable: {known!r}"
+                    f"no __astichi_arg__ / astichi_import slot named "
+                    f"`{key}`; known identifier demands on this "
+                    f"composable: {known!r}"
                 )
-            if key in existing:
+            if key in existing and existing[key] != value:
                 raise ValueError(
                     f"cannot re-bind identifier arg `{key}`: already "
                     f"resolved to `{existing[key]}`"

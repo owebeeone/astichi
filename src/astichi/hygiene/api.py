@@ -206,12 +206,22 @@ def assign_scope_identity(
             fresh_scope_local_bindings[id(node)] = _collect_expression_bindings(
                 node.args[1]
             )
+    # Issue 006 6c: names declared via `astichi_import(name)` at the top
+    # of a fresh Astichi scope's body bind *outer-scope* references, not
+    # inner-scope locals. We classify both Load and Store occurrences of
+    # those names in the outer scope so `rename_scope_collisions`
+    # unifies them with the outer scope's binding instead of treating
+    # them as a fresh per-shell rename target.
+    fresh_scope_imported_names = _collect_fresh_scope_imports(
+        composable.tree, composable.markers
+    )
     visitor = _ScopeIdentityVisitor(
         ignored_name_nodes=ignored_name_nodes,
         preserved_names=frozenset(set(preserved_names) | set(marker_preserved_names)),
         external_names=frozenset(set(external_names) | set(marker_external_names)),
         fresh_scope_nodes=effective_fresh_scope_nodes,
         fresh_scope_local_bindings=fresh_scope_local_bindings,
+        fresh_scope_imported_names=fresh_scope_imported_names,
     )
     visitor.visit(composable.tree)
     return ScopeAnalysis(occurrences=tuple(visitor.occurrences))
@@ -294,10 +304,9 @@ def _collect_boundary_preserved(
 
     Both boundary markers pin their name against hygiene rename and
     suppress implied-demand classification for Load references within
-    the scope. Scope-aware pinning (`import` = inner only, `pass` =
-    both) is deferred to 6c when the scope-aware resolver lands; 6b
-    treats them alike because ``_ScopeIdentityVisitor`` already scopes
-    preserved lookups by the enclosing Astichi scope.
+    the scope. Per-shell scope override for imports is layered on by
+    ``_collect_fresh_scope_imports`` (issue 006 6c); this set exists to
+    seed the flat `preserved` set that `analyze_names` consumes.
     """
     preserved: set[str] = set()
     for marker in markers:
@@ -308,6 +317,76 @@ def _collect_boundary_preserved(
         if marker.name_id is not None:
             preserved.add(marker.name_id)
     return frozenset(preserved)
+
+
+def _collect_fresh_scope_imports(
+    tree: ast.Module, markers: tuple[object, ...]
+) -> dict[int, frozenset[str]]:
+    """Map each fresh Astichi scope node to the names it ``astichi_import``\\s.
+
+    Issue 006 6c: when a fresh scope (an ``@astichi_insert``-decorated
+    shell or expression-form ``astichi_insert`` call) declares
+    ``astichi_import(name)`` in its body, the inner scope's
+    Store/Load references to `name` logically belong to the outer
+    Astichi scope — the import is an alias-through, not a fresh
+    per-shell rebind. We collect the per-shell set here so
+    `_ScopeIdentityVisitor` can override scope classification when it
+    descends into each shell.
+
+    The root scope (module body) is intentionally omitted: module-level
+    imports surface as IDENTIFIER demand ports on the composable and
+    have no inner-scope rename to prevent.
+    """
+    imports_by_scope: dict[int, set[str]] = {}
+    import_markers = [
+        marker
+        for marker in markers
+        if isinstance(marker, RecognizedMarker)
+        and marker.source_name == "astichi_import"
+        and marker.name_id is not None
+    ]
+    if not import_markers:
+        return {}
+    parent_scope_node: dict[int, ast.AST] = {}
+    stack: list[ast.AST] = [tree]
+
+    def _enter(node: ast.AST, scope_node: ast.AST) -> None:
+        parent_scope_node[id(node)] = scope_node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            child_scope = node if _has_insert_decorator(node.decorator_list) else scope_node
+            for decorator in node.decorator_list:
+                _enter(decorator, scope_node)
+            for child in node.body:
+                _enter(child, child_scope)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for argument in (
+                    list(node.args.posonlyargs)
+                    + list(node.args.args)
+                    + list(node.args.kwonlyargs)
+                ):
+                    _enter(argument, child_scope)
+            return
+        if isinstance(node, ast.Call) and _is_expression_insert(node):
+            _enter(node.func, scope_node)
+            _enter(node.args[0], scope_node)
+            _enter(node.args[1], node)
+            for keyword in node.keywords:
+                _enter(keyword, scope_node)
+            return
+        for child in ast.iter_child_nodes(node):
+            _enter(child, scope_node)
+
+    for child in tree.body:
+        _enter(child, tree)
+    for marker in import_markers:
+        scope_node = parent_scope_node.get(id(marker.node), tree)
+        if scope_node is tree:
+            continue
+        assert marker.name_id is not None
+        imports_by_scope.setdefault(id(scope_node), set()).add(marker.name_id)
+    return {
+        scope_id: frozenset(names) for scope_id, names in imports_by_scope.items()
+    }
 
 
 def _raw_suffixed_name(node: ast.AST) -> str | None:
@@ -514,15 +593,18 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         external_names: frozenset[str],
         fresh_scope_nodes: tuple[ast.AST, ...],
         fresh_scope_local_bindings: dict[int, frozenset[str]] | None = None,
+        fresh_scope_imported_names: dict[int, frozenset[str]] | None = None,
     ) -> None:
         self.ignored_name_nodes = ignored_name_nodes
         self.preserved_names = preserved_names
         self.external_names = external_names
         self.fresh_scope_node_ids = {id(node) for node in fresh_scope_nodes}
         self.fresh_scope_local_bindings = fresh_scope_local_bindings or {}
+        self.fresh_scope_imported_names = fresh_scope_imported_names or {}
         self.scope_counter = count(2)
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
         self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
+        self.astichi_scope_imports_stack: list[frozenset[str]] = []
         self.python_bindings = _ScopeBindingCollector().bindings_by_scope
         self.python_scope_bindings: dict[int, frozenset[str]] = {}
         self.python_scope_stack: list[frozenset[str]] = []
@@ -551,9 +633,20 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         if id(node) in self.ignored_name_nodes:
             return
-        if isinstance(node.ctx, ast.Load):
+        imported = self._current_imported_names()
+        if node.id in imported:
+            # Issue 006 6c: an import-declared name is an alias for the
+            # outer scope's binding; both Load and Store occurrences
+            # live in the outer Astichi scope so `rename_scope_collisions`
+            # unifies them with the outer binding.
+            role: LexicalRole = "preserved"
+            binding_kind: BindingKind = (
+                "reference" if isinstance(node.ctx, ast.Load) else "binding"
+            )
+            scope_id = self._outer_scope()
+        elif isinstance(node.ctx, ast.Load):
             role = self._load_role(node.id)
-            binding_kind: BindingKind = "reference"
+            binding_kind = "reference"
             scope_id = self._outer_scope() if role != "internal" else self._current_scope()
         else:
             role = "internal"
@@ -595,6 +688,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             if pushed_fresh:
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
+                self.astichi_scope_imports_stack.pop()
             self.python_scope_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
@@ -608,6 +702,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             if pushed_fresh:
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
+                self.astichi_scope_imports_stack.pop()
 
     def _push_fresh_scope_if_needed(self, node: ast.AST) -> bool:
         if id(node) not in self.fresh_scope_node_ids:
@@ -615,6 +710,8 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.scope_stack.append(ScopeId(next(self.scope_counter)))
         local = self.fresh_scope_local_bindings.get(id(node))
         self.astichi_scope_bindings_stack.append(local)
+        imported = self.fresh_scope_imported_names.get(id(node), frozenset())
+        self.astichi_scope_imports_stack.append(imported)
         return True
 
     def _current_scope(self) -> ScopeId:
@@ -635,6 +732,11 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             if local is not None:
                 return local
         return None
+
+    def _current_imported_names(self) -> frozenset[str]:
+        if not self.astichi_scope_imports_stack:
+            return frozenset()
+        return self.astichi_scope_imports_stack[-1]
 
     def _load_role(self, raw_name: str) -> LexicalRole:
         astichi_local = self._current_astichi_bindings()

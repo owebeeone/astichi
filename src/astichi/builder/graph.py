@@ -50,6 +50,25 @@ class BuilderGraph:
         self._instances[name] = record
         return record
 
+    def replace_instance(self, name: str, composable: Composable) -> InstanceRecord:
+        """Replace an existing instance's composable.
+
+        Issue 006 6c: the target-adder surface
+        (``target.add.X(order=0, arg_names=..., keep_names=...)``) layers
+        per-edge identifier wiring onto the source instance's piece by
+        unioning the supplied ``arg_names`` / ``keep_names`` into the
+        existing instance via ``bind_identifier`` / ``with_keep_names``
+        and swapping the registered record. Both helper methods are
+        conflict-detecting, so wiring the same instance from multiple
+        edges with compatible bindings unions cleanly and incompatible
+        bindings raise.
+        """
+        if name not in self._instances:
+            raise ValueError(f"unknown instance: {name}")
+        record = InstanceRecord(name=name, composable=composable)
+        self._instances[name] = record
+        return record
+
     def add_additive_edge(
         self,
         *,

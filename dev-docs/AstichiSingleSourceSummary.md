@@ -685,10 +685,34 @@ Recommended execution order:
      coexist with keep / arg / export. Scope-aware pinning (strict
      inner-only for `import`, dual inner+outer for `pass`) is
      deferred to 6c when the resolver lands.
-   - `6c` remaining: resolution passes in materialize (`pass`
-     then `import` with invariant asserts); enable
-     `wire_identifier(...)` on builder slot handles once supply
-     sources land.
+   - `6c` **done** (for `astichi_import`): the hygiene-scope visitor
+     classifies both Store and Load of import-declared names to the
+     outer Astichi scope so `rename_scope_collisions` unifies them
+     with the outer binding instead of creating a fresh per-shell
+     rename target; the residual-marker stripper removes every
+     surviving `astichi_import(...)` / `astichi_pass(...)` Expr
+     statement from the materialized tree; the same `arg_bindings`
+     map that `_resolve_arg_identifiers` consumes is now also passed
+     to `_resolve_boundary_imports`, which rewrites `astichi_import`
+     declarations (and their Name/arg references within the declaring
+     shell body, stopping at nested shell boundaries) when the user
+     supplies a non-identity rebind such as
+     `arg_names={"total": "accumulator"}`. The builder target-adder
+     surface grows `arg_names=` / `keep_names=` parameters
+     (`target.add.<Name>(order=0, arg_names={"total": "total"})`)
+     that union onto the source instance via the
+     `BuilderGraph.replace_instance` helper. `_validate_arg_names` /
+     `BasicComposable.bind_identifier` now accept IDENTIFIER demand
+     ports sourced from either `__astichi_arg__` suffix or
+     `astichi_import` declarations. End-to-end accumulator repro
+     (`scratch/test_mat2.py`) unifies `total` across three sibling
+     StepN shells and emits a clean module-scope program.
+   - `6c` remaining: reshape `astichi_pass` into the expression form
+     the spec describes (currently still the statement declaration
+     from 6a); wire `astichi_pass` through the materialize resolver
+     (value-level) with invariant asserts; enable
+     `wire_identifier(...)` on builder slot handles once
+     `astichi_pass` supply sources land.
 4. Soundness closure for 004
    - gate undeclared crossings
    - gate unresolved implied demands
@@ -754,10 +778,14 @@ Do this, in order:
 3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is closed
    (`005` `5a`–`5d` all landed, modulo the explicitly-deferred
    `ast.Attribute` / per-scope-isolation / `wire_identifier(...)`
-   surfaces). `006` is in flight: `6a` (markers + placement gate +
-   port extraction refactor) and `6b` (hygiene pins + interaction
-   matrix) are done. Pick up at `6c` (materialize resolution passes
-   for `astichi_pass` / `astichi_import`) next.
+   surfaces). `006` boundary-threading: `6a` (markers + placement
+   gate + port extraction refactor), `6b` (hygiene pins + interaction
+   matrix), and `6c` for `astichi_import` (hygiene scope override +
+   residual stripping + non-identity rebind resolver +
+   target-adder `arg_names=` / `keep_names=`) are done. Next up
+   inside 006 is `astichi_pass` reshape (expression form) plus the
+   value-level resolver; then `wire_identifier(...)` surfaces on
+   builder slot handles.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup

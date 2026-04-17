@@ -314,7 +314,7 @@ def step__astichi_arg__():
     return 1
 """,
     )
-    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ / astichi_import slot named `missing`"):
         compiled.bind_identifier(missing="x")
 
 

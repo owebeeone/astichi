@@ -846,6 +846,13 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     # pinned through hygiene so later passes do not rename them.
     if arg_bindings:
         _resolve_arg_identifiers(tree, arg_bindings)
+        # Issue 006 6c: the same `arg_bindings` map is consulted to
+        # rename `astichi_import(x)` declarations and their body
+        # references from inner `x` to outer `arg_bindings[x]`. Entries
+        # that do not match an import site are a no-op here (they may
+        # still have matched `__astichi_arg__` above, or they may
+        # surface as a validation error at compile-time).
+        _resolve_boundary_imports(tree, arg_bindings)
     markers = recognize_markers(tree)
     pinned_targets = frozenset(arg_bindings.values())
     effective_keep_names = composable.keep_names | pinned_targets
@@ -1098,6 +1105,19 @@ _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
 )
 
 
+# Issue 006 6c: `astichi_import(name)` / `astichi_pass(name)` are
+# compile-time declarations that have already contributed port records
+# and scope-identity classification by the time we run the residual
+# stripper. They carry no runtime value and must not appear in the
+# emitted source. Unlike `astichi_keep` / `astichi_export`, these
+# markers are statement-only (no expression-form wrapping), so we
+# strip the enclosing Expr and leave any embedded Call position
+# untouched.
+_BOUNDARY_STATEMENT_MARKER_NAMES: frozenset[str] = frozenset(
+    {"astichi_import", "astichi_pass"}
+)
+
+
 def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
     """Return the wrapped identifier expression if node is a residual-marker call."""
     if not isinstance(node, ast.Call):
@@ -1109,6 +1129,14 @@ def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
     if len(node.args) != 1 or node.keywords:
         return None
     return node.args[0]
+
+
+def _is_boundary_statement_marker(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Name):
+        return False
+    return node.func.id in _BOUNDARY_STATEMENT_MARKER_NAMES
 
 
 def _strip_residual_markers(tree: ast.AST) -> None:
@@ -1158,6 +1186,11 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
 
     def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
         if _residual_marker_inner(node.value) is not None:
+            return None
+        if _is_boundary_statement_marker(node.value):
+            # Issue 006 6c: strip the declaration statement; port
+            # records and hygiene-scope classification already consumed
+            # this marker upstream.
             return None
         return self.generic_visit(node)
 
@@ -1268,6 +1301,152 @@ class _ArgIdentifierResolver(ast.NodeTransformer):
     def visit_arg(self, node: ast.arg) -> ast.AST:
         node.arg = self._resolve(node.arg)
         return self.generic_visit(node)
+
+
+def _resolve_boundary_imports(
+    tree: ast.AST, bindings: dict[str, str]
+) -> None:
+    """Rename ``astichi_import``-declared names per explicit user bindings.
+
+    Issue 006 6c: when the user supplies ``arg_names={"x": "y"}`` for a
+    piece that declares ``astichi_import(x)`` inside a fresh Astichi
+    scope (``@astichi_insert``-decorated shell body), the inner scope's
+    references to `x` must thread to outer `y` instead of outer `x`.
+    This pass rewrites, within each shell body:
+
+    - every ``astichi_import(x)`` declaration's name argument from `x`
+      to `y` (so the post-rewrite hygiene-scope collector sees `y`);
+    - every ``ast.Name`` (any context) and ``ast.arg`` whose identifier
+      is `x` — up to nested fresh-scope boundaries, where inner shells
+      that re-declare ``astichi_import(x)`` take over.
+
+    Identity bindings (`"x" -> "x"`) are a no-op; names the user did
+    not rebind are left alone and default to the enclosing Astichi
+    scope's same-named binding (the 6c hygiene fix handles those
+    without any AST rewrite).
+    """
+    if not bindings:
+        return
+    for shell_node in _find_astichi_shell_nodes(tree):
+        declared_imports = _declared_imports_at_shell_top(shell_node)
+        local_map = {
+            name: bindings[name]
+            for name in declared_imports
+            if name in bindings and bindings[name] != name
+        }
+        if not local_map:
+            continue
+        for statement in shell_node.body:
+            info = _boundary_import_statement(statement)
+            if info is not None and info[0] in local_map:
+                _rewrite_boundary_import_name(statement, local_map[info[0]])
+                continue
+            _BoundaryImportRenamer(local_map).visit(statement)
+
+
+def _find_astichi_shell_nodes(
+    tree: ast.AST,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
+    shells: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for decorator in node.decorator_list:
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Name)
+                    and decorator.func.id == "astichi_insert"
+                ):
+                    shells.append(node)
+                    break
+    return shells
+
+
+def _declared_imports_at_shell_top(
+    shell: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> frozenset[str]:
+    names: set[str] = set()
+    for statement in shell.body:
+        info = _boundary_import_statement(statement)
+        if info is None:
+            break
+        names.add(info[0])
+    return frozenset(names)
+
+
+def _boundary_import_statement(stmt: ast.stmt) -> tuple[str, ast.Call] | None:
+    if not isinstance(stmt, ast.Expr):
+        return None
+    value = stmt.value
+    if not isinstance(value, ast.Call):
+        return None
+    if not isinstance(value.func, ast.Name) or value.func.id != "astichi_import":
+        return None
+    if not value.args or not isinstance(value.args[0], ast.Name):
+        return None
+    return value.args[0].id, value
+
+
+def _rewrite_boundary_import_name(stmt: ast.stmt, new_name: str) -> None:
+    info = _boundary_import_statement(stmt)
+    assert info is not None, "caller must pre-check the statement"
+    _, call = info
+    target = call.args[0]
+    assert isinstance(target, ast.Name)
+    target.id = new_name
+
+
+class _BoundaryImportRenamer(ast.NodeTransformer):
+    """Rewrite ``ast.Name`` / ``ast.arg`` occurrences under one shell body.
+
+    Stops at nested ``@astichi_insert``-decorated shell boundaries: a
+    nested shell that does NOT re-declare ``astichi_import(x)`` inherits
+    the outer rewrite; a nested shell that DOES re-declare it is
+    processed by its own outer-level pass call, so this walker
+    short-circuits at nested shell roots to avoid double-rewriting.
+    """
+
+    def __init__(self, rename_map: dict[str, str]) -> None:
+        self._rename_map = rename_map
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        if _is_astichi_insert_shell(node):
+            return node
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        if _is_astichi_insert_shell(node):
+            return node
+        return self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        if _is_astichi_insert_shell(node):
+            return node
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        replacement = self._rename_map.get(node.id)
+        if replacement is not None:
+            node.id = replacement
+        return node
+
+    def visit_arg(self, node: ast.arg) -> ast.AST:
+        replacement = self._rename_map.get(node.arg)
+        if replacement is not None:
+            node.arg = replacement
+        return self.generic_visit(node)
+
+
+def _is_astichi_insert_shell(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> bool:
+    for decorator in node.decorator_list:
+        if (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Name)
+            and decorator.func.id == "astichi_insert"
+        ):
+            return True
+    return False
 
 
 def _assert_no_arg_suffix_remains(tree: ast.AST) -> None:

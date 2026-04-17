@@ -160,7 +160,7 @@ def test_builder_add_keep_names_pins_identifier_through_merge() -> None:
 def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
     piece = astichi.compile("value = 1\n")
     builder = astichi.build()
-    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ / astichi_import slot named `missing`"):
         builder.add.A(piece, arg_names={"missing": "x"})
 
 
