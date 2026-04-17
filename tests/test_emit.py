@@ -73,6 +73,19 @@ def test_emit_with_provenance_includes_comment() -> None:
     compile(result, "<test>", "exec")
 
 
+def test_emit_with_provenance_appends_single_trailing_comment() -> None:
+    compiled = astichi.compile("value = 1\n")
+    result = compiled.emit(provenance=True)
+
+    lines = result.splitlines()
+    provenance_lines = [
+        line for line in lines if line.startswith("# astichi-provenance: ")
+    ]
+
+    assert len(provenance_lines) == 1
+    assert lines[-1].startswith("# astichi-provenance: ")
+
+
 def test_emit_without_provenance_excludes_comment() -> None:
     compiled = astichi.compile("value = 1\n")
     result = compiled.emit(provenance=False)

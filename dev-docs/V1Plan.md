@@ -10,7 +10,7 @@ Related documents:
 - `astichi/dev-docs/IdentifierHygieneRequirements.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
 - `astichi/dev-docs/AstichiInternalsDesignV1.md`
-- `astichi/dev-docs/AstichiV1Milestones.md`
+- `astichi/dev-docs/historical/AstichiV1Milestones.md` (archived; original milestone breakdown)
 - `astichi/dev-docs/V1ProgressRegister.md`
 
 ## 1. Plan structure

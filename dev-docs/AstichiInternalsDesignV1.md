@@ -9,7 +9,7 @@ Related documents:
 
 - `astichi/dev-docs/AstichiApiDesignV1.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
-- `astichi/dev-docs/AstichiV1Milestones.md`
+- `astichi/dev-docs/historical/AstichiV1Milestones.md` (archived)
 
 ## 1. Goals
 

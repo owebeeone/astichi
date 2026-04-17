@@ -25,7 +25,6 @@ For Astichi V1 work, use these docs:
 - `dev-docs/AstichiCodingRules.md`
 - `dev-docs/AstichiApiDesignV1.md`
 - `dev-docs/AstichiImplementationBoundaries.md`
-- `dev-docs/AstichiV1Milestones.md`
 - `dev-docs/V1ProgressRegister.md`
 
 ## Roll-build method

@@ -13,7 +13,6 @@ Read these first:
 - `astichi/dev-docs/AstichiCodingRules.md`
 - `astichi/dev-docs/AstichiApiDesignV1.md`
 - `astichi/dev-docs/IdentifierHygieneRequirements.md`
-- `astichi/dev-docs/AstichiV1Milestones.md`
 - `astichi/dev-docs/V1Plan.md`
 - `astichi/dev-docs/AstichiImplementationBoundaries.md`
 - `astichi/dev-docs/V1ProgressRegister.md`

@@ -8,7 +8,7 @@ the V1 design must be built and tested.
 Related documents:
 
 - `astichi/dev-docs/AstichiApiDesignV1.md`
-- `astichi/dev-docs/AstichiV1Milestones.md`
+- `astichi/dev-docs/historical/AstichiV1Milestones.md` (archived)
 - `astichi/dev-docs/IdentifierHygieneRequirements.md`
 
 ## 1. Rule
