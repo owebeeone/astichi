@@ -12,10 +12,10 @@ V1 closed and archived in `historical/`. V2 scope is documented in
 ## Current status
 
 - Active phase: **Phase 1 — external bind** (in progress)
-- Active sub-phase: `1d` (`BasicComposable.bind(mapping, /, **values)`)
-- Next concrete action: add the public `bind()` API on
-  `BasicComposable`, merge mapping and kwargs per the locked signature,
-  apply the substitution engine, and return a new composable snapshot.
+- Active sub-phase: `1e` (`materialize()` integration)
+- Next concrete action: make `materialize()` reject unresolved
+  `bind_external` demands with a clear materialize-time error and lock
+  that behavior with focused tests.
 
 ## Conventions
 
@@ -79,14 +79,18 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
 
 ### 1d. `BasicComposable.bind(mapping, /, **values)` API
 
-- Status: pending
+- Status: complete
 - Layer: `model`
 - Artifacts:
   - `src/astichi/model/basic.py` (extend)
   - `tests/test_bind_external.py` (new or extended)
 - Exit: returns a new composable; unknown-key / re-bind / empty-bind
   behaviors match `BindExternal.md §6`.
-- Notes: —
+- Notes: `BasicComposable.bind()` now merges mapping and kwargs with
+  kwargs winning, validates keys and values, deep-copies the tree,
+  applies external substitution, re-runs marker/port extraction, and
+  tracks already-applied external names so rebind is distinguishable
+  from unknown-key error.
 
 ### 1e. `materialize()` integration
 
