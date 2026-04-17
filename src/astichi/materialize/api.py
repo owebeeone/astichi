@@ -1129,24 +1129,31 @@ def _find_unresolved_arg_identifiers(
 ) -> list[tuple[str, tuple[int, ...]]]:
     """Return unresolved `__astichi_arg__` slots grouped by stripped name.
 
-    Issue 005 §5 step 1 / §7: every class/def name carrying the arg suffix
+    Issue 005 §5 step 1 / §7: every occurrence of a suffixed arg name
     that reaches the materialize gate without being resolved (wiring,
     builder `arg_names=`, or `.bind_identifier(...)`) is a hard error.
-    5a covers suffix occurrences on `ast.ClassDef` / `ast.FunctionDef` /
-    `ast.AsyncFunctionDef` names; 5b extends the scan to `ast.Name` /
-    `ast.arg` / `ast.Attribute` per §1 of the issue.
+    Per §1 the scan covers every binding position that can carry the
+    suffix: `ast.ClassDef` / `ast.FunctionDef` / `ast.AsyncFunctionDef`
+    names (5a) plus `ast.Name` Load/Store/Del and `ast.arg` parameter
+    positions (5b). `ast.Attribute` is intentionally omitted until a
+    concrete consumer appears.
     """
     by_name: dict[str, list[int]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
-            continue
-        base, marker = strip_identifier_suffix(node.name)
+
+    def _check(name: str, lineno: int) -> None:
+        base, marker = strip_identifier_suffix(name)
         if marker is not ARG_IDENTIFIER:
-            continue
-        lineno = getattr(node, "lineno", 0)
+            return
         by_name.setdefault(base, []).append(lineno)
+
+    for node in ast.walk(tree):
+        lineno = getattr(node, "lineno", 0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _check(node.name, lineno)
+        elif isinstance(node, ast.Name):
+            _check(node.id, lineno)
+        elif isinstance(node, ast.arg):
+            _check(node.arg, lineno)
     return [
         (name, tuple(sorted(set(lines))))
         for name, lines in sorted(by_name.items())
@@ -1157,13 +1164,12 @@ def _strip_keep_identifier_suffix(tree: ast.AST) -> None:
     """Strip `__astichi_keep__` from every identifier carrying it.
 
     Issue 005 §4 / §5 step 4: after hygiene + residual-marker stripping,
-    every class/def name and matching `ast.Name` Load/Store reference
-    bearing the keep suffix is rewritten to the stripped base. The
-    stripped name was added to `preserved_names` before hygiene (see
-    `analyze_names`), so any competing `foo` has already been renamed
-    and the rewrite cannot introduce a collision. 5a handles class /
-    def names and `ast.Name.id` occurrences; 5b extends the walk to
-    `ast.arg` and `ast.Attribute` positions.
+    every class/def name and matching `ast.Name` Load/Store/Del
+    reference plus `ast.arg` parameter position bearing the keep suffix
+    is rewritten to the stripped base. The stripped name was added to
+    `preserved_names` before hygiene (see `analyze_names`), so any
+    competing `foo` has already been renamed and the rewrite cannot
+    introduce a collision.
     """
     _KeepIdentifierSuffixStripper().visit(tree)
 
@@ -1188,6 +1194,10 @@ class _KeepIdentifierSuffixStripper(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name) -> ast.AST:
         node.id = self._strip(node.id)
         return node
+
+    def visit_arg(self, node: ast.arg) -> ast.AST:
+        node.arg = self._strip(node.arg)
+        return self.generic_visit(node)
 
 
 def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:

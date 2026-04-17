@@ -28,19 +28,25 @@ items.
     and `astichi_definitional_name` call form are retired; new class/def
     suffix markers `__astichi_keep__` (hygiene directive, strip pass after
     hygiene) and `__astichi_arg__` (IDENTIFIER-shape demand port + gate
-    before hygiene) are live. Per-occurrence scope grouping, wider node
-    coverage, and the resolver API are still `5b`/`5c`/`5d`.
+    before hygiene) are live.
+  - Identifier cluster `005` `5b` complete: suffix recognition widened to
+    `ast.Name` (Load/Store/Del) and `ast.arg` occurrences on top of
+    class/def names; the arg gate and keep-strip pass scan the same
+    surface; per-logical-slot port merging via the existing demand-port
+    collapse by stripped name. Per-scope isolation per §2.2 and the
+    resolver API are still `5c`/`5d`; `ast.Attribute` positions remain
+    deferred until a concrete consumer appears.
 - Test status as of 2026-04-17:
-  - full suite: `245 passed, 1 xfailed`
+  - full suite: `250 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - continue the identifier cluster — `005` `5b` (grouped
-    `(stripped_name, scope)` occurrence tracking in ports; broaden
-    suffix recognition to `ast.Name` / `ast.arg` / `ast.Attribute`),
-    then `5c` / `5d`; `006` (cross-scope threading via `astichi_import` /
-    `astichi_pass`) follows once identifier surfaces are complete. See
-    §11.2 and issues 005/006.
+  - continue the identifier cluster — `005` `5c` (identifier resolution
+    pass in materialize before hygiene: atomic substitution per stripped
+    name) then `5d` (public API: `arg_names=` / `keep_names=` on compile
+    and builder, `.bind_identifier(**names)` on composables); `006`
+    (cross-scope threading via `astichi_import` / `astichi_pass`) follows
+    once identifier surfaces are complete. See §11.2 and issues 005/006.
 
 ## 2. Governing principle and non-negotiable rules
 
@@ -625,11 +631,16 @@ Recommended execution order:
      surface retired; new `__astichi_keep__` / `__astichi_arg__` suffix
      markers live on class/def names; arg-demand port + materialize gate
      + keep-strip pass all in place.
-   - `5b` next: grouped occurrence tracking per `(stripped_name, Astichi
-     scope)`; broaden suffix recognition to `ast.Name` / `ast.arg` /
-     `ast.Attribute`; one `DemandPort(shape=IDENTIFIER)` per scope.
-   - `5c` identifier resolution pass in materialize (before hygiene):
-     atomic substitution across every occurrence per `(name, scope)`.
+   - `5b` **done**: suffix recognition widened to `ast.Name`
+     (Load/Store/Del) and `ast.arg` on top of class/def names; the arg
+     gate and keep-strip pass scan the same surface; hygiene preserves
+     both the stripped name and the raw suffixed form. Port-merging
+     collapses occurrences per stripped name into one
+     `DemandPort(shape=IDENTIFIER)`. Per-scope isolation per §2.2 and
+     `ast.Attribute` coverage remain deferred.
+   - `5c` next: identifier resolution pass in materialize (before
+     hygiene): atomic substitution across every occurrence per
+     stripped name.
    - `5d` builder / composable API: `arg_names=` / `keep_names=` on
      `astichi.compile` and `builder.add`; `.bind_identifier(**names)` on
      composables; `wire_identifier(...)` on builder slot handles.
@@ -700,8 +711,8 @@ Do this, in order:
 1. read this file only
 2. confirm the current suite still passes
 3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is in flight.
-   `005` `5a` is done — pick up at `5b` (grouped occurrence tracking +
-   wider node-type coverage) next.
+   `005` `5a` and `5b` are done — pick up at `5c` (resolver pass in
+   materialize) next.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup

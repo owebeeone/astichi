@@ -116,6 +116,51 @@ def arg_func__astichi_arg__():
     ]
 
 
+def test_compile_recognizes_suffix_identifier_occurrences_on_name_and_arg() -> None:
+    # Issue 005 §1 / 5b: identifier-shape slot occurrences must be
+    # collected from every binding position - class/def names, `ast.arg`
+    # parameter positions, and `ast.Name` Load/Store references -
+    # grouped by stripped name at port-extraction time.
+    compiled = astichi.compile(
+        """
+def wrapper__astichi_keep__(callback__astichi_arg__):
+    result__astichi_arg__ = callback__astichi_arg__()
+    return result__astichi_arg__
+"""
+    )
+
+    suffix_markers = [
+        marker
+        for marker in compiled.markers
+        if marker.source_name
+        in ("astichi_keep_identifier", "astichi_arg_identifier")
+    ]
+    by_kind: dict[tuple[str, str], list[str]] = {}
+    for marker in suffix_markers:
+        assert marker.name_id is not None
+        by_kind.setdefault((marker.source_name, marker.context), []).append(
+            marker.name_id
+        )
+
+    # one definitional class/def keep occurrence
+    assert by_kind[("astichi_keep_identifier", "definitional")] == ["wrapper"]
+    # one `ast.arg` arg occurrence for the parameter
+    assert ("astichi_arg_identifier", "identifier") in by_kind
+    identifier_names = sorted(by_kind[("astichi_arg_identifier", "identifier")])
+    # `callback` appears as arg + two Load refs (call + return? actually
+    # only the call site load ref); `result` appears as Store + Load.
+    assert "callback" in identifier_names
+    assert "result" in identifier_names
+
+    # Port-merging collapses per-occurrence markers to one DemandPort per
+    # stripped name.
+    demand_names = sorted(port.name for port in compiled.demand_ports)
+    assert demand_names == ["callback", "result"]
+    for port in compiled.demand_ports:
+        assert port.placement == "identifier"
+        assert "arg" in port.sources
+
+
 def test_invalid_keep_identifier_site_fails_clearly() -> None:
     with pytest.raises(
         ValueError,

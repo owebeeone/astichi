@@ -363,6 +363,17 @@ class RecognizedMarker:
             base, suffix_marker = strip_identifier_suffix(self.node.name)
             if suffix_marker is not None:
                 return base
+        if isinstance(self.node, ast.Name):
+            # Issue 005 §2: identifier-shape demands collect occurrences
+            # from every binding position, including `ast.Name` in
+            # Load/Store/Del context.
+            base, suffix_marker = strip_identifier_suffix(self.node.id)
+            if suffix_marker is not None:
+                return base
+        if isinstance(self.node, ast.arg):
+            base, suffix_marker = strip_identifier_suffix(self.node.arg)
+            if suffix_marker is not None:
+                return base
         return None
 
 
@@ -415,6 +426,34 @@ class _MarkerVisitor(ast.NodeVisitor):
         self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        # Issue 005 §1: identifier-shape slots collect every occurrence
+        # of the suffixed name, including Load/Store/Del references, so
+        # the arg gate and the resolver pass see the full set.
+        self._visit_identifier_occurrence(node, node.id)
+        self.generic_visit(node)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        # Issue 005 §1: parameter-position suffixed names are slot
+        # occurrences too.
+        self._visit_identifier_occurrence(node, node.arg)
+        self.generic_visit(node)
+
+    def _visit_identifier_occurrence(
+        self, node: ast.AST, name: str
+    ) -> None:
+        _, suffix_marker = strip_identifier_suffix(name)
+        if suffix_marker is None:
+            return
+        self.markers.append(
+            RecognizedMarker(
+                spec=suffix_marker,
+                node=node,
+                context="identifier",
+                shape=None,
+            )
+        )
 
     def _visit_decorators(self, decorators: list[ast.expr]) -> None:
         for decorator in decorators:

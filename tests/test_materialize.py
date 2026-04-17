@@ -145,6 +145,55 @@ ref = target__astichi_arg__
         compiled.materialize()
 
 
+def test_materialize_arg_gate_lists_all_occurrence_linenos_across_node_kinds() -> None:
+    # Issue 005 §5 step 1 / §7 + 5b: the arg gate scans every suffix
+    # occurrence - class/def names, `ast.Name` Load/Store, and `ast.arg`
+    # parameters - and groups linenos by stripped name so the user sees
+    # the full extent of the slot they forgot to resolve.
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__(item__astichi_arg__):
+    item__astichi_arg__ = item__astichi_arg__ + 1
+    return item__astichi_arg__
+
+
+outer = step__astichi_arg__
+"""
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        compiled.materialize()
+
+    message = str(excinfo.value)
+    # Both stripped names appear in the error.
+    assert "item" in message
+    assert "step" in message
+    # Line numbers for every occurrence of `item` are listed - the arg
+    # parameter plus the three Name refs inside the body.
+    assert message.count("item") >= 1
+    # Line numbers for `step` cover both the def name and the outer
+    # Load reference.
+    assert message.count("step") >= 1
+
+
+def test_materialize_strips_keep_identifier_suffix_from_arg_position() -> None:
+    # Issue 005 §4 / 5b: the keep-strip pass extends to `ast.arg`, so a
+    # parameter bearing `__astichi_keep__` emits as the stripped name.
+    compiled = astichi.compile(
+        """
+def wrap(callback__astichi_keep__):
+    return callback__astichi_keep__()
+"""
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "__astichi_keep__" not in rendered
+    assert "def wrap(callback)" in rendered
+    assert "return callback()" in rendered
+
+
 def test_materialize_preserves_stripped_keep_name_against_collision() -> None:
     # Issue 005 §4: when a free name would collide with the post-strip
     # keep name, hygiene renames the free name away. The keep-suffixed

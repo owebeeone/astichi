@@ -86,16 +86,15 @@ def analyze_names(
         for marker in composable.markers
         if marker.source_name == "astichi_keep" and marker.name_id is not None
     )
-    identifier_suffix_preserved = frozenset(
-        marker.name_id
-        for marker in composable.markers
-        # Issue 005 §4: the stripped identifier-shape suffix names
-        # (`foo__astichi_keep__` / `foo__astichi_arg__`) must be pinned in
-        # the preserved set before hygiene runs, so competing free `foo`s
-        # get renamed away and the later strip pass introduces `foo`
-        # without collision.
-        if marker.source_name in ("astichi_keep_identifier", "astichi_arg_identifier")
-        and marker.name_id is not None
+    # Issue 005 §4: both the stripped identifier-shape name (`foo`) and
+    # the raw suffixed form (`foo__astichi_keep__` / `foo__astichi_arg__`)
+    # must be pinned in the preserved set before hygiene runs. The
+    # stripped form protects the eventual keep-strip output from
+    # colliding with any free `foo`; the raw form keeps `ast.Name` Load
+    # references from being classified as implied demands (5b now
+    # recognises Name/arg occurrences as suffix markers).
+    identifier_suffix_preserved = _collect_identifier_suffix_preserved(
+        composable.markers
     )
     externals = frozenset(
         marker.name_id
@@ -172,15 +171,15 @@ def assign_scope_identity(
 ) -> ScopeAnalysis:
     """Assign scope identity to lexical name occurrences."""
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
-    marker_preserved_names = frozenset(
+    # Issue 005 §4 + 5b: preserve both stripped and raw suffixed names
+    # (see `analyze_names` for rationale).
+    kept_preserved = frozenset(
         marker.name_id
         for marker in composable.markers
-        if (
-            marker.source_name == "astichi_keep"
-            or marker.source_name
-            in ("astichi_keep_identifier", "astichi_arg_identifier")
-        )
-        and marker.name_id is not None
+        if marker.source_name == "astichi_keep" and marker.name_id is not None
+    )
+    marker_preserved_names = kept_preserved | _collect_identifier_suffix_preserved(
+        composable.markers
     )
     marker_external_names = frozenset(
         marker.name_id
@@ -247,6 +246,44 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
                     occurrence.node.id = emitted_name
                 elif isinstance(occurrence.node, ast.arg):
                     occurrence.node.arg = emitted_name
+
+
+def _collect_identifier_suffix_preserved(
+    markers: tuple[object, ...],
+) -> frozenset[str]:
+    """Names that must survive hygiene for identifier-shape slots.
+
+    Issue 005 §4 + 5b: collect the stripped base (`foo`) so competing
+    free names get renamed away, and the raw suffixed form
+    (`foo__astichi_keep__` / `foo__astichi_arg__`) so `ast.Name` Load
+    references that the marker visitor now recognises do not become
+    implied demands and are not renamed by the scope-identity pass.
+    """
+    preserved: set[str] = set()
+    for marker in markers:
+        if not isinstance(marker, RecognizedMarker):
+            continue
+        if marker.source_name not in (
+            "astichi_keep_identifier",
+            "astichi_arg_identifier",
+        ):
+            continue
+        if marker.name_id is not None:
+            preserved.add(marker.name_id)
+        raw = _raw_suffixed_name(marker.node)
+        if raw is not None:
+            preserved.add(raw)
+    return frozenset(preserved)
+
+
+def _raw_suffixed_name(node: ast.AST) -> str | None:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.arg):
+        return node.arg
+    return None
 
 
 def _ignored_name_nodes(markers: tuple[object, ...]) -> set[int]:
