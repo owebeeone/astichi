@@ -19,7 +19,15 @@ def test_build_simple_block_hole_replacement() -> None:
     assert isinstance(result, BasicComposable)
     rendered = ast.unparse(result.tree)
     assert "value = 1" in rendered
-    assert "astichi_hole" not in rendered
+    assert "astichi_hole(body)" in rendered
+    assert "@astichi_insert(body)" in rendered
+    assert [p.name for p in result.demand_ports] == []
+
+    materialized = result.materialize()
+    materialized_src = ast.unparse(materialized.tree)
+    assert "value = 1" in materialized_src
+    assert "astichi_hole" not in materialized_src
+    assert "astichi_insert" not in materialized_src
 
 
 def test_build_preserves_surrounding_code() -> None:
@@ -34,7 +42,17 @@ def test_build_preserves_surrounding_code() -> None:
     assert "x = 1" in rendered
     assert "z = 3" in rendered
     assert "y = 2" in rendered
-    assert "astichi_hole" not in rendered
+    assert "astichi_hole(body)" in rendered
+    assert "@astichi_insert(body)" in rendered
+
+    materialized_src = ast.unparse(result.materialize().tree)
+    assert "x = 1" in materialized_src
+    assert "z = 3" in materialized_src
+    assert "y = 2" in materialized_src
+    assert "astichi_hole" not in materialized_src
+    assert "astichi_insert" not in materialized_src
+    assert materialized_src.index("x = 1") < materialized_src.index("z = 3")
+    assert materialized_src.index("z = 3") < materialized_src.index("y = 2")
 
 
 def test_build_multiple_sources_ordered() -> None:
@@ -94,7 +112,18 @@ def test_build_chain_resolution() -> None:
     rendered = ast.unparse(result.tree)
     assert "x = 1" in rendered
     assert "y = 2" in rendered
-    assert "astichi_hole" not in rendered
+    assert "astichi_hole(outer)" in rendered
+    assert "astichi_hole(inner)" in rendered
+    assert "@astichi_insert(outer)" in rendered
+    assert "@astichi_insert(inner)" in rendered
+    assert [p.name for p in result.demand_ports] == []
+
+    materialized_src = ast.unparse(result.materialize().tree)
+    assert "x = 1" in materialized_src
+    assert "y = 2" in materialized_src
+    assert "astichi_hole" not in materialized_src
+    assert "astichi_insert" not in materialized_src
+    assert materialized_src.index("x = 1") < materialized_src.index("y = 2")
 
 
 def test_build_no_edges_concatenates_bodies() -> None:

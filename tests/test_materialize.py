@@ -80,20 +80,19 @@ def test_materialize_allows_implied_demands() -> None:
     assert "missing_name" in ast.unparse(result.tree)
 
 
-def test_end_to_end_additive_composition() -> None:
+def test_end_to_end_additive_composition_preserves_order() -> None:
     builder = astichi.build()
     builder.add.Root(
         astichi.compile(
             """
 astichi_hole(init)
 astichi_hole(body)
-astichi_export(result)
 """
         )
     )
-    builder.add.Setup(astichi.compile("total = 0\n"))
-    builder.add.Step1(astichi.compile("total = total + 1\n"))
-    builder.add.Step2(astichi.compile("total = total + 2\n"))
+    builder.add.Setup(astichi.compile("first = 1\n"))
+    builder.add.Step1(astichi.compile("second = 2\n"))
+    builder.add.Step2(astichi.compile("third = 3\n"))
     builder.Root.init.add.Setup()
     builder.Root.body.add.Step1(order=0)
     builder.Root.body.add.Step2(order=1)
@@ -102,8 +101,64 @@ astichi_export(result)
     materialized = built.materialize()
 
     rendered = ast.unparse(materialized.tree)
+    assert "first = 1" in rendered
+    assert "second = 2" in rendered
+    assert "third = 3" in rendered
+    assert rendered.index("first = 1") < rendered.index("second = 2")
+    assert rendered.index("second = 2") < rendered.index("third = 3")
+    assert "astichi_hole" not in rendered
+    assert "astichi_insert" not in rendered
+
+
+def test_add_contributions_get_isolated_scopes() -> None:
+    """Per CompositionUnification.md §2.4: every .add() contribution is a
+    fresh Astichi scope; colliding local names are renamed apart."""
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.StepA(astichi.compile("total = 0\n"))
+    builder.add.StepB(astichi.compile("total = 1\n"))
+    builder.Root.body.add.StepA(order=0)
+    builder.Root.body.add.StepB(order=1)
+
+    materialized = builder.build().materialize()
+    rendered = ast.unparse(materialized.tree)
+
     assert "total = 0" in rendered
-    assert "total = total + 1" in rendered
-    assert "total = total + 2" in rendered
-    assert rendered.index("total = 0") < rendered.index("total = total + 1")
-    assert rendered.index("total = total + 1") < rendered.index("total = total + 2")
+    assert "total__astichi_scoped_" in rendered
+    assert "astichi_insert" not in rendered
+
+
+def test_compose_build_round_trip_is_structurally_stable() -> None:
+    """Per CompositionUnification.md §2.3: compile(c.emit()).tree structurally
+    matches c.tree for pre-materialize composables."""
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Piece(astichi.compile("value = 42\n"))
+    builder.Root.body.add.Piece()
+
+    built = builder.build()
+    emitted = built.emit(provenance=False)
+    reingested = astichi.compile(emitted)
+
+    assert ast.dump(reingested.tree) == ast.dump(built.tree)
+
+
+def test_materialized_emit_is_executable() -> None:
+    """Per CompositionUnification.md §2.2: materialize().emit() produces
+    executable Python with no remaining marker call sites."""
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(setup)\nastichi_hole(body)\n"))
+    builder.add.Setup(astichi.compile("a = 10\n"))
+    builder.add.Step(astichi.compile("b = 20\n"))
+    builder.Root.setup.add.Setup()
+    builder.Root.body.add.Step()
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+
+    assert "astichi_hole" not in source
+    assert "astichi_insert" not in source
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<materialized>", "exec"), namespace)
+    assert namespace["a"] == 10
+    assert namespace["b"] == 20

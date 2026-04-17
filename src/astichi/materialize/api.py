@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import re
 from dataclasses import dataclass
 
 from astichi.builder.graph import BuilderGraph
@@ -21,6 +22,35 @@ class _ExpressionInsert:
     inline_order: int
     edge_index: int
     statement_index: int
+
+
+@dataclass(frozen=True)
+class _BlockContribution:
+    """A block-target contribution wired via the builder.
+
+    Per `AstichiApiDesignV1-CompositionUnification.md §3`, every `.add()`
+    wiring produces an `astichi_insert`-decorated shell in the
+    pre-materialize tree; this record carries the source body and the
+    shell metadata for that synthesis.
+    """
+
+    source_instance: str
+    order: int
+    edge_index: int
+    body: list[ast.stmt]
+    shell_name: str
+
+
+_IDENTIFIER_SANITIZER = re.compile(r"[^0-9A-Za-z_]")
+
+
+def _sanitize_for_identifier(raw: str) -> str:
+    cleaned = _IDENTIFIER_SANITIZER.sub("_", raw)
+    if not cleaned:
+        cleaned = "anon"
+    if cleaned[0].isdigit():
+        cleaned = "_" + cleaned
+    return cleaned
 
 
 def build_merge(graph: BuilderGraph) -> BasicComposable:
@@ -48,16 +78,16 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
     resolution_order = _topo_sort_targets(graph)
 
     for inst_name in resolution_order:
-        hole_replacements: dict[str, list[list[ast.stmt]]] = {}
+        block_replacements: dict[str, list[_BlockContribution]] = {}
         expr_replacements: dict[str, list[_ExpressionInsert]] = {}
         for (root, target_name), indexed_edges in edges_by_target.items():
             if root != inst_name:
                 continue
             target_record = instance_records[inst_name]
             target_port = _lookup_demand_port(target_record.composable, target_name)
-            bodies: list[list[ast.stmt]] = []
+            contributions: list[_BlockContribution] = []
             inserts: list[_ExpressionInsert] = []
-            for _idx, edge in indexed_edges:
+            for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
                 source_port = _lookup_supply_port(source_record.composable, target_name)
                 if target_port is not None and source_port is not None:
@@ -78,7 +108,22 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
                         )
                     )
                     continue
-                bodies.append(copy.deepcopy(trees[edge.source_instance].body))
+                shell_name = (
+                    f"__astichi_contrib__"
+                    f"{_sanitize_for_identifier(inst_name)}"
+                    f"__{_sanitize_for_identifier(target_name)}"
+                    f"__{counter}"
+                    f"__{_sanitize_for_identifier(edge.source_instance)}"
+                )
+                contributions.append(
+                    _BlockContribution(
+                        source_instance=edge.source_instance,
+                        order=edge.order,
+                        edge_index=_idx,
+                        body=copy.deepcopy(trees[edge.source_instance].body),
+                        shell_name=shell_name,
+                    )
+                )
             if inserts:
                 expr_replacements[target_name] = sorted(
                     inserts,
@@ -89,12 +134,15 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
                         item.statement_index,
                     ),
                 )
-            if bodies:
-                hole_replacements[target_name] = bodies
-        if hole_replacements or expr_replacements:
+            if contributions:
+                block_replacements[target_name] = sorted(
+                    contributions,
+                    key=lambda item: (item.order, item.edge_index),
+                )
+        if block_replacements or expr_replacements:
             trees[inst_name].body = _replace_targets_in_body(
                 trees[inst_name].body,
-                replacements=hole_replacements,
+                block_replacements=block_replacements,
                 expr_replacements=expr_replacements,
             )
 
@@ -119,13 +167,20 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
         tree=merged_tree, origin=origin, markers=markers
     )
     classification = analyze_names(provisional, mode="permissive")
+    raw_demands = extract_demand_ports(markers, classification)
+    satisfied = _locally_satisfied_hole_names(merged_tree)
+    demand_ports = tuple(
+        port
+        for port in raw_demands
+        if not (port.sources == frozenset({"hole"}) and port.name in satisfied)
+    )
 
     return BasicComposable(
         tree=merged_tree,
         origin=origin,
         markers=markers,
         classification=classification,
-        demand_ports=extract_demand_ports(markers, classification),
+        demand_ports=demand_ports,
         supply_ports=extract_supply_ports(markers),
     )
 
@@ -164,12 +219,18 @@ def _topo_sort_targets(graph: BuilderGraph) -> list[str]:
 def _replace_targets_in_body(
     body: list[ast.stmt],
     *,
-    replacements: dict[str, list[list[ast.stmt]]],
+    block_replacements: dict[str, list[_BlockContribution]],
     expr_replacements: dict[str, list[_ExpressionInsert]],
 ) -> list[ast.stmt]:
-    """Replace block and expression targets in a statement list."""
+    """Replace block and expression targets in a statement list.
+
+    Block-target holes are preserved (anchor) and each `.add()`
+    contribution is appended as an `astichi_insert`-decorated shell
+    (see `AstichiApiDesignV1-CompositionUnification.md §3`). The
+    actual splice happens later during `materialize()`.
+    """
     transformer = _HoleReplacementTransformer(
-        block_replacements=replacements,
+        block_replacements=block_replacements,
         expr_replacements=expr_replacements,
     )
     result: list[ast.stmt] = []
@@ -183,6 +244,50 @@ def _replace_targets_in_body(
         assert isinstance(transformed, ast.stmt)
         result.append(transformed)
     return result
+
+
+def _make_block_insert_shell(
+    *,
+    target_name: str,
+    order: int,
+    shell_name: str,
+    body: list[ast.stmt],
+) -> ast.FunctionDef:
+    """Build an `astichi_insert`-decorated shell for a block contribution.
+
+    Per `AstichiApiDesignV1-CompositionUnification.md §3`, each `.add()`
+    wiring of a block target produces one such shell.
+    """
+    shell_body: list[ast.stmt] = (
+        [copy.deepcopy(stmt) for stmt in body] if body else [ast.Pass()]
+    )
+    keywords: list[ast.keyword] = []
+    if order != 0:
+        keywords.append(
+            ast.keyword(arg="order", value=ast.Constant(value=order))
+        )
+    decorator = ast.Call(
+        func=ast.Name(id="astichi_insert", ctx=ast.Load()),
+        args=[ast.Name(id=target_name, ctx=ast.Load())],
+        keywords=keywords,
+    )
+    return ast.FunctionDef(
+        name=shell_name,
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
+        ),
+        body=shell_body,
+        decorator_list=[decorator],
+        returns=None,
+        type_comment=None,
+        type_params=[],
+    )
 
 
 def _extract_hole_name(stmt: ast.stmt) -> str | None:
@@ -328,7 +433,7 @@ class _HoleReplacementTransformer(ast.NodeTransformer):
     def __init__(
         self,
         *,
-        block_replacements: dict[str, list[list[ast.stmt]]],
+        block_replacements: dict[str, list[_BlockContribution]],
         expr_replacements: dict[str, list[_ExpressionInsert]],
     ) -> None:
         self.block_replacements = block_replacements
@@ -357,11 +462,17 @@ class _HoleReplacementTransformer(ast.NodeTransformer):
     def visit_Expr(self, node: ast.Expr) -> ast.AST | list[ast.stmt]:
         hole_name = _extract_hole_name(node)
         if hole_name is not None and hole_name in self.block_replacements:
-            return [
-                copy.deepcopy(stmt)
-                for source_body in self.block_replacements[hole_name]
-                for stmt in source_body
-            ]
+            contributions = self.block_replacements[hole_name]
+            result: list[ast.stmt] = [node]
+            for contrib in contributions:
+                shell = _make_block_insert_shell(
+                    target_name=hole_name,
+                    order=contrib.order,
+                    shell_name=contrib.shell_name,
+                    body=contrib.body,
+                )
+                result.append(shell)
+            return result
         return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
@@ -521,9 +632,23 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
 
 def materialize_composable(composable: BasicComposable) -> BasicComposable:
-    """Materialize a composable: validate completeness and apply final hygiene."""
+    """Materialize a composable: validate completeness and apply final hygiene.
+
+    The pipeline (see
+    `AstichiApiDesignV1-CompositionUnification.md §4`):
+
+    1. reject unresolved mandatory demands (holes, bind-externals);
+    2. deep-copy the tree and recognize markers;
+    3. assign scope identity and rename scope collisions (hygiene);
+    4. realize expression-insert wrappers;
+    5. flatten block-level `astichi_hole`/`astichi_insert` shell pairs;
+    6. re-recognize markers and re-extract ports.
+    """
+    satisfied_holes = _locally_satisfied_hole_names(composable.tree)
     mandatory_holes = [
-        port for port in composable.demand_ports if "hole" in port.sources
+        port
+        for port in composable.demand_ports
+        if "hole" in port.sources and port.name not in satisfied_holes
     ]
     if mandatory_holes:
         names = ", ".join(port.name for port in mandatory_holes)
@@ -556,6 +681,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     analysis = assign_scope_identity(provisional)
     rename_scope_collisions(analysis)
     _realize_expression_insert_wrappers(tree)
+    _flatten_block_inserts(tree)
 
     markers = recognize_markers(tree)
     post_hygiene = BasicComposable(
@@ -575,3 +701,146 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         supply_ports=extract_supply_ports(markers),
         bound_externals=composable.bound_externals,
     )
+
+
+def _extract_block_insert_shell(stmt: ast.stmt) -> tuple[str, int] | None:
+    """Return (target_name, order) if stmt is an `astichi_insert`-decorated def.
+
+    A block-form `astichi_insert` has a single positional argument (the
+    target name, as a bare `ast.Name`) and may carry an optional
+    integer `order=` keyword.
+    """
+    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    for decorator in stmt.decorator_list:
+        if not isinstance(decorator, ast.Call):
+            continue
+        if not isinstance(decorator.func, ast.Name):
+            continue
+        if decorator.func.id != "astichi_insert":
+            continue
+        if len(decorator.args) != 1:
+            continue
+        first_arg = decorator.args[0]
+        if not isinstance(first_arg, ast.Name):
+            continue
+        order = 0
+        for keyword in decorator.keywords:
+            if keyword.arg == "order":
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(
+                    keyword.value.value, int
+                ):
+                    raise ValueError(
+                        "astichi_insert order must be an integer constant"
+                    )
+                order = keyword.value.value
+        return (first_arg.id, order)
+    return None
+
+
+def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
+    """Hole names whose matching `astichi_insert` shell is a body sibling.
+
+    A hole whose insert shell lives in the same statement list is
+    "locally satisfied" — the flatten pass in
+    `materialize_composable` will consume both. Demand gates therefore
+    exclude these holes from the unresolved set.
+    """
+    matched: set[str] = set()
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            if not value or not all(isinstance(item, ast.stmt) for item in value):
+                continue
+            holes: set[str] = set()
+            shells: set[str] = set()
+            for stmt in value:
+                hole_name = _extract_hole_name(stmt)
+                if hole_name is not None:
+                    holes.add(hole_name)
+                info = _extract_block_insert_shell(stmt)
+                if info is not None:
+                    shells.add(info[0])
+            matched.update(holes & shells)
+    return frozenset(matched)
+
+
+def _flatten_block_inserts(tree: ast.AST) -> None:
+    """Recursively flatten `astichi_hole`/`astichi_insert` pairs in bodies.
+
+    For each body-bearing node, scan its statement list for
+    `astichi_hole(name)` anchors and their sibling `astichi_insert`-
+    decorated shells, then splice the shell bodies at the hole
+    position (in `order=` ascending, stable on ties) and remove both
+    the hole and the consumed shells. Unmatched shells are left in
+    place; an unmatched hole cannot occur here because the mandatory-
+    demand gate rejects them before this pass runs.
+
+    See `AstichiApiDesignV1-CompositionUnification.md §4`.
+    """
+    _BlockInsertFlattener().visit(tree)
+
+
+class _BlockInsertFlattener(ast.NodeTransformer):
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                new_items: list[object] = []
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        visited = self.visit(item)
+                        if visited is None:
+                            continue
+                        if isinstance(visited, list):
+                            new_items.extend(visited)
+                            continue
+                        new_items.append(visited)
+                    else:
+                        new_items.append(item)
+                if new_items and all(isinstance(item, ast.stmt) for item in new_items):
+                    stmt_list: list[ast.stmt] = [item for item in new_items if isinstance(item, ast.stmt)]
+                    flattened = _flatten_body_splices(stmt_list)
+                    value[:] = flattened
+                else:
+                    value[:] = new_items
+            elif isinstance(value, ast.AST):
+                setattr(node, field, self.visit(value))
+        return node
+
+
+def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Splice sibling `astichi_insert` shells into their matching hole positions."""
+    shells_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]] = {}
+    for index, stmt in enumerate(body):
+        info = _extract_block_insert_shell(stmt)
+        if info is None:
+            continue
+        target, order = info
+        assert isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if isinstance(stmt, ast.FunctionDef):
+            shells_by_target.setdefault(target, []).append((order, index, stmt))
+
+    if not shells_by_target:
+        return body
+
+    consumed_shell_ids: set[int] = set()
+    result: list[ast.stmt] = []
+    for stmt in body:
+        hole_name = _extract_hole_name(stmt)
+        if hole_name is not None and hole_name in shells_by_target:
+            ordered = sorted(
+                shells_by_target[hole_name],
+                key=lambda item: (item[0], item[1]),
+            )
+            for _order, _index, shell in ordered:
+                result.extend(shell.body)
+                consumed_shell_ids.add(id(shell))
+            continue
+        if id(stmt) in consumed_shell_ids:
+            continue
+        result.append(stmt)
+    return result
