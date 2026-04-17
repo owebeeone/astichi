@@ -683,22 +683,35 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
 
+    pre_strip_markers = recognize_markers(tree)
+    pre_strip_composable = BasicComposable(
+        tree=tree,
+        origin=composable.origin,
+        markers=pre_strip_markers,
+        bound_externals=composable.bound_externals,
+    )
+    pre_strip_classification = analyze_names(pre_strip_composable, mode="permissive")
+    demand_ports = extract_demand_ports(pre_strip_markers, pre_strip_classification)
+    supply_ports = extract_supply_ports(pre_strip_markers)
+
+    _strip_residual_markers(tree)
+
     markers = recognize_markers(tree)
-    post_hygiene = BasicComposable(
+    post_strip = BasicComposable(
         tree=tree,
         origin=composable.origin,
         markers=markers,
         bound_externals=composable.bound_externals,
     )
-    classification = analyze_names(post_hygiene, mode="permissive")
+    classification = analyze_names(post_strip, mode="permissive")
 
     return BasicComposable(
         tree=tree,
         origin=composable.origin,
         markers=markers,
         classification=classification,
-        demand_ports=extract_demand_ports(markers, classification),
-        supply_ports=extract_supply_ports(markers),
+        demand_ports=demand_ports,
+        supply_ports=supply_ports,
         bound_externals=composable.bound_externals,
     )
 
@@ -810,6 +823,76 @@ class _BlockInsertFlattener(ast.NodeTransformer):
             elif isinstance(value, ast.AST):
                 setattr(node, field, self.visit(value))
         return node
+
+
+_RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
+    {"astichi_keep", "astichi_export", "astichi_definitional_name"}
+)
+
+
+def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
+    """Return the wrapped identifier expression if node is a residual-marker call."""
+    if not isinstance(node, ast.Call):
+        return None
+    if not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id not in _RESIDUAL_MARKER_NAMES:
+        return None
+    if len(node.args) != 1 or node.keywords:
+        return None
+    return node.args[0]
+
+
+def _strip_residual_markers(tree: ast.AST) -> None:
+    """Strip `astichi_keep` / `astichi_export` / `astichi_definitional_name`.
+
+    Per `AstichiApiDesignV1-CompositionUnification.md §6`:
+    - statement form (e.g. `astichi_export(x)`) is removed;
+    - expression form (e.g. `result = astichi_keep(x)`) is replaced
+      with the wrapped identifier expression (`result = x`).
+
+    Port records for these markers are extracted before this pass
+    runs, so stripping the call sites does not lose supply-port
+    metadata on the returned composable.
+    """
+    _ResidualMarkerStripper().visit(tree)
+
+
+class _ResidualMarkerStripper(ast.NodeTransformer):
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                new_items: list[object] = []
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        visited = self.visit(item)
+                        if visited is None:
+                            continue
+                        if isinstance(visited, list):
+                            new_items.extend(visited)
+                            continue
+                        new_items.append(visited)
+                    else:
+                        new_items.append(item)
+                value[:] = new_items
+            elif isinstance(value, ast.AST):
+                replaced = self.visit(value)
+                if replaced is None:
+                    setattr(node, field, None)
+                else:
+                    setattr(node, field, replaced)
+        return node
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+        if _residual_marker_inner(node.value) is not None:
+            return None
+        return self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        inner = _residual_marker_inner(node)
+        if inner is not None:
+            return self.visit(copy.deepcopy(inner))
+        return self.generic_visit(node)
 
 
 def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:

@@ -67,8 +67,33 @@ result = astichi_keep(value)
 
     rendered = ast.unparse(materialized.tree)
     assert "value = 1" in rendered
-    assert "result = astichi_keep(value)" in rendered
+    assert "result = value" in rendered
+    assert "astichi_keep" not in rendered
     assert "value__astichi_scoped_" in rendered
+
+
+def test_materialize_strips_residual_markers() -> None:
+    """Per CompositionUnification.md §6: astichi_keep / astichi_export /
+    astichi_definitional_name are stripped from the tree. Export port
+    records survive on the composable."""
+    compiled = astichi.compile(
+        """
+value = 1
+astichi_keep(value)
+result = 2
+astichi_export(result)
+astichi_definitional_name(result)
+"""
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "astichi_keep" not in rendered
+    assert "astichi_export" not in rendered
+    assert "astichi_definitional_name" not in rendered
+
+    assert "result" in {port.name for port in materialized.supply_ports}
 
 
 def test_materialize_allows_implied_demands() -> None:

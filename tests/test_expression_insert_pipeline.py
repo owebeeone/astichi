@@ -148,5 +148,6 @@ outcome = astichi_keep(value)
 
     rendered = ast.unparse(materialized.tree)
     assert "value = 1" in rendered
-    assert "outcome = astichi_keep(value)" in rendered
+    assert "outcome = value" in rendered
+    assert "astichi_keep" not in rendered
     assert "value__astichi_scoped_" in rendered
