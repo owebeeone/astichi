@@ -28,6 +28,58 @@ def test_compile_returns_frontend_composable_with_origin_and_line_offsets() -> N
     assert stmt.col_offset == 0
 
 
+def test_compile_arg_names_records_identifier_resolutions_eagerly() -> None:
+    # Issue 005 §6 / 5d: `arg_names=` on `compile` validates each key
+    # against the IDENTIFIER-shape demand ports parsed from `source`
+    # and records the resolutions; the tree is not rewritten at
+    # compile time (that happens at materialize).
+    compiled = astichi.compile(
+        """
+def wrap(callback__astichi_arg__):
+    return callback__astichi_arg__()
+""",
+        arg_names={"callback": "user_fn"},
+    )
+
+    assert dict(compiled.arg_bindings) == {"callback": "user_fn"}
+    # Source-level suffix survives until materialize runs the resolver.
+    rendered = ast.unparse(compiled.tree)
+    assert "callback__astichi_arg__" in rendered
+
+
+def test_compile_arg_names_rejects_unknown_slot_name() -> None:
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+        astichi.compile(
+            """
+def wrap(callback__astichi_arg__):
+    return callback__astichi_arg__()
+""",
+            arg_names={"missing": "x"},
+        )
+
+
+def test_compile_arg_names_rejects_invalid_identifier_resolution() -> None:
+    with pytest.raises(ValueError, match=r"must be a valid Python identifier"):
+        astichi.compile(
+            """
+def wrap(callback__astichi_arg__):
+    return callback__astichi_arg__()
+""",
+            arg_names={"callback": "not an identifier"},
+        )
+
+
+def test_compile_keep_names_preserves_free_identifier_against_rename() -> None:
+    # Issue 005 §4 / 5d: `keep_names=` pins identifiers as hygiene
+    # preserved without a `__astichi_keep__` suffix in the source.
+    compiled = astichi.compile("x = _sentinel\n", keep_names=["_sentinel"])
+    assert "_sentinel" in compiled.keep_names
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+    assert "_sentinel" in rendered
+
+
 def test_compile_parse_failure_preserves_filename_and_line_number() -> None:
     with pytest.raises(SyntaxError) as exc_info:
         astichi.compile(

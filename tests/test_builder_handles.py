@@ -115,6 +115,55 @@ def test_fluent_and_raw_builder_operations_produce_equivalent_graph_state() -> N
     assert fluent.graph.edges == raw.edges
 
 
+def test_builder_add_arg_names_resolves_slot_before_registration() -> None:
+    # Issue 005 §6 / 5d: `builder.add.Step(piece, arg_names=...)`
+    # applies `.bind_identifier` to the piece before registering it,
+    # so build + materialize succeed without a second bind call.
+    piece = astichi.compile(
+        """
+def step__astichi_arg__():
+    return 1
+"""
+    )
+
+    builder = astichi.build()
+    builder.add.A(piece, arg_names={"step": "run"})
+
+    instance = builder.graph.instances[0].composable
+    assert dict(instance.arg_bindings) == {"step": "run"}
+
+    merged = builder.build()
+    materialized = merged.materialize()
+
+    import ast as _ast
+
+    rendered = _ast.unparse(materialized.tree)
+    assert "__astichi_arg__" not in rendered
+    assert "def run()" in rendered
+
+
+def test_builder_add_keep_names_pins_identifier_through_merge() -> None:
+    # Issue 005 §4 / 5d: `keep_names=` on builder `add` attaches to the
+    # piece so the merged composable inherits the pin via the
+    # per-instance union.
+    piece = astichi.compile("value = _sentinel\n")
+
+    builder = astichi.build()
+    builder.add.A(piece, keep_names=["_sentinel"])
+
+    assert "_sentinel" in builder.graph.instances[0].composable.keep_names
+
+    merged = builder.build()
+    assert "_sentinel" in merged.keep_names
+
+
+def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
+    piece = astichi.compile("value = 1\n")
+    builder = astichi.build()
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+        builder.add.A(piece, arg_names={"missing": "x"})
+
+
 def test_fluent_equal_order_keeps_insertion_order() -> None:
     builder = astichi.build()
     builder.add.A(astichi.compile("astichi_hole(slot)\n"))

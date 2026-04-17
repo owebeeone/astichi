@@ -176,6 +176,115 @@ outer = step__astichi_arg__
     assert message.count("step") >= 1
 
 
+def test_materialize_resolves_arg_identifier_across_all_occurrences() -> None:
+    # Issue 005 §5 step 2 / 5c: the resolver pass substitutes the
+    # resolved identifier into every occurrence of the suffix - class
+    # def names, Load Names, Store Names, and `ast.arg` parameters -
+    # atomically. The gate accepts because the binding covers the slot.
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__(item__astichi_arg__):
+    item__astichi_arg__ = item__astichi_arg__ + 1
+    return item__astichi_arg__
+
+
+outer = step__astichi_arg__
+""",
+    ).bind_identifier(step="run", item="value")
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    # No suffix survives anywhere.
+    assert "__astichi_arg__" not in rendered
+    # Every class-def, Load, Store, and arg occurrence resolved.
+    assert "def run(value)" in rendered
+    assert "value = value + 1" in rendered
+    assert "return value" in rendered
+    assert "outer = run" in rendered
+
+
+def test_materialize_resolves_arg_identifier_from_compile_arg_names() -> None:
+    # Issue 005 §6 / 5d: `compile(..., arg_names=...)` plumbs through
+    # to materialize without needing an additional `.bind_identifier`.
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__():
+    return 1
+""",
+        arg_names={"step": "final_name"},
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+    assert "__astichi_arg__" not in rendered
+    assert "def final_name()" in rendered
+
+
+def test_materialize_arg_gate_still_rejects_partially_unresolved_slots() -> None:
+    # Issue 005 §5 step 1 / 5c: binding only one of several slots
+    # leaves the remaining ones unresolved; the gate rejects them and
+    # lists their linenos.
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__(item__astichi_arg__):
+    return item__astichi_arg__
+""",
+    ).bind_identifier(step="run")  # `item` left unresolved
+
+    with pytest.raises(ValueError) as excinfo:
+        compiled.materialize()
+
+    message = str(excinfo.value)
+    assert "item__astichi_arg__" in message
+    # `step` was resolved so it must NOT appear in the diagnostic.
+    assert "step__astichi_arg__" not in message
+
+
+def test_materialize_resolver_pinned_target_survives_hygiene_collision() -> None:
+    # Issue 005 §6 / 5c: the resolved target name is pinned in the
+    # keep set so a competing free `foo` is renamed away rather than
+    # colliding with the post-resolve binding.
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__():
+    return 1
+
+
+foo = 0
+""",
+    ).bind_identifier(step="foo")
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+    # The def lands on the pinned name.
+    assert "def foo(" in rendered
+    # The competing free `foo` has been renamed away (not equal to the def).
+    assert rendered.count("def foo(") == 1
+
+
+def test_bind_identifier_rejects_unknown_slot_name() -> None:
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__():
+    return 1
+""",
+    )
+    with pytest.raises(ValueError, match=r"no __astichi_arg__ slot named `missing`"):
+        compiled.bind_identifier(missing="x")
+
+
+def test_bind_identifier_rejects_rebinding_an_already_resolved_slot() -> None:
+    compiled = astichi.compile(
+        """
+def step__astichi_arg__():
+    return 1
+""",
+    ).bind_identifier(step="first")
+    with pytest.raises(ValueError, match=r"cannot re-bind identifier arg `step`"):
+        compiled.bind_identifier(step="second")
+
+
 def test_materialize_strips_keep_identifier_suffix_from_arg_position() -> None:
     # Issue 005 §4 / 5b: the keep-strip pass extends to `ast.arg`, so a
     # parameter bearing `__astichi_keep__` emits as the stripped name.

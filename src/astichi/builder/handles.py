@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from astichi.builder.graph import AdditiveEdge, BuilderGraph, TargetRef
@@ -59,8 +60,38 @@ class _NamedAdder:
     graph: BuilderGraph = field(compare=False, repr=False)
     instance_name: str
 
-    def __call__(self, composable: Composable) -> InstanceHandle:
-        self.graph.add_instance(self.instance_name, composable)
+    def __call__(
+        self,
+        composable: Composable,
+        *,
+        arg_names: Mapping[str, str] | None = None,
+        keep_names: Iterable[str] | None = None,
+    ) -> InstanceHandle:
+        """Register `composable` as a named root instance.
+
+        Issue 005 §6 / 5d: `arg_names` resolves `__astichi_arg__` slots
+        on the incoming piece via `.bind_identifier(...)` before it is
+        registered; `keep_names` pins additional hygiene-preserved
+        identifiers on the piece via `.with_keep_names(...)`. Both are
+        applied to this instance only - the underlying composable is
+        unchanged.
+        """
+        piece = composable
+        if keep_names is not None:
+            if not isinstance(piece, BasicComposable):
+                raise TypeError(
+                    "keep_names requires a BasicComposable instance; "
+                    f"got {type(piece).__name__}"
+                )
+            piece = piece.with_keep_names(keep_names)
+        if arg_names is not None:
+            if not isinstance(piece, BasicComposable):
+                raise TypeError(
+                    "arg_names requires a BasicComposable instance; "
+                    f"got {type(piece).__name__}"
+                )
+            piece = piece.bind_identifier(arg_names)
+        self.graph.add_instance(self.instance_name, piece)
         return InstanceHandle(graph=self.graph, root_instance=self.instance_name)
 
 

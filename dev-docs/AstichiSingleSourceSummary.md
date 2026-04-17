@@ -33,20 +33,31 @@ items.
     `ast.Name` (Load/Store/Del) and `ast.arg` occurrences on top of
     class/def names; the arg gate and keep-strip pass scan the same
     surface; per-logical-slot port merging via the existing demand-port
-    collapse by stripped name. Per-scope isolation per §2.2 and the
-    resolver API are still `5c`/`5d`; `ast.Attribute` positions remain
-    deferred until a concrete consumer appears.
+    collapse by stripped name.
+  - Identifier cluster `005` `5c` + `5d` complete: arg-resolver pass in
+    materialize (runs after the gate, before hygiene) atomically
+    substitutes every occurrence of a resolved slot; post-strip invariant
+    asserts no `__astichi_arg__` survives. Public surface includes
+    `astichi.compile(source, *, arg_names=..., keep_names=...)`,
+    `BasicComposable.bind_identifier(**names)`,
+    `BasicComposable.with_keep_names(...)`, and
+    `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`; merge
+    unions per-instance bindings with conflict detection. Per-scope
+    isolation per §2.2 and `wire_identifier(...)` on builder slot
+    handles remain deferred (the latter blocked on 006 supply-identifier
+    sources); `ast.Attribute` positions are deferred until a concrete
+    consumer appears. Issue 005 scope complete.
 - Test status as of 2026-04-17:
-  - full suite: `250 passed, 1 xfailed`
+  - full suite: `263 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - continue the identifier cluster — `005` `5c` (identifier resolution
-    pass in materialize before hygiene: atomic substitution per stripped
-    name) then `5d` (public API: `arg_names=` / `keep_names=` on compile
-    and builder, `.bind_identifier(**names)` on composables); `006`
-    (cross-scope threading via `astichi_import` / `astichi_pass`) follows
-    once identifier surfaces are complete. See §11.2 and issues 005/006.
+  - `006` (cross-scope threading via `astichi_import` / `astichi_pass`):
+    `6a` marker registration + placement-rule gate, `6b` hygiene pins
+    and interaction-matrix rejections, `6c` resolution passes in
+    materialize. Once supply-identifier sources land,
+    `wire_identifier(...)` on builder slot handles closes the last
+    deferred surface from 005.
 
 ## 2. Governing principle and non-negotiable rules
 
@@ -638,12 +649,20 @@ Recommended execution order:
      collapses occurrences per stripped name into one
      `DemandPort(shape=IDENTIFIER)`. Per-scope isolation per §2.2 and
      `ast.Attribute` coverage remain deferred.
-   - `5c` next: identifier resolution pass in materialize (before
-     hygiene): atomic substitution across every occurrence per
-     stripped name.
-   - `5d` builder / composable API: `arg_names=` / `keep_names=` on
-     `astichi.compile` and `builder.add`; `.bind_identifier(**names)` on
-     composables; `wire_identifier(...)` on builder slot handles.
+   - `5c` **done**: resolver pass in materialize (after the arg gate,
+     before hygiene) substitutes every `__astichi_arg__` occurrence
+     whose stripped name is in `composable.arg_bindings` with the
+     resolved identifier; the target is added to the effective keep
+     set so hygiene renames any competing free name; a post-strip
+     invariant assert checks no suffix survives.
+   - `5d` **done**: `astichi.compile(source, *, arg_names=...,
+     keep_names=...)`, `BasicComposable.bind_identifier(**names)`,
+     `BasicComposable.with_keep_names(...)`, and
+     `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`
+     all plumb through to materialize; `build_merge` unions per-
+     instance `arg_bindings` / `keep_names` with conflict detection.
+     `wire_identifier(...)` on builder slot handles is deferred
+     because IDENTIFIER-shape supply sources are 006 territory.
 3. Boundary-threading implementation for 006
    - add `astichi_import`
    - add `astichi_pass`
@@ -710,9 +729,10 @@ Do this, in order:
 
 1. read this file only
 2. confirm the current suite still passes
-3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is in flight.
-   `005` `5a` and `5b` are done — pick up at `5c` (resolver pass in
-   materialize) next.
+3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is closed
+   (`005` `5a`–`5d` all landed, modulo the explicitly-deferred
+   `ast.Attribute` / per-scope-isolation / `wire_identifier(...)`
+   surfaces). Pick up at issue `006` (cross-scope threading) next.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup

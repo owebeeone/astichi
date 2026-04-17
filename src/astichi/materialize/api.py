@@ -260,6 +260,22 @@ def build_merge(
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
 
+    # Issue 005 §6 / 5d: union per-instance `arg_bindings` and
+    # `keep_names` into the merged composable so the materialize
+    # resolver pass and hygiene see everything the builder accumulated.
+    merged_arg_bindings: dict[str, str] = {}
+    merged_keep_names: set[str] = set()
+    for record in instance_records.values():
+        for key, value in record.composable.arg_bindings:
+            if key in merged_arg_bindings and merged_arg_bindings[key] != value:
+                raise ValueError(
+                    f"conflicting identifier-arg resolutions for `{key}`: "
+                    f"`{merged_arg_bindings[key]}` vs `{value}` across "
+                    "merged instances"
+                )
+            merged_arg_bindings[key] = value
+        merged_keep_names.update(record.composable.keep_names)
+
     markers = recognize_markers(merged_tree)
     origin = CompileOrigin(
         file_name="<astichi-build>", line_number=1, offset=0
@@ -267,7 +283,9 @@ def build_merge(
     provisional = BasicComposable(
         tree=merged_tree, origin=origin, markers=markers
     )
-    classification = analyze_names(provisional, mode="permissive")
+    classification = analyze_names(
+        provisional, mode="permissive", preserved_names=frozenset(merged_keep_names)
+    )
     raw_demands = extract_demand_ports(markers, classification)
     satisfied = _locally_satisfied_hole_names(merged_tree)
     demand_ports = tuple(
@@ -283,6 +301,8 @@ def build_merge(
         classification=classification,
         demand_ports=demand_ports,
         supply_ports=extract_supply_ports(markers),
+        arg_bindings=tuple(sorted(merged_arg_bindings.items())),
+        keep_names=frozenset(merged_keep_names),
     )
 
 
@@ -775,13 +795,17 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
             f"{names}; call composable.bind(...) before materializing."
         )
 
-    unresolved_args = _find_unresolved_arg_identifiers(composable.tree)
+    arg_bindings = dict(composable.arg_bindings)
+    unresolved_args = _find_unresolved_arg_identifiers(
+        composable.tree, resolved_names=frozenset(arg_bindings)
+    )
     if unresolved_args:
         # Issue 005 §5 step 1 / §7: unresolved `__astichi_arg__` sites are a
         # hard gate error. Each entry carries every textual occurrence of the
         # parameter so the user sees the full reach of the unresolved slot.
         # 5a covers only class/def names; 5b extends coverage to ast.Name /
-        # ast.arg / ast.Attribute and per-occurrence diagnostics.
+        # ast.arg; 5c consults `composable.arg_bindings` so resolved slots
+        # are not rejected.
         parts: list[str] = []
         for name, lines in unresolved_args:
             rendered_lines = ", ".join(str(lineno) for lineno in lines)
@@ -814,15 +838,28 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
 
     tree = copy.deepcopy(composable.tree)
+    # Issue 005 §5 step 2 / 5c: resolve identifier-arg slots before
+    # hygiene. Every `__astichi_arg__` occurrence whose stripped name is
+    # in the bindings map is substituted atomically with the target
+    # identifier; post-pass no `__astichi_arg__` suffix survives (the
+    # gate already rejected unresolved ones). Resolved targets are then
+    # pinned through hygiene so later passes do not rename them.
+    if arg_bindings:
+        _resolve_arg_identifiers(tree, arg_bindings)
     markers = recognize_markers(tree)
+    pinned_targets = frozenset(arg_bindings.values())
+    effective_keep_names = composable.keep_names | pinned_targets
     provisional = BasicComposable(
         tree=tree,
         origin=composable.origin,
         markers=markers,
         bound_externals=composable.bound_externals,
+        keep_names=effective_keep_names,
     )
 
-    analysis = assign_scope_identity(provisional)
+    analysis = assign_scope_identity(
+        provisional, preserved_names=effective_keep_names
+    )
     rename_scope_collisions(analysis)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
@@ -834,12 +871,15 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         markers=pre_strip_markers,
         bound_externals=composable.bound_externals,
     )
-    pre_strip_classification = analyze_names(pre_strip_composable, mode="permissive")
+    pre_strip_classification = analyze_names(
+        pre_strip_composable, mode="permissive", preserved_names=effective_keep_names
+    )
     demand_ports = extract_demand_ports(pre_strip_markers, pre_strip_classification)
     supply_ports = extract_supply_ports(pre_strip_markers)
 
     _strip_residual_markers(tree)
     _strip_keep_identifier_suffix(tree)
+    _assert_no_arg_suffix_remains(tree)
 
     markers = recognize_markers(tree)
     post_strip = BasicComposable(
@@ -847,8 +887,11 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         origin=composable.origin,
         markers=markers,
         bound_externals=composable.bound_externals,
+        keep_names=effective_keep_names,
     )
-    classification = analyze_names(post_strip, mode="permissive")
+    classification = analyze_names(
+        post_strip, mode="permissive", preserved_names=effective_keep_names
+    )
 
     return BasicComposable(
         tree=tree,
@@ -858,6 +901,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         demand_ports=demand_ports,
         supply_ports=supply_ports,
         bound_externals=composable.bound_externals,
+        keep_names=effective_keep_names,
     )
 
 
@@ -1126,6 +1170,8 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
 
 def _find_unresolved_arg_identifiers(
     tree: ast.AST,
+    *,
+    resolved_names: frozenset[str] = frozenset(),
 ) -> list[tuple[str, tuple[int, ...]]]:
     """Return unresolved `__astichi_arg__` slots grouped by stripped name.
 
@@ -1136,13 +1182,16 @@ def _find_unresolved_arg_identifiers(
     suffix: `ast.ClassDef` / `ast.FunctionDef` / `ast.AsyncFunctionDef`
     names (5a) plus `ast.Name` Load/Store/Del and `ast.arg` parameter
     positions (5b). `ast.Attribute` is intentionally omitted until a
-    concrete consumer appears.
+    concrete consumer appears. 5c: slots whose stripped name is in
+    `resolved_names` (supplied via `arg_bindings`) are skipped.
     """
     by_name: dict[str, list[int]] = {}
 
     def _check(name: str, lineno: int) -> None:
         base, marker = strip_identifier_suffix(name)
         if marker is not ARG_IDENTIFIER:
+            return
+        if base in resolved_names:
             return
         by_name.setdefault(base, []).append(lineno)
 
@@ -1172,6 +1221,80 @@ def _strip_keep_identifier_suffix(tree: ast.AST) -> None:
     introduce a collision.
     """
     _KeepIdentifierSuffixStripper().visit(tree)
+
+
+def _resolve_arg_identifiers(
+    tree: ast.AST, bindings: dict[str, str]
+) -> None:
+    """Substitute `__astichi_arg__` occurrences with their resolved names.
+
+    Issue 005 §5 step 2 / 5c: for every class/def name, `ast.Name`, and
+    `ast.arg` whose stripped name appears in `bindings`, rewrite the
+    node identifier to the target. Substitution is atomic across all
+    occurrences of a given stripped name because the map is consulted
+    per-node during a single walk. The gate has already rejected any
+    unresolved arg slot, so this pass only runs for names the user
+    explicitly supplied.
+    """
+    _ArgIdentifierResolver(bindings).visit(tree)
+
+
+class _ArgIdentifierResolver(ast.NodeTransformer):
+    def __init__(self, bindings: dict[str, str]) -> None:
+        self._bindings = bindings
+
+    def _resolve(self, name: str) -> str:
+        base, marker = strip_identifier_suffix(name)
+        if marker is not ARG_IDENTIFIER:
+            return name
+        return self._bindings.get(base, name)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        node.id = self._resolve(node.id)
+        return node
+
+    def visit_arg(self, node: ast.arg) -> ast.AST:
+        node.arg = self._resolve(node.arg)
+        return self.generic_visit(node)
+
+
+def _assert_no_arg_suffix_remains(tree: ast.AST) -> None:
+    """Sanity check that the arg-resolver + gate cover every occurrence.
+
+    Issue 005 §5 step 2: after the gate has rejected unresolved slots
+    and the resolver has substituted bound ones, no `__astichi_arg__`
+    suffix can survive to the final emit. A residual suffix indicates
+    a gap between gate and resolver coverage (a bug).
+    """
+    for node in ast.walk(tree):
+        name: str | None = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name = node.name
+        elif isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.arg):
+            name = node.arg
+        if name is None:
+            continue
+        _, marker = strip_identifier_suffix(name)
+        if marker is ARG_IDENTIFIER:
+            raise AssertionError(
+                f"internal error: __astichi_arg__ suffix survived materialize "
+                f"(name={name!r}, node={type(node).__name__}); arg gate and "
+                f"resolver coverage are out of sync"
+            )
 
 
 class _KeepIdentifierSuffixStripper(ast.NodeTransformer):
