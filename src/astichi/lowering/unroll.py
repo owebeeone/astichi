@@ -31,11 +31,12 @@ from __future__ import annotations
 import ast
 import copy
 import re
+from typing import Iterable
 
 from astichi.lowering.markers import FOR, MARKERS_BY_NAME
 from astichi.lowering.unroll_domain import DomainValue, resolve_domain
 
-__all__ = ["unroll_tree"]
+__all__ = ["unroll_tree", "iter_target_name"]
 
 _ITER_SUFFIX_RE = re.compile(r"__iter_\d+(?:_\d+)*$")
 
@@ -499,3 +500,19 @@ def _append_iter_suffix(name: str, index: int) -> str:
     if _ITER_SUFFIX_RE.search(name):
         return f"{name}_{index}"
     return f"{name}__iter_{index}"
+
+
+def iter_target_name(base: str, path: Iterable[int]) -> str:
+    """Return the post-unroll synthetic target name for a given path.
+
+    For a target referenced as `A.slot[i][j]` by the builder, the matching
+    `astichi_hole` site inside A's unrolled tree is `slot__iter_<i>_<j>`.
+    This helper applies the same suffix convention used by the unroll
+    pass (see `__iter_<i>` / `__iter_<i>_<j>` in UnrollRevision §4.1), so
+    the builder and the materializer agree on target names without
+    either side duplicating the rule.
+    """
+    name = base
+    for index in path:
+        name = _append_iter_suffix(name, index)
+    return name

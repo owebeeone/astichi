@@ -117,11 +117,17 @@ class BuilderHandle:
     def add(self) -> AddProxy:
         return AddProxy(graph=self.graph)
 
-    def build(self) -> BasicComposable:
-        """Merge the builder graph into a single composable."""
+    def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
+        """Merge the builder graph into a single composable.
+
+        `unroll` controls `astichi_for` expansion before edge resolution
+        (UnrollRevision §3). ``"auto"`` unrolls iff any edge references an
+        indexed target path; ``True`` always unrolls; ``False`` never does
+        and rejects indexed edges.
+        """
         from astichi.materialize import build_merge
 
-        return build_merge(self.graph)
+        return build_merge(self.graph, unroll=unroll)
 
     def __getattr__(self, name: str) -> InstanceHandle:
         if name.startswith("_"):

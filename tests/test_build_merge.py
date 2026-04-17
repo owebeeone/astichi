@@ -157,3 +157,185 @@ def test_build_empty_graph_raises() -> None:
 
     with pytest.raises(ValueError, match="cannot build from empty graph"):
         builder.build()
+
+
+# ---- 2c / 2d: indexed-edge routing + unroll kwarg -----------------------
+
+
+def test_indexed_edge_autounrolls_and_routes_per_index() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B0(astichi.compile("zero = 0\n"))
+    builder.add.B1(astichi.compile("one = 1\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+
+    result = builder.build()
+
+    rendered = ast.unparse(result.tree)
+    # Loop is gone after auto-unroll, and each synthetic slot got its
+    # own contribution.
+    assert "astichi_for" not in rendered
+    assert "@astichi_insert(slot__iter_0)" in rendered
+    assert "@astichi_insert(slot__iter_1)" in rendered
+    assert "zero = 0" in rendered
+    assert "one = 1" in rendered
+    assert [p.name for p in result.demand_ports] == []
+
+
+def test_indexed_edges_materialize_end_to_end() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2, 3)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B0(astichi.compile("a = 10\n"))
+    builder.add.B1(astichi.compile("b = 20\n"))
+    builder.add.B2(astichi.compile("c = 30\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+    builder.A.slot[2].add.B2()
+
+    result = builder.build()
+    materialized_src = ast.unparse(result.materialize().tree)
+
+    assert "a = 10" in materialized_src
+    assert "b = 20" in materialized_src
+    assert "c = 30" in materialized_src
+    assert "astichi_for" not in materialized_src
+    assert "astichi_hole" not in materialized_src
+    # Order follows unrolled iteration order.
+    assert (
+        materialized_src.index("a = 10")
+        < materialized_src.index("b = 20")
+        < materialized_src.index("c = 30")
+    )
+
+
+def test_indexed_edge_leaves_unfilled_synthetic_as_demand_port() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2, 3)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B0(astichi.compile("a = 10\n"))
+    builder.add.B2(astichi.compile("c = 30\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[2].add.B2()
+
+    result = builder.build()
+
+    rendered = ast.unparse(result.tree)
+    assert "a = 10" in rendered
+    assert "c = 30" in rendered
+    assert "astichi_hole(slot__iter_1)" in rendered
+    assert [p.name for p in result.demand_ports] == ["slot__iter_1"]
+
+
+def test_unroll_true_forces_expansion_without_indexed_edges() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((7, 9)):\n"
+            "    z = x\n"
+        )
+    )
+
+    result = builder.build(unroll=True)
+
+    rendered = ast.unparse(result.tree)
+    assert "astichi_for" not in rendered
+    assert "z = 7" in rendered
+    assert "z = 9" in rendered
+
+
+def test_unroll_false_with_indexed_edges_raises() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B(astichi.compile("value = 1\n"))
+    builder.A.slot[0].add.B()
+
+    with pytest.raises(
+        ValueError,
+        match=r"unroll=False conflicts with indexed target edges.*A\.slot\[0\]",
+    ):
+        builder.build(unroll=False)
+
+
+def test_indexed_edge_out_of_range_raises() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B(astichi.compile("value = 1\n"))
+    builder.A.slot[5].add.B()
+
+    with pytest.raises(
+        ValueError,
+        match=r"indexed target A\.slot\[5\] has no matching astichi_hole",
+    ):
+        builder.build()
+
+
+def test_indexed_edge_on_non_unrolled_target_rejected() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("astichi_hole(other)\n"))
+    builder.add.B(astichi.compile("value = 1\n"))
+    builder.A.other[0].add.B()
+
+    with pytest.raises(
+        ValueError,
+        match=r"indexed target A\.other\[0\] has no matching astichi_hole",
+    ):
+        builder.build()
+
+
+def test_mixed_indexed_and_plain_targets_coexist() -> None:
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "astichi_hole(head)\n"
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.H(astichi.compile("head_val = 1\n"))
+    builder.add.S0(astichi.compile("s0 = 0\n"))
+    builder.add.S1(astichi.compile("s1 = 1\n"))
+    builder.A.head.add.H()
+    builder.A.slot[0].add.S0()
+    builder.A.slot[1].add.S1()
+
+    result = builder.build()
+    materialized_src = ast.unparse(result.materialize().tree)
+
+    assert "head_val = 1" in materialized_src
+    assert "s0 = 0" in materialized_src
+    assert "s1 = 1" in materialized_src
+    assert "astichi_for" not in materialized_src
+    assert "astichi_hole" not in materialized_src
+
+
+def test_invalid_unroll_value_raises() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("x = 1\n"))
+
+    with pytest.raises(ValueError, match="unroll must be True, False, or 'auto'"):
+        builder.build(unroll="always")

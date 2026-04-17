@@ -22,16 +22,18 @@ items.
   `astichi.Composable`.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
-  - V2 Phase 2 loop unroll: `2a` (domain resolution) and `2b` (body-copy
-    unroll engine) complete; `2c–2e` open.
+  - V2 Phase 2 loop unroll: `2a` (domain resolution), `2b` (body-copy unroll
+    engine), `2c` (indexed-edge resolution), and `2d` (`build(unroll=...)`
+    integration) complete; `2e` Phase 2 gate open.
   - V2 Phase 3 polish has not started.
 - Test status as of 2026-04-17:
-  - full suite: `224 passed, 1 xfailed`
+  - full suite: `234 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - implement indexed-edge resolution against synthetic per-iteration target
-    names (`2c`) in `src/astichi/materialize/api.py`
+  - close the Phase 2 gate (`2e`): re-run the suite, land bind-fed literal
+    domain end-to-end coverage, and confirm provenance round-trip on unrolled
+    output still holds
 
 ## 2. Governing principle and non-negotiable rules
 
@@ -574,20 +576,21 @@ Do these next.
    - reject name-bearing marker arg == loop variable
    - tests:
      - `tests/test_unroll.py`
-3. `2c` Indexed-path edge resolution
-   - extend `src/astichi/materialize/api.py`
-   - consume existing `TargetRef.path`
-   - map path to synthetic `__iter_...` target names
-   - reject out-of-range and non-unrolled indexed references clearly
-   - tests:
-     - extend `tests/test_build_merge.py`
-4. `2d` `build(unroll=...)` integration
-   - extend `BuilderHandle.build`
-   - accept `unroll="auto"` default, `True`, `False`
-   - auto-detect unroll when indexed edges exist
-   - reject `unroll=False` plus indexed edges
-   - tests:
-     - extend `tests/test_build_merge.py`
+3. `2c` Indexed-path edge resolution — **done**
+   - `build_merge` keys edges by `(root, iter_target_name(target, path))`
+     so an `A.slot[i][j]` reference resolves to the synthetic
+     `slot__iter_i_j` hole produced by unroll
+   - per-instance composables are refreshed after unroll so demand/supply
+     lookups see the new port names
+   - indexed edges with no matching post-unroll hole are rejected with a
+     clear diagnostic (out-of-range or non-unrolled target)
+   - `iter_target_name(base, path)` helper exported from
+     `astichi.lowering.unroll` so the rename convention lives in one place
+4. `2d` `build(unroll=...)` integration — **done**
+   - `BuilderHandle.build` and `build_merge` take `unroll` kwarg
+   - default `"auto"` unrolls iff any edge references an indexed path
+   - `True` always unrolls every instance
+   - `False` skips unroll and rejects indexed edges with a clear diagnostic
 5. `2e` Phase 2 gate
    - full suite green
    - bind-fed literal domain end-to-end tests land
@@ -679,14 +682,11 @@ Do this, in order:
 
 1. read this file only
 2. confirm the current suite still passes
-3. implement `2a`
-4. implement `2b`
-5. implement `2c`
-6. implement `2d`
-7. run the Phase 2 gate
-8. fold the identifier cluster into the active plan and implement it in the
+3. `2a`, `2b`, `2c`, `2d` are done; pick up at `2e`
+4. run the Phase 2 gate (`2e`)
+5. fold the identifier cluster into the active plan and implement it in the
    order from §11.2
-9. finish Phase 3 polish
-10. only then spend time on provenance drift or recognized-only marker cleanup
+6. finish Phase 3 polish
+7. only then spend time on provenance drift or recognized-only marker cleanup
 
 That path is the shortest route to a sound V2 without widening the design.

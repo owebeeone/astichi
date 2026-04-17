@@ -7,9 +7,10 @@ import copy
 import re
 from dataclasses import dataclass
 
-from astichi.builder.graph import BuilderGraph
+from astichi.builder.graph import AdditiveEdge, BuilderGraph, InstanceRecord
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
 from astichi.lowering import recognize_markers
+from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import DemandPort, SupplyPort, extract_demand_ports, extract_supply_ports, validate_port_pair
@@ -53,55 +54,150 @@ def _sanitize_for_identifier(raw: str) -> str:
     return cleaned
 
 
-def build_merge(graph: BuilderGraph) -> BasicComposable:
-    """Merge a builder graph into a single composable."""
+def _format_target_address(edge: AdditiveEdge) -> str:
+    """Human-readable `root.slot[i][j]` form for diagnostics."""
+    suffix = "".join(f"[{i}]" for i in edge.target.path)
+    return f"{edge.target.root_instance}.{edge.target.target_name}{suffix}"
+
+
+def _refresh_composable(
+    original: BasicComposable, tree: ast.Module
+) -> BasicComposable:
+    """Re-extract markers/classification/ports against an unrolled tree."""
+    markers = recognize_markers(tree)
+    provisional = BasicComposable(
+        tree=tree, origin=original.origin, markers=markers
+    )
+    classification = analyze_names(provisional, mode="permissive")
+    return BasicComposable(
+        tree=tree,
+        origin=original.origin,
+        markers=markers,
+        classification=classification,
+        demand_ports=extract_demand_ports(markers, classification),
+        supply_ports=extract_supply_ports(markers),
+    )
+
+
+def _validate_indexed_targets(
+    edges_by_target: dict[tuple[str, str], list[tuple[int, AdditiveEdge]]],
+    instance_records: dict[str, InstanceRecord],
+) -> None:
+    """Reject indexed edges whose post-unroll hole does not exist."""
+    for (root, effective_name), indexed_edges in edges_by_target.items():
+        origin_edge = indexed_edges[0][1]
+        if not origin_edge.target.path:
+            continue
+        composable = instance_records[root].composable
+        if _lookup_demand_port(composable, effective_name) is not None:
+            continue
+        addr = _format_target_address(origin_edge)
+        raise ValueError(
+            f"indexed target {addr} has no matching astichi_hole "
+            f"(expected synthetic name {root}.{effective_name}); "
+            "index may be out of range or target was not unrolled"
+        )
+
+
+def build_merge(
+    graph: BuilderGraph, *, unroll: bool | str = "auto"
+) -> BasicComposable:
+    """Merge a builder graph into a single composable.
+
+    `unroll` controls `astichi_for` expansion before edge resolution
+    (UnrollRevision §3):
+
+    - ``"auto"`` (default): unroll iff any edge targets an indexed path.
+    - ``True``: unroll every instance regardless of edges.
+    - ``False``: do not unroll; reject if any edge has a non-empty path.
+    """
     if not graph.instances:
         raise ValueError("cannot build from empty graph")
+    if unroll not in (True, False, "auto"):
+        raise ValueError(
+            f"unroll must be True, False, or 'auto'; got {unroll!r}"
+        )
+
+    has_indexed_edges = any(e.target.path for e in graph.edges)
+    if unroll is False and has_indexed_edges:
+        offenders = sorted(
+            {
+                _format_target_address(e)
+                for e in graph.edges
+                if e.target.path
+            }
+        )
+        raise ValueError(
+            "unroll=False conflicts with indexed target edges: "
+            + ", ".join(offenders)
+        )
+    do_unroll = (unroll is True) or (unroll == "auto" and has_indexed_edges)
 
     trees: dict[str, ast.Module] = {}
-    instance_records: dict[str, object] = {}
+    instance_records: dict[str, InstanceRecord] = {}
     for record in graph.instances:
         if not isinstance(record.composable, BasicComposable):
             raise TypeError(
                 f"instance {record.name} must be a BasicComposable"
             )
-        instance_records[record.name] = record
-        trees[record.name] = copy.deepcopy(record.composable.tree)
+        tree = copy.deepcopy(record.composable.tree)
+        if do_unroll:
+            tree = unroll_tree(tree)
+            composable = _refresh_composable(record.composable, tree)
+        else:
+            composable = record.composable
+        trees[record.name] = tree
+        instance_records[record.name] = InstanceRecord(
+            name=record.name, composable=composable
+        )
 
-    edges_by_target: dict[tuple[str, str], list[tuple[int, object]]] = {}
+    edges_by_target: dict[tuple[str, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
-        key = (edge.target.root_instance, edge.target.target_name)
+        effective_name = iter_target_name(
+            edge.target.target_name, edge.target.path
+        )
+        key = (edge.target.root_instance, effective_name)
         edges_by_target.setdefault(key, []).append((idx, edge))
     for key in edges_by_target:
         edges_by_target[key].sort(key=lambda item: (item[1].order, item[0]))
+
+    _validate_indexed_targets(edges_by_target, instance_records)
 
     resolution_order = _topo_sort_targets(graph)
 
     for inst_name in resolution_order:
         block_replacements: dict[str, list[_BlockContribution]] = {}
         expr_replacements: dict[str, list[_ExpressionInsert]] = {}
-        for (root, target_name), indexed_edges in edges_by_target.items():
+        for (root, effective_target_name), indexed_edges in edges_by_target.items():
             if root != inst_name:
                 continue
             target_record = instance_records[inst_name]
-            target_port = _lookup_demand_port(target_record.composable, target_name)
+            target_port = _lookup_demand_port(
+                target_record.composable, effective_target_name
+            )
             contributions: list[_BlockContribution] = []
             inserts: list[_ExpressionInsert] = []
             for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
-                source_port = _lookup_supply_port(source_record.composable, target_name)
+                # Source-side ports and insert wrappers use the raw (pre-
+                # unroll) name — the author writes `astichi_insert(slot, ...)`
+                # in the source; the suffixing happens on the target side.
+                raw_target_name = edge.target.target_name
+                source_port = _lookup_supply_port(
+                    source_record.composable, raw_target_name
+                )
                 if target_port is not None and source_port is not None:
                     validate_port_pair(target_port, source_port)
                 if target_port is not None and target_port.placement == "expr":
                     if source_port is None or source_port.placement != "expr":
                         raise ValueError(
                             f"source instance {edge.source_instance} cannot satisfy "
-                            f"expression target {inst_name}.{target_name}"
+                            f"expression target {inst_name}.{effective_target_name}"
                         )
                     inserts.extend(
                         _extract_expression_inserts(
                             trees[edge.source_instance],
-                            target_name,
+                            raw_target_name,
                             edge_order=edge.order,
                             edge_index=_idx,
                             source_instance=edge.source_instance,
@@ -111,7 +207,7 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
                 shell_name = (
                     f"__astichi_contrib__"
                     f"{_sanitize_for_identifier(inst_name)}"
-                    f"__{_sanitize_for_identifier(target_name)}"
+                    f"__{_sanitize_for_identifier(effective_target_name)}"
                     f"__{counter}"
                     f"__{_sanitize_for_identifier(edge.source_instance)}"
                 )
@@ -125,7 +221,7 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
                     )
                 )
             if inserts:
-                expr_replacements[target_name] = sorted(
+                expr_replacements[effective_target_name] = sorted(
                     inserts,
                     key=lambda item: (
                         item.edge_order,
@@ -135,7 +231,7 @@ def build_merge(graph: BuilderGraph) -> BasicComposable:
                     ),
                 )
             if contributions:
-                block_replacements[target_name] = sorted(
+                block_replacements[effective_target_name] = sorted(
                     contributions,
                     key=lambda item: (item.order, item.edge_index),
                 )
