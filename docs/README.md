@@ -5,9 +5,13 @@ fragments: compile marker-bearing source into a **`Composable`**, wire
 fragments with a **builder**, then **`materialize`** and **`emit`** when you
 need runnable or inspectable Python.
 
-These pages describe the **intended user-facing behavior** once Astichi V1 is
-complete. Normative detail lives in
-**[`../dev-docs/AstichiApiDesignV1.md`](../dev-docs/AstichiApiDesignV1.md)**.
+These pages describe the **current user-facing behavior** in `src/` and the
+test suite.
+
+For the active project snapshot and known gaps, start with
+**[`../dev-docs/AstichiSingleSourceSummary.md`](../dev-docs/AstichiSingleSourceSummary.md)**.
+Older V1 design docs remain useful background, but some planned details there
+no longer match the live implementation exactly.
 
 ## Where to start
 

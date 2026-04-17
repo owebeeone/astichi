@@ -1,8 +1,11 @@
 # Marker overview
 
 Markers are **valid Python** syntax: calls and decorators your snippet uses so
-astichi can find holes, binds, and composition sites. Import them from
-**`astichi.markers`** so snippets remain ordinary Python modules.
+astichi can find holes, binds, and composition sites.
+
+The current package does **not** ship an `astichi.markers` runtime shim, so
+marker-bearing examples are typically embedded directly in the source string
+passed to `astichi.compile(...)`.
 
 **Hole shape** (scalar vs variadic vs block) is inferred from **AST context**,
 not from encoding a “kind” in the hole name.

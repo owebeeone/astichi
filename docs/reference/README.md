@@ -17,5 +17,8 @@
 | [classification-modes.md](classification-modes.md) | Strict / permissive, preserved names |
 | [errors.md](errors.md) | Hard error categories |
 
-Normative detail:
+Current implementation snapshot:
+**[`../../dev-docs/AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)**.
+
+Historical V1 design detail:
 **[`../../dev-docs/AstichiApiDesignV1.md`](../../dev-docs/AstichiApiDesignV1.md)**.

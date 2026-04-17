@@ -12,20 +12,20 @@ builder = build()
 instances** of `Composable`, **ties** (edges from supply to demand ports), and
 **ordering** metadata for variadic insertion sites.
 
-## Fluent API (preferred)
+## Fluent API
 
-Chaining registers instances and performs inserts in one expression:
+The current handle API is fluent at the **operation** level, but not as one
+long expression across repeated `.add.<Name>(...)` calls. A working pattern is:
 
 ```python
-result = (
-    build()
-    .add.A(loop_example)
-    .add.B(print_example)
-    .A.init.add.B(order=10)
-    .A.first[0].add.B(order=10)
-    .A.third.add.B(order=10)
-    .build()
-)
+builder = build()
+builder.add.A(loop_example)
+builder.add.B(print_example)
+builder.A.init.add.B(order=10)
+builder.A.first[0].add.B(order=10)
+builder.A.third.add.B(order=10)
+
+result = builder.build()
 ```
 
 ## Handle-oriented API (equivalent semantics)
@@ -54,23 +54,27 @@ A lower-level explicit API (instance ids, `PortId`, `tie`, …) exists for tooli
 and tests; it is **semantics-equivalent** to fluent/handle surfaces with more
 boilerplate.
 
-## `build()` on the graph
+## `build(unroll="auto")` on the graph
 
 Calling **`.build()`** on the builder **folds** the graph into one **new**
 `Composable`. The result **may still contain**:
 
-- open **boundary** holes (if optional demands were left unwired)  
-- **loops** from `astichi_for` if they were not unrolled  
+- open **boundary** holes that were left unwired
+- **loops** from `astichi_for` when unrolling was not requested or needed
 - **exports** and other marker-lowered structure  
 
-**`build()`** does **not** force eager loop unrolling merely because a loop
-exists (**[§10.1](../../dev-docs/AstichiApiDesignV1.md)**).
+`BuilderHandle.build` currently accepts `unroll=True | False | "auto"`:
+
+- `"auto"` (default) unrolls iff indexed target paths such as `A.slot[0]`
+  require it
+- `True` always unrolls `astichi_for(...)` loops before edge resolution
+- `False` never unrolls and rejects indexed edges that require unrolled targets
 
 ## Variadic `order`
 
 When multiple inserts target the same variadic hole, each edge carries an
-**`order`** value: **lower sorts first**. **Equal `order` on the same target is
-an error** (**[§5.8](../../dev-docs/AstichiApiDesignV1.md)**).
+**`order`** value: **lower sorts first**. **Equal `order`** ties resolve by
+**first-added edge first**.
 
 ## See also
 

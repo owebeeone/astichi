@@ -13,26 +13,18 @@
 from astichi import Composable, compile, build
 ```
 
-## Submodule: `astichi.markers`
+## Marker names in compiled source
 
-Runtime callables and decorators used **in snippet source** so it remains valid
-Python:
+Astichi recognizes marker names such as `astichi_hole`, `astichi_bind_external`,
+`astichi_for`, and `astichi_insert` from the **source text** passed to
+`astichi.compile(...)`.
 
-| Symbols (illustrative) | Role |
-|------------------------|------|
-| `astichi_hole` | Mark a named demand site. |
-| `astichi_bind_once`, `astichi_bind_shared`, `astichi_bind_external` | Declare bindings and compile-time externals. |
-| `astichi_keep` | Preserve a lexical identifier spelling. |
-| `astichi_export` | Export a binding as a **supply** port. |
-| `astichi_for` | Compile-time loop domain. |
-| `astichi_insert` | Decorator factory for `@astichi_insert(target, order=…)`. |
+The current package does **not** ship a runtime `astichi.markers` helper module,
+so marker-bearing examples are typically embedded directly in the source string
+that Astichi parses.
 
 Exact export list matches
 **[`AstichiApiDesignV1.md` §5](../../dev-docs/AstichiApiDesignV1.md)**.
-
-```python
-from astichi.markers import astichi_hole, astichi_bind_external
-```
 
 ## Submodule: `astichi.frontend`
 
@@ -46,6 +38,31 @@ Lower-level access to the compiler surface:
 Concrete composable types may be exposed here for typing or introspection; all
 satisfy **`Composable`**.
 
+## Concrete composables today
+
+Current frontend and builder results are concrete `BasicComposable` values
+(with `FrontendComposable` as a frontend alias).
+
+```python
+compiled = astichi.compile("astichi_bind_external(fields)\nprint(fields)\n")
+bound = compiled.bind(fields=("a", "b"))
+```
+
+`.bind(mapping=None, /, **values)` applies `astichi_bind_external(...)`
+substitutions and returns a new immutable composable.
+
 ## Submodule: `astichi.builder`
 
 Builder construction and graph types used by **`build()`** and advanced callers.
+
+## Submodule: `astichi.emit`
+
+Source emission and provenance helpers:
+
+| Name | Role |
+|------|------|
+| `emit_source` | Render a module AST to source with optional provenance. |
+| `encode_provenance` / `decode_provenance` | Encode and decode the embedded provenance payload. |
+| `extract_provenance` | Read provenance from emitted source text. |
+| `verify_round_trip` | Verify that emitted source reparses to the embedded AST. |
+| `RoundTripError` | Raised when provenance is missing or mismatched. |

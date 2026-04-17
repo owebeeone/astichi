@@ -21,7 +21,7 @@ Renders **source text** for debugging, tests, inspection, or downstream codegen.
 
 | `provenance` | Behavior |
 |--------------|----------|
-| `True` (default) | Emit body, then append **`astichi_provenance_payload("…")`** — single argument, reserved name, **compressed** payload used only for AST/provenance restoration. |
+| `True` (default) | Emit body, then append one trailing comment of the form **`# astichi-provenance: ...`**. The payload is used only for AST/provenance restoration. |
 | `False` | Emit without the provenance tail. |
 
 **Semantics of the tail:** holes, binds, inserts, exports, and related meaning
@@ -31,9 +31,18 @@ payload is **not** a second source of truth for markers (**[§11.2](../../dev-do
 ### Edited files
 
 If a user edits emitted source so the AST **no longer matches** the payload,
-provenance restoration **fails** with an error instructing removal of
-**`astichi_provenance_payload(...)`**. Current buffer locations are then
-authoritative (**[§12](../../dev-docs/AstichiApiDesignV1.md)**).
+provenance restoration **fails**. Removing the trailing
+**`# astichi-provenance: ...`** comment drops back to the edited source as the
+authoritative version.
+
+## Provenance helpers
+
+`astichi.emit` exposes the current round-trip helpers used by the test suite:
+
+- `extract_provenance(source)`
+- `verify_round_trip(source)`
+- `encode_provenance(tree)` / `decode_provenance(payload)`
+- `RoundTripError`
 
 ## Marker-bearing emission
 

@@ -12,6 +12,6 @@ categories below follow **[§15](../../dev-docs/AstichiApiDesignV1.md)**.
 | Unresolved free identifier in **strict** mode | Error |
 | Same variadic target, same `order` on two inserts | Error |
 | `astichi_for` target unpacking fails at compile time | Error |
-| Provenance restore on edited / non-matching source | Error; remove `astichi_provenance_payload(...)` |
+| Provenance restore on edited / non-matching source | Error; remove the trailing `# astichi-provenance: ...` comment |
 
 For **`SyntaxError`** from `compile`, see [compile-api.md](compile-api.md).

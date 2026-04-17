@@ -12,11 +12,15 @@ class Composable(ABC):
     def emit(self, *, provenance: bool = True) -> str: ...
 
     @abstractmethod
-    def materialize(self) -> Composable: ...
+    def materialize(self) -> object: ...
 ```
 
 The returned composable is **closed** for the chosen target: safe to **`emit`**
 or hand to execution adapters.
+
+Current frontend/build results are concrete composables that also expose
+`.bind(mapping=None, /, **values)` for `astichi_bind_external(...)`
+substitution.
 
 ## `emit(*, provenance: bool = True) -> str`
 
@@ -24,7 +28,7 @@ Renders **Python source** for this composable.
 
 | `provenance` | Behavior |
 |--------------|----------|
-| `True` (default) | Emit marker-bearing or full source as configured, then append a single **`astichi_provenance_payload("…")`** call carrying compressed, versioned metadata for AST and location restoration only. |
+| `True` (default) | Emit marker-bearing or full source as configured, then append one trailing comment of the form **`# astichi-provenance: ...`** carrying the encoded provenance payload. |
 | `False` | Emit source **without** that tail. |
 
 Marker and program semantics are always recoverable from the **emitted text
