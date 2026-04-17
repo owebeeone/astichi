@@ -23,6 +23,12 @@ class MarkerSpec(ABC):
     def is_definitional_site(self) -> bool:
         return False
 
+    def is_hygiene_directive(self) -> bool:
+        """True for markers that are name-level hygiene assertions (no port,
+        no binding). Multiple occurrences of the same directive in the same
+        scope are idempotent and do not create N-way conflicts."""
+        return False
+
     def accepts_call_context(self, node: ast.Call) -> bool:
         """Whether this marker accepts the given call node in call-expression context."""
         return not self.is_decorator_only()
@@ -48,17 +54,22 @@ class _SimpleMarker(MarkerSpec):
         positional_args: int,
         name_bearing: bool = False,
         decorator_only: bool = False,
+        hygiene_directive: bool = False,
     ) -> None:
         self.source_name = source_name
         self._positional_args = positional_args
         self._name_bearing = name_bearing
         self._decorator_only = decorator_only
+        self._hygiene_directive = hygiene_directive
 
     def is_decorator_only(self) -> bool:
         return self._decorator_only
 
     def is_name_bearing(self) -> bool:
         return self._name_bearing
+
+    def is_hygiene_directive(self) -> bool:
+        return self._hygiene_directive
 
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
@@ -83,6 +94,12 @@ class _DefinitionalNameMarker(MarkerSpec):
         return True
 
     def is_definitional_site(self) -> bool:
+        return True
+
+    def is_hygiene_directive(self) -> bool:
+        # Legacy suffix-form marker. Call-form is inert (stripped during
+        # materialize). Treated as hygiene for unroll-body safety; issue 005
+        # will replace this with __astichi_keep__ on the same footing.
         return True
 
     def validate_node(self, node: ast.AST) -> None:
@@ -141,12 +158,33 @@ BIND_SHARED = _SimpleMarker(
 BIND_EXTERNAL = _SimpleMarker(
     "astichi_bind_external", positional_args=1, name_bearing=True
 )
-KEEP = _SimpleMarker("astichi_keep", positional_args=1, name_bearing=True)
+KEEP = _SimpleMarker(
+    "astichi_keep", positional_args=1, name_bearing=True, hygiene_directive=True
+)
 EXPORT = _SimpleMarker("astichi_export", positional_args=1, name_bearing=True)
 FOR = _SimpleMarker("astichi_for", positional_args=1)
 INSERT = _InsertMarker()
 DEFINITIONAL_NAME = _DefinitionalNameMarker()
 
+# Canonical registry of every marker Astichi knows about. Consumers that
+# need to enumerate markers (e.g. the unroller) iterate this tuple and
+# filter by marker self-description (`is_name_bearing`, `is_hygiene_directive`,
+# ...), so new markers are picked up automatically.
+ALL_MARKERS: tuple[MarkerSpec, ...] = (
+    HOLE,
+    BIND_ONCE,
+    BIND_SHARED,
+    BIND_EXTERNAL,
+    KEEP,
+    EXPORT,
+    FOR,
+    INSERT,
+    DEFINITIONAL_NAME,
+)
+
+# Markers recognized from an `ast.Call` node by `accepts_call_context` /
+# `accepts_decorator_context`. Excludes suffix-form markers like
+# `DEFINITIONAL_NAME` which are matched from a class/def node.
 MARKERS_BY_NAME: dict[str, MarkerSpec] = {
     marker.source_name: marker
     for marker in (

@@ -32,32 +32,30 @@ import ast
 import copy
 import re
 
+from astichi.lowering.markers import ALL_MARKERS, FOR, HOLE
 from astichi.lowering.unroll_domain import DomainValue, resolve_domain
 
 __all__ = ["unroll_tree"]
 
 
-_FORBIDDEN_MARKERS_IN_BODY = frozenset(
-    {
-        "astichi_export",
-        "astichi_bind_external",
-        "astichi_bind_once",
-        "astichi_bind_shared",
-        "astichi_insert",
-    }
+# Name-bearing markers whose first argument is a bare identifier — may
+# not carry a loop variable as their name argument (UnrollRevision §5.5).
+_NAME_BEARING_MARKERS = frozenset(
+    m.source_name for m in ALL_MARKERS if m.is_name_bearing()
 )
 
-# Name-bearing markers whose first argument is a bare identifier. These may
-# not carry a loop variable as their name argument (UnrollRevision §5.5).
-# Port-creating ones in `_FORBIDDEN_MARKERS_IN_BODY` are already rejected
-# unconditionally; the set below exists for the markers that ARE permitted
-# inside a loop body and still need the §5.5 check.
-_NAME_BEARING_MARKERS = frozenset(
-    {
-        "astichi_hole",
-        "astichi_keep",
-        "astichi_definitional_name",
-    }
+# Name-bearing markers that are not permitted inside an `astichi_for` body
+# because N copies would either produce duplicate ports or violate the
+# marker's own cardinality (UnrollRevision §4.3). `astichi_hole` is the
+# one name-bearing marker renamed per iteration, and hygiene directives
+# (`astichi_keep`, `astichi_definitional_name`) are idempotent declarations
+# with no port and so are permitted.
+_FORBIDDEN_MARKERS_IN_BODY = frozenset(
+    m.source_name
+    for m in ALL_MARKERS
+    if m.is_name_bearing()
+    and m is not HOLE
+    and not m.is_hygiene_directive()
 )
 
 _ITER_SUFFIX_RE = re.compile(r"__iter_\d+(?:_\d+)*$")
@@ -123,7 +121,7 @@ def _is_astichi_for_iter(node: ast.expr) -> bool:
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "astichi_for"
+        and node.func.id == FOR.source_name
     )
 
 
