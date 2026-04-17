@@ -12,7 +12,10 @@ from astichi.model.external_values import value_to_ast
 
 
 def apply_external_bindings(tree: ast.Module, bindings: dict[str, object]) -> None:
-    """Remove satisfied bind markers and substitute bound reads in-place."""
+    """Remove satisfied bind markers and substitute bound reads in-place.
+
+    The caller owns deep-copying when immutable composable state must be preserved.
+    """
 
     if not bindings:
         return
@@ -20,9 +23,7 @@ def apply_external_bindings(tree: ast.Module, bindings: dict[str, object]) -> No
     _reject_marker_argument_conflicts(tree, bindings)
     _reject_same_scope_rebinds(tree, bindings)
 
-    transformed = _ExternalBindingTransformer(bindings).visit(tree)
-    assert isinstance(transformed, ast.Module)
-    tree.body = transformed.body
+    _ExternalBindingTransformer(bindings).visit(tree)
     ast.fix_missing_locations(tree)
 
 
@@ -41,8 +42,6 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
         node.args = self.visit(node.args)
         if node.returns is not None:
             node.returns = self.visit(node.returns)
-        if type_comment := getattr(node, "type_comment", None):
-            _ = type_comment
         if hasattr(node, "type_params"):
             node.type_params = [self.visit(param) for param in node.type_params]
         with self._push_shadow(_function_scope_shadow_names(node, self.binding_names)):
@@ -95,6 +94,59 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
             node.orelse = self._visit_statements(node.orelse)
         return node
 
+    def visit_If(self, node: ast.If) -> ast.AST:
+        node.test = self.visit(node.test)
+        node.body = self._visit_statements(node.body)
+        node.orelse = self._visit_statements(node.orelse)
+        return node
+
+    def visit_While(self, node: ast.While) -> ast.AST:
+        node.test = self.visit(node.test)
+        node.body = self._visit_statements(node.body)
+        node.orelse = self._visit_statements(node.orelse)
+        return node
+
+    def visit_With(self, node: ast.With) -> ast.AST:
+        node.items = [self.visit(item) for item in node.items]
+        node.body = self._visit_statements(node.body)
+        return node
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AST:
+        node.items = [self.visit(item) for item in node.items]
+        node.body = self._visit_statements(node.body)
+        return node
+
+    def visit_Try(self, node: ast.Try) -> ast.AST:
+        node.body = self._visit_statements(node.body)
+        node.handlers = [self.visit(handler) for handler in node.handlers]
+        node.orelse = self._visit_statements(node.orelse)
+        node.finalbody = self._visit_statements(node.finalbody)
+        return node
+
+    def visit_TryStar(self, node: ast.TryStar) -> ast.AST:
+        node.body = self._visit_statements(node.body)
+        node.handlers = [self.visit(handler) for handler in node.handlers]
+        node.orelse = self._visit_statements(node.orelse)
+        node.finalbody = self._visit_statements(node.finalbody)
+        return node
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> ast.AST:
+        if node.type is not None:
+            node.type = self.visit(node.type)
+        node.body = self._visit_statements(node.body)
+        return node
+
+    def visit_Match(self, node: ast.Match) -> ast.AST:
+        node.subject = self.visit(node.subject)
+        node.cases = [self.visit(case) for case in node.cases]
+        return node
+
+    def visit_match_case(self, node: ast.match_case) -> ast.match_case:
+        if node.guard is not None:
+            node.guard = self.visit(node.guard)
+        node.body = self._visit_statements(node.body)
+        return node
+
     def visit_ListComp(self, node: ast.ListComp) -> ast.AST:
         added_shadow = self._visit_comprehension_generators(node.generators)
         with self._push_shadow(added_shadow):
@@ -127,7 +179,7 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
             return node
         if node.id in self._current_shadow():
             return node
-        return copy.deepcopy(value_to_ast(self.bindings[node.id]))
+        return value_to_ast(self.bindings[node.id])
 
     def _visit_statements(self, statements: list[ast.stmt]) -> list[ast.stmt]:
         visited: list[ast.stmt] = []
@@ -227,22 +279,62 @@ class _SameScopeRebindChecker(ast.NodeVisitor):
 
 
 def _direct_bind_external_names(body: list[ast.stmt]) -> frozenset[str]:
-    names: set[str] = set()
+    collector = _DirectBindExternalCollector()
     for statement in body:
-        if not isinstance(statement, ast.Expr):
-            continue
-        if not isinstance(statement.value, ast.Call):
-            continue
-        if not isinstance(statement.value.func, ast.Name):
-            continue
-        if statement.value.func.id != "astichi_bind_external":
-            continue
-        if not statement.value.args:
-            continue
-        first_arg = statement.value.args[0]
-        if isinstance(first_arg, ast.Name):
-            names.add(first_arg.id)
-    return frozenset(names)
+        collector.visit(statement)
+    return frozenset(collector.names)
+
+
+class _DirectBindExternalCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+
+    def visit_Expr(self, node: ast.Expr) -> None:
+        if (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "astichi_bind_external"
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Name)
+        ):
+            self.names.add(node.value.args[0].id)
+            return
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        return
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        return
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        return
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        return
 
 
 class _SameScopeBindingCollector(ast.NodeVisitor):

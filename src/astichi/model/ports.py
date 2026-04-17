@@ -74,6 +74,7 @@ def extract_demand_ports(
                     sources=frozenset({"bind_external"}),
                 )
             )
+            continue
     for implied in classification.implied_demands:
         ports.append(
             DemandPort(
