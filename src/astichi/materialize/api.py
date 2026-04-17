@@ -7,7 +7,12 @@ import copy
 import re
 from dataclasses import dataclass
 
-from astichi.builder.graph import AdditiveEdge, BuilderGraph, InstanceRecord
+from astichi.builder.graph import (
+    AdditiveEdge,
+    AssignBinding,
+    BuilderGraph,
+    InstanceRecord,
+)
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
 from astichi.lowering import recognize_markers
 from astichi.lowering.markers import (
@@ -104,6 +109,56 @@ def _validate_indexed_targets(
         )
 
 
+def _apply_assign_bindings(
+    assigns: tuple[AssignBinding, ...],
+    instance_records: dict[str, InstanceRecord],
+) -> None:
+    """Apply ``builder.assign`` wirings to local instance-record copies.
+
+    Issue 006 6c (assign surface): each ``AssignBinding`` becomes a
+    ``{inner_name: outer_name}`` entry on the source instance's
+    ``arg_bindings`` (via ``BasicComposable.bind_identifier``). The
+    surface validates fully-qualified names here rather than at the
+    ``builder.assign....`` call site so the user can declare wirings
+    against instances that have not yet been registered.
+
+    Validation performed here:
+
+    - ``source_instance`` is registered and carries a demand for
+      ``inner_name`` from either ``__astichi_arg__`` (005) or
+      ``astichi_import`` (006);
+    - ``target_instance`` is registered; cross-instance supply-side
+      validation (i.e. that ``target_instance`` actually publishes
+      ``outer_name``) is deferred to existing port / hygiene checks on
+      the merged tree, because ``outer_name`` may be a keep_name, an
+      ``astichi_export`` supply, or a free module-scope binding.
+    """
+    for binding in assigns:
+        src = instance_records.get(binding.source_instance)
+        if src is None:
+            raise ValueError(
+                f"builder.assign refers to unknown source instance "
+                f"`{binding.source_instance}`"
+            )
+        dst = instance_records.get(binding.target_instance)
+        if dst is None:
+            raise ValueError(
+                f"builder.assign refers to unknown target instance "
+                f"`{binding.target_instance}` "
+                f"(from {binding.source_instance}.{binding.inner_name})"
+            )
+        piece = src.composable
+        if not isinstance(piece, BasicComposable):
+            raise TypeError(
+                f"builder.assign source instance `{binding.source_instance}` "
+                f"must be a BasicComposable; got {type(piece).__name__}"
+            )
+        piece = piece.bind_identifier({binding.inner_name: binding.outer_name})
+        instance_records[binding.source_instance] = InstanceRecord(
+            name=binding.source_instance, composable=piece
+        )
+
+
 def build_merge(
     graph: BuilderGraph, *, unroll: bool | str = "auto"
 ) -> BasicComposable:
@@ -155,6 +210,15 @@ def build_merge(
         instance_records[record.name] = InstanceRecord(
             name=record.name, composable=composable
         )
+
+    # Issue 006 6c (assign surface):
+    # ``builder.assign.<Src>.<inner>.to().<Dst>.<outer>`` declarations
+    # are resolved against the local instance-record copies so each
+    # ``build()`` invocation is idempotent. Unlike the in-graph
+    # ``target.add.<Src>(arg_names=...)`` surface, the assign surface
+    # never mutates the graph's instance records; the wiring is held as
+    # ``AssignBinding`` records on the graph and applied fresh here.
+    _apply_assign_bindings(graph.assigns, instance_records)
 
     edges_by_target: dict[tuple[str, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):

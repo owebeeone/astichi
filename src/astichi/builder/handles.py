@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from astichi.builder.graph import AdditiveEdge, BuilderGraph, TargetRef
+from astichi.builder.graph import (
+    AdditiveEdge,
+    AssignBinding,
+    BuilderGraph,
+    TargetRef,
+)
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
 
@@ -180,6 +185,118 @@ class AddToTargetProxy:
         )
 
 
+@dataclass(frozen=True)
+class _AssignTargetReady:
+    """Penultimate picker in ``builder.assign.<Src>.<inner>.to().<Dst>``.
+
+    The final ``__getattr__`` (the ``<outer>`` hop) records the
+    binding on the graph as an unavoidable side effect of attribute
+    access. This intentionally matches the bare-expression surface
+    the user wants (``builder.assign.X.a.to().Y.b``) rather than
+    requiring an explicit call site.
+    """
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    inner_name: str
+    target_instance: str
+
+    def __getattr__(self, outer_name: str) -> None:
+        if outer_name.startswith("_"):
+            raise AttributeError(outer_name)
+        self.graph.add_assign(
+            AssignBinding(
+                source_instance=self.source_instance,
+                inner_name=self.inner_name,
+                target_instance=self.target_instance,
+                outer_name=outer_name,
+            )
+        )
+        return None
+
+
+@dataclass(frozen=True)
+class _AssignTargetPicker:
+    """Picks the target instance in the ``assign`` chain."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    inner_name: str
+
+    def __getattr__(self, target_instance: str) -> _AssignTargetReady:
+        if target_instance.startswith("_"):
+            raise AttributeError(target_instance)
+        return _AssignTargetReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            inner_name=self.inner_name,
+            target_instance=target_instance,
+        )
+
+
+@dataclass(frozen=True)
+class _AssignSourceReady:
+    """Holds ``(source_instance, inner_name)`` until ``to()`` is called.
+
+    ``to()`` is the explicit phase separator between the source and
+    target sides of the wiring. It keeps the chain unambiguous:
+    everything before ``to()`` names the demand site, everything
+    after names the supplier, and the sentence reads naturally left
+    to right — "assign `<Src>.<inner>` to `<Dst>.<outer>`".
+    """
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    inner_name: str
+
+    def to(self) -> _AssignTargetPicker:
+        return _AssignTargetPicker(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            inner_name=self.inner_name,
+        )
+
+
+@dataclass(frozen=True)
+class _AssignSourcePicker:
+    """Picks the inner demand name inside the source instance."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+
+    def __getattr__(self, inner_name: str) -> _AssignSourceReady:
+        if inner_name.startswith("_"):
+            raise AttributeError(inner_name)
+        return _AssignSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            inner_name=inner_name,
+        )
+
+
+@dataclass(frozen=True)
+class AssignProxy:
+    """Entry point for ``builder.assign.<Src>.<inner>.to().<Dst>.<outer>``.
+
+    Issue 006 6c (assign surface): explicit, fully-qualified wiring
+    from an inner boundary demand (``astichi_import`` /
+    ``__astichi_arg__``) on ``<Src>`` to an outer supplier
+    ``<Dst>.<outer>``. The target instance is named explicitly so it
+    need not be the edge target, and it may be registered after this
+    call — validation of both sides is deferred to ``build_merge``.
+    """
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+
+    def __getattr__(self, source_instance: str) -> _AssignSourcePicker:
+        if source_instance.startswith("_"):
+            raise AttributeError(source_instance)
+        return _AssignSourcePicker(
+            graph=self.graph,
+            source_instance=source_instance,
+        )
+
+
 @dataclass
 class BuilderHandle:
     """Public builder handle layered over the raw builder graph."""
@@ -189,6 +306,10 @@ class BuilderHandle:
     @property
     def add(self) -> AddProxy:
         return AddProxy(graph=self.graph)
+
+    @property
+    def assign(self) -> AssignProxy:
+        return AssignProxy(graph=self.graph)
 
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Merge the builder graph into a single composable.

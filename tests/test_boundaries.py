@@ -500,3 +500,152 @@ def test_6c_compile_arg_names_accepts_import_sourced_demand() -> None:
         arg_names={"total": "total"},
     )
     assert compiled.arg_bindings == (("total", "total"),)
+
+
+# ---------------------------------------------------------------------------
+# Issue 006 6c (assign surface):
+# `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`
+# ---------------------------------------------------------------------------
+
+
+def test_6c_assign_surface_threads_import_end_to_end() -> None:
+    # Issue 006 6c assign surface: declaring the binding via
+    # `builder.assign.Step1.total.to().Root.total` is equivalent to
+    # passing `arg_names={"total": "total"}` at contribution time.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.add.Step2(astichi.compile(_accum_step_src(2)))
+    builder.add.Step3(astichi.compile(_accum_step_src(3)))
+    builder.Root.body.add.Step1(order=0)
+    builder.Root.body.add.Step2(order=1)
+    builder.Root.body.add.Step3(order=2)
+    builder.assign.Step1.total.to().Root.total
+    builder.assign.Step2.total.to().Root.total
+    builder.assign.Step3.total.to().Root.total
+
+    namespace = _exec_emitted(builder.build().materialize())
+    assert namespace["result"] == 6
+
+
+def test_6c_assign_surface_allows_deferred_target_instance() -> None:
+    # Issue 006 6c: the target instance named in the assign chain can
+    # be registered *after* the assign is declared. Validation is
+    # deferred to `build_merge` so wirings can point at pieces that do
+    # not exist yet.
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(7)))
+    builder.assign.Step1.total.to().Root.total
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.Root.body.add.Step1(order=0)
+
+    namespace = _exec_emitted(builder.build().materialize())
+    assert namespace["result"] == 7
+
+
+def test_6c_assign_surface_to_non_edge_target_instance() -> None:
+    # Issue 006 6c: the target in `builder.assign` is *not* required to
+    # be the edge target. Step1 is spliced into Root.body but its
+    # `total` import is wired to `Init.total` — a different sibling
+    # instance that owns the initialisation. The assign surface does
+    # not affect merge order (multi-root merge is alphabetical), so we
+    # name the supplier `Init` (< "Root" < "Step1") to keep the
+    # emitted sequence semantically correct.
+    builder = astichi.build()
+    init_src = """
+total = 10
+astichi_keep(total)
+"""
+    builder.add.Init(astichi.compile(init_src))
+    root_src = """
+astichi_keep(total)
+astichi_hole(body)
+result = total
+"""
+    builder.add.Root(
+        astichi.compile(root_src, keep_names=["total", "result"])
+    )
+    builder.add.Step1(astichi.compile(_accum_step_src(4)))
+    builder.Root.body.add.Step1(order=0)
+    builder.assign.Step1.total.to().Init.total
+
+    namespace = _exec_emitted(builder.build().materialize())
+    assert namespace["total"] == 14
+    assert namespace["result"] == 14
+
+
+def test_6c_assign_surface_is_idempotent_for_exact_duplicate_declarations() -> None:
+    # Issue 006 6c: restating the exact same assignment is a no-op —
+    # the guard in `BuilderGraph.add_assign` ignores an identical
+    # second record rather than raising. This matters because the
+    # terminal `__getattr__` has an unavoidable side-effect surface.
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.assign.Step1.total.to().Root.total
+    builder.assign.Step1.total.to().Root.total  # idempotent
+
+    assert len(builder.graph.assigns) == 1
+
+
+def test_6c_assign_surface_rejects_conflicting_rebind_of_same_demand() -> None:
+    # Issue 006 6c: the same `(source_instance, inner_name)` pair can
+    # only bind to one supplier. Declaring a second, different
+    # supplier is a hard error at the `builder.assign` call site.
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.assign.Step1.total.to().Root.total
+
+    with pytest.raises(ValueError, match=r"conflicting assign for `Step1\.total`"):
+        builder.assign.Step1.total.to().Other.accumulator
+
+
+def test_6c_assign_surface_rejects_unknown_source_at_build() -> None:
+    # Issue 006 6c: validation is deferred, but `build_merge` rejects
+    # assigns that reference an unknown source instance.
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.assign.Missing.total.to().Root.total
+
+    with pytest.raises(ValueError, match=r"unknown source instance `Missing`"):
+        builder.build()
+
+
+def test_6c_assign_surface_rejects_unknown_target_at_build() -> None:
+    # Issue 006 6c: likewise, a missing target instance surfaces as a
+    # build-time error that names the offending `(source, inner)`.
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.assign.Step1.total.to().Missing.total
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown target instance `Missing` \(from Step1\.total\)",
+    ):
+        builder.build()
+
+
+def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
+    # Issue 006 6c: when the referenced inner name is not a demand
+    # port on the source instance, `bind_identifier` rejects at build
+    # time with the same error as the `arg_names=` surface.
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.add.Root(
+        astichi.compile(_ACCUM_ROOT_SRC, keep_names=["total", "result"])
+    )
+    builder.assign.Step1.nonexistent.to().Root.total
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"no __astichi_arg__ / astichi_import slot named "
+            r"`nonexistent`"
+        ),
+    ):
+        builder.build()

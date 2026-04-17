@@ -701,7 +701,13 @@ Recommended execution order:
      surface grows `arg_names=` / `keep_names=` parameters
      (`target.add.<Name>(order=0, arg_names={"total": "total"})`)
      that union onto the source instance via the
-     `BuilderGraph.replace_instance` helper. `_validate_arg_names` /
+     `BuilderGraph.replace_instance` helper, and a new fully-qualified
+     `builder.assign.<Src>.<inner>.to().<Dst>.<outer>` surface records
+     cross-instance wirings (`AssignBinding` entries on the graph)
+     that are applied to local instance-record copies inside
+     `build_merge`, so the target instance may be registered after
+     the assign call and the supplier may live in a sibling
+     composable rather than the edge target. `_validate_arg_names` /
      `BasicComposable.bind_identifier` now accept IDENTIFIER demand
      ports sourced from either `__astichi_arg__` suffix or
      `astichi_import` declarations. End-to-end accumulator repro
