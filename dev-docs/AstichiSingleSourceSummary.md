@@ -22,18 +22,16 @@ items.
   `astichi.Composable`.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
-  - V2 Phase 2 loop unroll: `2a` (domain resolution), `2b` (body-copy unroll
-    engine), `2c` (indexed-edge resolution), and `2d` (`build(unroll=...)`
-    integration) complete; `2e` Phase 2 gate open.
+  - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
   - V2 Phase 3 polish has not started.
 - Test status as of 2026-04-17:
-  - full suite: `234 passed, 1 xfailed`
+  - full suite: `241 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - close the Phase 2 gate (`2e`): re-run the suite, land bind-fed literal
-    domain end-to-end coverage, and confirm provenance round-trip on unrolled
-    output still holds
+  - start the identifier cluster — `005` (within-scope identifier slots via
+    `__astichi_arg__` / `__astichi_keep__`) and/or `006` (cross-scope threading
+    via `astichi_import` / `astichi_pass`); see §11.2 and issues 005/006
 
 ## 2. Governing principle and non-negotiable rules
 
@@ -591,10 +589,12 @@ Do these next.
    - default `"auto"` unrolls iff any edge references an indexed path
    - `True` always unrolls every instance
    - `False` skips unroll and rejects indexed edges with a clear diagnostic
-5. `2e` Phase 2 gate
-   - full suite green
-   - bind-fed literal domain end-to-end tests land
-   - provenance round-trip still works on unrolled output
+5. `2e` Phase 2 gate — **done**
+   - full suite green (`241 passed, 1 xfailed`)
+   - bind-fed literal tuple/list domains land via `compile(...).bind(...)`
+     and unroll end-to-end through indexed edges
+   - provenance round-trip (`emit` → `verify_round_trip`) holds on both
+     the built unrolled tree and the materialized unrolled tree
 
 ### 11.2 Immediately after Phase 2, schedule the identifier cluster
 
@@ -682,11 +682,9 @@ Do this, in order:
 
 1. read this file only
 2. confirm the current suite still passes
-3. `2a`, `2b`, `2c`, `2d` are done; pick up at `2e`
-4. run the Phase 2 gate (`2e`)
-5. fold the identifier cluster into the active plan and implement it in the
-   order from §11.2
-6. finish Phase 3 polish
-7. only then spend time on provenance drift or recognized-only marker cleanup
+3. Phase 2 (`2a`–`2e`) is closed; pick up at the identifier cluster (§11.2)
+4. implement the identifier cluster in the order from §11.2
+5. finish Phase 3 polish
+6. only then spend time on provenance drift or recognized-only marker cleanup
 
 That path is the shortest route to a sound V2 without widening the design.

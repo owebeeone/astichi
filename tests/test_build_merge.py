@@ -339,3 +339,166 @@ def test_invalid_unroll_value_raises() -> None:
 
     with pytest.raises(ValueError, match="unroll must be True, False, or 'auto'"):
         builder.build(unroll="always")
+
+
+# ---- 2e gate: bind-fed literal domain + provenance round-trip ----------
+
+
+def test_bind_fed_tuple_domain_autounrolls_and_routes() -> None:
+    """Domain supplied via astichi_bind_external resolves through unroll.
+
+    Confirms the pipeline order: bind-external substitutes the literal at
+    the `astichi_for(DOMAIN)` site, then build()'s auto-unroll sees a
+    literal-tuple domain and expands it into per-iteration holes that
+    indexed edges can address.
+    """
+    A = astichi.compile(
+        "astichi_bind_external(DOMAIN)\n"
+        "for x in astichi_for(DOMAIN):\n"
+        "    astichi_hole(slot)\n"
+    ).bind(DOMAIN=(10, 20, 30))
+
+    builder = astichi.build()
+    builder.add.A(A)
+    builder.add.B0(astichi.compile("a = 10\n"))
+    builder.add.B1(astichi.compile("b = 20\n"))
+    builder.add.B2(astichi.compile("c = 30\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+    builder.A.slot[2].add.B2()
+
+    result = builder.build()
+    materialized_src = ast.unparse(result.materialize().tree)
+
+    assert "astichi_for" not in materialized_src
+    assert "astichi_hole" not in materialized_src
+    assert "a = 10" in materialized_src
+    assert "b = 20" in materialized_src
+    assert "c = 30" in materialized_src
+    assert (
+        materialized_src.index("a = 10")
+        < materialized_src.index("b = 20")
+        < materialized_src.index("c = 30")
+    )
+
+
+def test_bind_fed_list_domain_autounrolls() -> None:
+    A = astichi.compile(
+        "astichi_bind_external(VALUES)\n"
+        "for v in astichi_for(VALUES):\n"
+        "    astichi_hole(slot)\n"
+    ).bind(VALUES=[7, 9])
+
+    builder = astichi.build()
+    builder.add.A(A)
+    builder.add.B0(astichi.compile("first = 7\n"))
+    builder.add.B1(astichi.compile("second = 9\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+
+    result = builder.build()
+    materialized_src = ast.unparse(result.materialize().tree)
+
+    assert "first = 7" in materialized_src
+    assert "second = 9" in materialized_src
+    assert "astichi_for" not in materialized_src
+
+
+def test_bind_fed_domain_unroll_true_expands_without_indexed_edges() -> None:
+    """unroll=True must unroll even when the domain comes from bind()."""
+    A = astichi.compile(
+        "astichi_bind_external(DOMAIN)\n"
+        "for x in astichi_for(DOMAIN):\n"
+        "    z = x\n"
+    ).bind(DOMAIN=(1, 2))
+
+    builder = astichi.build()
+    builder.add.A(A)
+
+    result = builder.build(unroll=True)
+
+    rendered = ast.unparse(result.tree)
+    assert "astichi_for" not in rendered
+    assert "z = 1" in rendered
+    assert "z = 2" in rendered
+
+
+def test_bind_fed_domain_unbound_rejected_by_unroll() -> None:
+    """Unroll cannot guess a domain: a bare Name must be bound first."""
+    A = astichi.compile(
+        "astichi_bind_external(DOMAIN)\n"
+        "for x in astichi_for(DOMAIN):\n"
+        "    astichi_hole(slot)\n"
+    )
+
+    builder = astichi.build()
+    builder.add.A(A)
+    builder.add.B(astichi.compile("v = 1\n"))
+    # An indexed edge forces auto-unroll, which sees the still-bound-
+    # name domain and refuses it at domain-resolution time.
+    builder.A.slot[0].add.B()
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_for domain must be a literal tuple/list or range",
+    ):
+        builder.build()
+
+
+def test_unrolled_build_provenance_round_trip() -> None:
+    """Emitted source of an unrolled build re-parses to the same AST."""
+    from astichi.emit import verify_round_trip
+
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2, 3)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B(astichi.compile("v = 1\n"))
+    builder.A.slot[0].add.B()
+
+    result = builder.build()
+    verify_round_trip(result.emit())
+
+
+def test_unrolled_materialized_provenance_round_trip() -> None:
+    """Emitted source of a materialized unrolled build round-trips too."""
+    from astichi.emit import verify_round_trip
+
+    builder = astichi.build()
+    builder.add.A(
+        astichi.compile(
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_hole(slot)\n"
+        )
+    )
+    builder.add.B0(astichi.compile("a = 1\n"))
+    builder.add.B1(astichi.compile("b = 2\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+
+    result = builder.build()
+    verify_round_trip(result.materialize().emit())
+
+
+def test_bind_fed_unrolled_build_provenance_round_trip() -> None:
+    """The full pipeline (bind → unroll → emit) preserves provenance."""
+    from astichi.emit import verify_round_trip
+
+    A = astichi.compile(
+        "astichi_bind_external(DOMAIN)\n"
+        "for x in astichi_for(DOMAIN):\n"
+        "    astichi_hole(slot)\n"
+    ).bind(DOMAIN=(1, 2))
+
+    builder = astichi.build()
+    builder.add.A(A)
+    builder.add.B0(astichi.compile("a = 1\n"))
+    builder.add.B1(astichi.compile("b = 2\n"))
+    builder.A.slot[0].add.B0()
+    builder.A.slot[1].add.B1()
+
+    result = builder.build()
+    verify_round_trip(result.emit())
+    verify_round_trip(result.materialize().emit())
