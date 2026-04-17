@@ -222,7 +222,7 @@ value_to_ast((1, ("nested", "tuple")))
 # unparsed: "(1, ('nested', 'tuple'))"
 
 value_to_ast({"k": 1})
-# → raises ValueError("unsupported binding value type: dict")
+# → raises ValueError("unsupported external binding value type at value: dict")
 ```
 
 ## 5. Port model integration

@@ -16,6 +16,8 @@ from astichi.model import MAX_EXTERNAL_VALUE_DEPTH, validate_external_value, val
         (True, "True"),
         (False, "False"),
         (None, "None"),
+        ((), "()"),
+        ([], "[]"),
         ((1, 2, 3), "(1, 2, 3)"),
         ([1, 2, 3], "[1, 2, 3]"),
         ((1, ("nested", "tuple")), "(1, ('nested', 'tuple'))"),
@@ -46,6 +48,16 @@ def test_value_to_ast_round_trips_supported_v1_values(
 )
 def test_validate_external_value_accepts_supported_v1_values(value: object) -> None:
     validate_external_value(value)
+
+
+def test_value_to_ast_preserves_bool_and_int_types() -> None:
+    true_node = value_to_ast(True)
+    one_node = value_to_ast(1)
+
+    assert isinstance(true_node, ast.Constant)
+    assert isinstance(one_node, ast.Constant)
+    assert type(true_node.value) is bool
+    assert type(one_node.value) is int
 
 
 @pytest.mark.parametrize(
@@ -83,6 +95,16 @@ def test_value_to_ast_enforces_depth_limit() -> None:
         value_to_ast(value)
 
 
+def test_value_to_ast_accepts_max_allowed_depth() -> None:
+    value: object = 0
+    for _ in range(MAX_EXTERNAL_VALUE_DEPTH):
+        value = [value]
+
+    converted = value_to_ast(value)
+
+    assert isinstance(converted, ast.List)
+
+
 def test_value_to_ast_rejects_recursive_sequence() -> None:
     recursive: list[object] = []
     recursive.append(recursive)
@@ -92,3 +114,23 @@ def test_value_to_ast_rejects_recursive_sequence() -> None:
         match=r"recursive external binding value is not supported at value\[0\]",
     ):
         value_to_ast(recursive)
+
+
+def test_value_to_ast_rejects_indirect_recursive_sequence() -> None:
+    left: list[object] = []
+    right: list[object] = [left]
+    left.append(right)
+
+    with pytest.raises(
+        ValueError,
+        match=r"recursive external binding value is not supported at value\[0\]\[0\]",
+    ):
+        value_to_ast(left)
+
+
+def test_validate_external_value_rejects_unsupported_values_without_conversion() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"unsupported external binding value type at value: dict",
+    ):
+        validate_external_value({"k": "v"})
