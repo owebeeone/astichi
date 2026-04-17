@@ -204,6 +204,50 @@ outer = step__astichi_arg__
     assert "outer = run" in rendered
 
 
+def test_materialize_resolves_arg_identifier_on_class_field_definitions() -> None:
+    # Issue 005 §1 / 5c: field-style definitions inside a class body -
+    # plain `name = value`, annotated `name: T = value`, and the
+    # "call variable defn" pattern `name = factory(...)` common in
+    # dataclass / attrs - all have their LHS Store Name recognised as
+    # a `__astichi_arg__` occurrence and resolved atomically with
+    # every matching Store/Load reference in the same Python scope.
+    # Keyword argument names (e.g. `default=`) are not identifier
+    # slots and must survive.
+    compiled = astichi.compile(
+        """
+class Config:
+    first__astichi_arg__ = 0
+    second__astichi_arg__: int = make_field(default=1)
+    third__astichi_arg__ = make_field(factory=list)
+    combined__astichi_arg__ = (
+        first__astichi_arg__,
+        second__astichi_arg__,
+        third__astichi_arg__,
+    )
+""",
+    ).bind_identifier(
+        first="width",
+        second="height",
+        third="depth",
+        combined="all_fields",
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "__astichi_arg__" not in rendered
+    assert "width = 0" in rendered
+    assert "height: int = make_field(default=1)" in rendered
+    assert "depth = make_field(factory=list)" in rendered
+    # Tuple field combining the three prior fields; the Load refs in
+    # the RHS resolve atomically with their Store counterparts in
+    # the same class body scope.
+    assert "all_fields = (width, height, depth)" in rendered
+    # Keyword-argument names are not identifier slots - left alone.
+    assert "default=1" in rendered
+    assert "factory=list" in rendered
+
+
 def test_materialize_resolves_arg_identifier_from_compile_arg_names() -> None:
     # Issue 005 §6 / 5d: `compile(..., arg_names=...)` plumbs through
     # to materialize without needing an additional `.bind_identifier`.
