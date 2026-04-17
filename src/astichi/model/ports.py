@@ -50,18 +50,30 @@ def extract_demand_ports(
     """Extract demand ports from lowering and hygiene artifacts."""
     ports: list[DemandPort] = []
     for marker in markers:
-        if marker.source_name != "astichi_hole" or marker.name_id is None:
+        if marker.name_id is None:
             continue
-        assert marker.shape is not None
-        ports.append(
-            DemandPort(
-                name=marker.name_id,
-                shape=marker.shape,
-                placement=_placement_for_shape(marker.shape),
-                mutability="const",
-                sources=frozenset({"hole"}),
+        if marker.source_name == "astichi_hole":
+            assert marker.shape is not None
+            ports.append(
+                DemandPort(
+                    name=marker.name_id,
+                    shape=marker.shape,
+                    placement=_placement_for_shape(marker.shape),
+                    mutability="const",
+                    sources=frozenset({"hole"}),
+                )
             )
-        )
+            continue
+        if marker.source_name == "astichi_bind_external":
+            ports.append(
+                DemandPort(
+                    name=marker.name_id,
+                    shape=SCALAR_EXPR,
+                    placement="expr",
+                    mutability="const",
+                    sources=frozenset({"bind_external"}),
+                )
+            )
     for implied in classification.implied_demands:
         ports.append(
             DemandPort(

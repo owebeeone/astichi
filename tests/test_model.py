@@ -30,6 +30,33 @@ class class_name__astichi__:
     assert compiled.classification is not None
 
 
+def test_bind_external_produces_demand_port() -> None:
+    compiled = astichi.compile(
+        """
+astichi_bind_external(fields)
+"""
+    )
+
+    assert [port.name for port in compiled.demand_ports] == ["fields"]
+    demand = compiled.demand_ports[0]
+    assert demand.shape is SCALAR_EXPR
+    assert demand.placement == "expr"
+    assert demand.mutability == "const"
+    assert demand.sources == frozenset({"bind_external"})
+
+
+def test_multiple_bind_external_markers_produce_multiple_demand_ports() -> None:
+    compiled = astichi.compile(
+        """
+astichi_bind_external(fields)
+astichi_bind_external(row_count)
+"""
+    )
+
+    assert [port.name for port in compiled.demand_ports] == ["fields", "row_count"]
+    assert all(port.sources == frozenset({"bind_external"}) for port in compiled.demand_ports)
+
+
 def test_compile_rejects_incompatible_demand_port_declarations() -> None:
     with pytest.raises(
         ValueError,

@@ -12,11 +12,10 @@ V1 closed and archived in `historical/`. V2 scope is documented in
 ## Current status
 
 - Active phase: **Phase 1 — external bind** (in progress)
-- Active sub-phase: `1b` (demand port extraction for
-  `astichi_bind_external`)
-- Next concrete action: extend `src/astichi/model/ports.py` so
-  `extract_demand_ports` emits bind-external demand ports and lock it
-  with focused model tests.
+- Active sub-phase: `1d` (`BasicComposable.bind(mapping, /, **values)`)
+- Next concrete action: add the public `bind()` API on
+  `BasicComposable`, merge mapping and kwargs per the locked signature,
+  apply the substitution engine, and return a new composable snapshot.
 
 ## Conventions
 
@@ -52,18 +51,20 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
 
 ### 1b. Demand port extraction for `astichi_bind_external`
 
-- Status: pending
+- Status: complete
 - Layer: `model`
 - Artifacts:
   - `src/astichi/model/ports.py` (extend)
   - `tests/test_model.py` (extend)
 - Exit: `extract_demand_ports` emits the bind-external port per
   `BindExternal.md §5`.
-- Notes: —
+- Notes: `extract_demand_ports` now emits scalar-expression demand
+  ports with `sources={"bind_external"}`; focused model tests cover
+  single and multiple bind-external markers.
 
 ### 1c. Substitution engine (scope-aware)
 
-- Status: pending
+- Status: complete
 - Layer: `lowering`
 - Artifacts:
   - `src/astichi/lowering/external_bind.py` (new)
@@ -71,7 +72,10 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
   - `tests/test_external_bind.py` (new)
 - Exit: `apply_external_bindings` performs scope-aware substitution;
   same-scope rebind and marker-arg conflicts rejected.
-- Notes: the scope-boundary traversal is reused by 2b.
+- Notes: `apply_external_bindings` now removes satisfied bind markers,
+  replaces matching `Load` names, respects function / lambda /
+  comprehension / `for`-target shadow boundaries, and rejects
+  same-scope rebinding plus marker-argument collisions.
 
 ### 1d. `BasicComposable.bind(mapping, /, **values)` API
 
