@@ -11,11 +11,11 @@ V1 closed and archived in `historical/`. V2 scope is documented in
 
 ## Current status
 
-- Active phase: **Phase 1 — external bind** (in progress)
-- Active sub-phase: `1f` (Phase 1 exit gate)
-- Next concrete action: add an explicit bound-composable emit/provenance
-  round-trip test, then mark Phase 1 complete if the full Phase 1 gate
-  holds.
+- Active phase: **Phase 2 — loop unroll (V1-lite)** (not yet started)
+- Active sub-phase: `2a` (domain resolution)
+- Next concrete action: implement literal-domain resolution for tuple,
+  list, and `range(...)` forms in `src/astichi/lowering/unroll_domain.py`
+  and lock the accepted/rejected shapes with focused tests.
 
 ## Conventions
 
@@ -108,9 +108,12 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
 
 ### Phase 1 exit gate
 
-- Status: pending
+- Status: complete
 - Exit: all 1a–1e items `complete`; phase-wide tests green; provenance
   round-trip verified on a bound composable.
+- Notes: explicit bound-composable provenance round-trip coverage now
+  lives in `tests/test_emit.py`; `uv run --with pytest pytest -p
+  no:pyrolyze -q` passes.
 
 ## Phase 2 — loop unroll (V1-lite)
 

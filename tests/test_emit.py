@@ -135,3 +135,17 @@ def test_verify_round_trip_after_full_pipeline() -> None:
     source = materialized.emit(provenance=True)
 
     verify_round_trip(source)
+
+
+def test_verify_round_trip_after_bind_and_materialize() -> None:
+    compiled = astichi.compile(
+        """
+astichi_bind_external(fields)
+print(fields)
+"""
+    )
+
+    materialized = compiled.bind(fields=("a", "b")).materialize()
+    source = materialized.emit(provenance=True)
+
+    verify_round_trip(source)
