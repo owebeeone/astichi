@@ -977,8 +977,16 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         keep_names=effective_keep_names,
     )
 
+    # Issue 006 6c (trust model): only user-declared keep_names (plus
+    # keep/pass markers auto-unioned inside `assign_scope_identity`)
+    # enter the trust set. `pinned_targets` reach preserved but not
+    # trusted — they must still participate in cross-scope rename so
+    # sibling-root contributions bound to the same `arg_names` value
+    # do not clobber each other.
     analysis = assign_scope_identity(
-        provisional, preserved_names=effective_keep_names
+        provisional,
+        preserved_names=effective_keep_names,
+        trust_names=composable.keep_names,
     )
     rename_scope_collisions(analysis)
     _realize_expression_insert_wrappers(tree)

@@ -601,18 +601,6 @@ def test_6c_assign_surface_allows_deferred_target_instance() -> None:
     assert namespace["result"] == 7
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Issue 006 6c follow-up: cross-root assign wiring. Under per-root "
-        "scope isolation (hole/shell wrap per root instance at merge time), "
-        "each root's top-level bindings live in a distinct Astichi scope. "
-        "The current `_resolve_boundary_imports` only rewrites the inner "
-        "name and lets hygiene classify it to the *declaring* shell's outer "
-        "scope, not to the assign surface's declared target instance scope. "
-        "Threading scope identity across roots is a separate work item."
-    ),
-    strict=True,
-)
 def test_6c_assign_surface_to_non_edge_target_instance() -> None:
     # Issue 006 6c: the target in `builder.assign` is *not* required to
     # be the edge target. Step1 is spliced into Root.body but its
@@ -717,17 +705,6 @@ def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
         builder.build()
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Issue 006 6c follow-up: cross-root assign wiring across build "
-        "stages. Reader and Producer are distinct root instances and "
-        "therefore distinct Astichi scopes under the per-root scope "
-        "wrap; the Reader's `astichi_import(counter)` is currently "
-        "classified to Reader's own root-scope rather than to "
-        "Producer's. Cross-root scope threading is a separate work item."
-    ),
-    strict=True,
-)
 def test_6c_assign_surface_connects_dangling_pass_across_build_stages() -> None:
     # Issue 006 6c assign surface: multi-stage composition. Stage 1
     # builds a composable whose `astichi_pass(counter)` declaration is

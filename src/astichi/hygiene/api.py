@@ -67,6 +67,12 @@ class ScopeAnalysis:
     """Scope-identity assignment for a lowered snippet."""
 
     occurrences: tuple[LexicalOccurrence, ...]
+    # Issue 006 6c (trust model): names the user has declared as
+    # trusted against hygiene rename via ``astichi_keep`` /
+    # ``astichi_pass`` or the ``keep_names=`` surface. Populated by
+    # ``assign_scope_identity`` so ``rename_scope_collisions`` can
+    # short-circuit those names without a second arg-plumbing.
+    trust_names: frozenset[str] = frozenset()
 
 
 def analyze_names(
@@ -175,10 +181,28 @@ def assign_scope_identity(
     composable: BasicComposable,
     *,
     preserved_names: frozenset[str] = frozenset(),
+    trust_names: frozenset[str] = frozenset(),
     external_names: frozenset[str] = frozenset(),
     fresh_scope_nodes: tuple[ast.AST, ...] = (),
 ) -> ScopeAnalysis:
-    """Assign scope identity to lexical name occurrences."""
+    """Assign scope identity to lexical name occurrences.
+
+    ``preserved_names`` names are pinned against the flat ``_Renamer``
+    pass and surface as ``role="preserved"`` when loaded — they
+    participate in rename tie-breaking (first preserved scope wins)
+    and are suitable for "don't rename this, unless you must" pins
+    such as identifier-arg resolution targets.
+
+    ``trust_names`` (issue 006 6c) is the stricter "user explicitly
+    said keep/pass" set. Trusted names are never renamed by
+    ``rename_scope_collisions`` — they always emit literally across
+    every Astichi scope. Marker-derived ``astichi_keep`` /
+    ``astichi_pass`` names are unioned in automatically; callers who
+    have additional trust declarations (e.g. ``keep_names=`` from the
+    builder) must pass them explicitly. Trusted names are also added
+    to ``preserved_names`` so load-time classification remains
+    consistent.
+    """
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
     # Issue 005 §4 + 5b: preserve both stripped and raw suffixed names
     # (see `analyze_names` for rationale).
@@ -191,6 +215,18 @@ def assign_scope_identity(
         kept_preserved
         | _collect_identifier_suffix_preserved(composable.markers)
         | _collect_boundary_preserved(composable.markers)
+    )
+    # Issue 006 6c (trust model): the effective trust set unions the
+    # caller-supplied `trust_names` with trust-declaring markers
+    # (`astichi_keep` / `astichi_pass`). Callers that want preserved-
+    # but-not-trusted semantics (e.g. identifier-arg resolution
+    # targets that must not blanket-suppress rename on their raw
+    # name) pass those through `preserved_names` only.
+    effective_trust_names = frozenset(
+        set(trust_names) | set(_collect_trust_preserved(composable.markers))
+    )
+    effective_preserved_names = frozenset(
+        set(preserved_names) | set(marker_preserved_names) | set(effective_trust_names)
     )
     marker_external_names = frozenset(
         marker.name_id
@@ -215,20 +251,46 @@ def assign_scope_identity(
     fresh_scope_imported_names = _collect_fresh_scope_imports(
         composable.tree, composable.markers
     )
+    fresh_scope_trust_declarations = _collect_fresh_scope_trust_declarations(
+        composable.tree, composable.markers
+    )
     visitor = _ScopeIdentityVisitor(
         ignored_name_nodes=ignored_name_nodes,
-        preserved_names=frozenset(set(preserved_names) | set(marker_preserved_names)),
+        preserved_names=effective_preserved_names,
+        trust_names=effective_trust_names,
         external_names=frozenset(set(external_names) | set(marker_external_names)),
         fresh_scope_nodes=effective_fresh_scope_nodes,
         fresh_scope_local_bindings=fresh_scope_local_bindings,
         fresh_scope_imported_names=fresh_scope_imported_names,
+        fresh_scope_trust_declarations=fresh_scope_trust_declarations,
+        module_trust_declarations=fresh_scope_trust_declarations.get(
+            id(composable.tree), frozenset()
+        ),
     )
     visitor.visit(composable.tree)
-    return ScopeAnalysis(occurrences=tuple(visitor.occurrences))
+    return ScopeAnalysis(
+        occurrences=tuple(visitor.occurrences),
+        trust_names=effective_trust_names,
+    )
 
 
 def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
-    """Rename colliding lexical names in-place based on scope identity."""
+    """Rename colliding lexical names in-place based on scope identity.
+
+    Issue 006 6c (trust / inheritance model): for names listed in
+    ``scope_analysis.trust_names`` the rule is "user owns the name
+    everywhere it appears with preserved intent" — *every* scope with
+    a preserved occurrence keeps the raw spelling, and only scopes
+    with purely internal bindings of that spelling get renamed. This
+    lets a keep/pass declaration in one scope and an
+    ``astichi_import`` re-projection into another scope co-emit the
+    same literal name, without any scope-threading indirection.
+
+    For names *not* in ``trust_names`` the pre-6c rule applies: the
+    first scope with a preserved occurrence (or the earliest scope if
+    none is preserved) wins; every other scope is renamed with a
+    ``__astichi_scoped_N`` suffix.
+    """
     grouped: dict[str, list[LexicalOccurrence]] = {}
     for occurrence in scope_analysis.occurrences:
         grouped.setdefault(occurrence.raw_name, []).append(occurrence)
@@ -245,22 +307,33 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
             by_scope.items(),
             key=lambda item: item[1][0].ordinal,
         )
-        preserved_scopes = [
+        preserved_scopes = {
             scope_serial
             for scope_serial, scope_occurrences in ordered_scopes
             if any(
                 occurrence.role == "preserved"
                 for occurrence in scope_occurrences
             )
-        ]
-        keep_scope_serial = (
-            preserved_scopes[0]
-            if preserved_scopes
-            else ordered_scopes[0][0]
-        )
+        }
+        is_trusted = raw_name in scope_analysis.trust_names
+        if is_trusted:
+            kept_scopes = preserved_scopes
+        else:
+            first_preserved = next(
+                (
+                    scope_serial
+                    for scope_serial, _ in ordered_scopes
+                    if scope_serial in preserved_scopes
+                ),
+                None,
+            )
+            keep_scope_serial = (
+                first_preserved if first_preserved is not None else ordered_scopes[0][0]
+            )
+            kept_scopes = {keep_scope_serial}
         for scope_serial, scope_occurrences in ordered_scopes:
             emitted_name = raw_name
-            if scope_serial != keep_scope_serial:
+            if scope_serial not in kept_scopes:
                 emitted_name = f"{raw_name}__astichi_scoped_{next(emitted_counter)}"
             for occurrence in scope_occurrences:
                 if isinstance(occurrence.node, ast.Name):
@@ -317,6 +390,108 @@ def _collect_boundary_preserved(
         if marker.name_id is not None:
             preserved.add(marker.name_id)
     return frozenset(preserved)
+
+
+def _collect_trust_preserved(
+    markers: tuple[object, ...],
+) -> frozenset[str]:
+    """Names the user has declared as *trusted* against hygiene rename.
+
+    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` and
+    ``astichi_pass(name)`` are the user's "I know what I'm doing; trust
+    me — this is my name" contract. A trusted name is never renamed by
+    ``rename_scope_collisions``, even if occurrences span multiple
+    Astichi scopes: the user owns the name across the composition and
+    is responsible for preventing unintended collisions. Same-root
+    splicing without keep/pass remains subject to normal rename.
+
+    ``astichi_import(name)`` is intentionally NOT a trust declaration.
+    An import only states "this name is supplied by my enclosing
+    scope"; it pins against implied-demand classification (see
+    ``_collect_boundary_preserved``) and defers name identity to the
+    enclosing Astichi scope's binding. When the import's target is
+    itself trust-declared, the inheritance scan in the visitor lifts
+    the import's occurrences into the trusted class so the literal
+    name passes through hygiene unchanged.
+    """
+    trusted: set[str] = set()
+    for marker in markers:
+        if not isinstance(marker, RecognizedMarker):
+            continue
+        if marker.source_name not in ("astichi_keep", "astichi_pass"):
+            continue
+        if marker.name_id is not None:
+            trusted.add(marker.name_id)
+    return frozenset(trusted)
+
+
+def _collect_fresh_scope_trust_declarations(
+    tree: ast.Module, markers: tuple[object, ...]
+) -> dict[int, frozenset[str]]:
+    """Map each Astichi scope node to the names it trust-declares.
+
+    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` and
+    ``astichi_pass(name)`` at the top of a scope are the user's
+    "I own this name in *this* scope" declarations. Trust is
+    therefore a per-scope property — a keep on the module scope pins
+    the module's name but leaves nested inner-shell bindings of the
+    same spelling subject to normal rename, while a keep appearing
+    inside a nested fresh Astichi scope pins *that* scope's name.
+
+    The returned map is keyed by ``id(scope_node)`` where the scope
+    node is either the ``ast.Module`` root or a fresh Astichi scope
+    (``@astichi_insert``-decorated shell, expression-form
+    ``astichi_insert`` call). ``astichi_import`` is intentionally not
+    collected here — it surfaces via
+    ``_collect_fresh_scope_imports`` with different semantics.
+    """
+    declarations: dict[int, set[str]] = {}
+    trust_markers = [
+        marker
+        for marker in markers
+        if isinstance(marker, RecognizedMarker)
+        and marker.source_name in ("astichi_keep", "astichi_pass")
+        and marker.name_id is not None
+    ]
+    if not trust_markers:
+        return {}
+    parent_scope_node: dict[int, ast.AST] = {}
+
+    def _enter(node: ast.AST, scope_node: ast.AST) -> None:
+        parent_scope_node[id(node)] = scope_node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            child_scope = node if _has_insert_decorator(node.decorator_list) else scope_node
+            for decorator in node.decorator_list:
+                _enter(decorator, scope_node)
+            for child in node.body:
+                _enter(child, child_scope)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for argument in (
+                    list(node.args.posonlyargs)
+                    + list(node.args.args)
+                    + list(node.args.kwonlyargs)
+                ):
+                    _enter(argument, child_scope)
+            return
+        if isinstance(node, ast.Call) and _is_expression_insert(node):
+            _enter(node.func, scope_node)
+            _enter(node.args[0], scope_node)
+            _enter(node.args[1], node)
+            for keyword in node.keywords:
+                _enter(keyword, scope_node)
+            return
+        for child in ast.iter_child_nodes(node):
+            _enter(child, scope_node)
+
+    for child in tree.body:
+        _enter(child, tree)
+    for marker in trust_markers:
+        scope_node = parent_scope_node.get(id(marker.node), tree)
+        assert marker.name_id is not None
+        declarations.setdefault(id(scope_node), set()).add(marker.name_id)
+    return {
+        scope_id: frozenset(names) for scope_id, names in declarations.items()
+    }
 
 
 def _collect_fresh_scope_imports(
@@ -590,21 +765,31 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         *,
         ignored_name_nodes: set[int],
         preserved_names: frozenset[str],
+        trust_names: frozenset[str],
         external_names: frozenset[str],
         fresh_scope_nodes: tuple[ast.AST, ...],
         fresh_scope_local_bindings: dict[int, frozenset[str]] | None = None,
         fresh_scope_imported_names: dict[int, frozenset[str]] | None = None,
+        fresh_scope_trust_declarations: dict[int, frozenset[str]] | None = None,
+        module_trust_declarations: frozenset[str] = frozenset(),
     ) -> None:
         self.ignored_name_nodes = ignored_name_nodes
         self.preserved_names = preserved_names
+        self.trust_names = trust_names
         self.external_names = external_names
         self.fresh_scope_node_ids = {id(node) for node in fresh_scope_nodes}
         self.fresh_scope_local_bindings = fresh_scope_local_bindings or {}
         self.fresh_scope_imported_names = fresh_scope_imported_names or {}
+        self.fresh_scope_trust_declarations = fresh_scope_trust_declarations or {}
         self.scope_counter = count(2)
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
         self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
         self.astichi_scope_imports_stack: list[frozenset[str]] = []
+        # Module scope (serial 1) carries its own trust declarations
+        # at the base of the stack; fresh scopes push their own.
+        self.astichi_scope_trusts_stack: list[frozenset[str]] = [
+            module_trust_declarations
+        ]
         self.python_bindings = _ScopeBindingCollector().bindings_by_scope
         self.python_scope_bindings: dict[int, frozenset[str]] = {}
         self.python_scope_stack: list[frozenset[str]] = []
@@ -635,24 +820,41 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             return
         imported = self._current_imported_names()
         if node.id in imported:
-            # Issue 006 6c: an import-declared name is an alias for the
-            # outer scope's binding; both Load and Store occurrences
-            # live in the outer Astichi scope so `rename_scope_collisions`
-            # unifies them with the outer binding. The role stays
-            # `"internal"` — "preserved" here would falsely anchor the
-            # name against rename and let sibling root-scopes with the
-            # same name collapse onto each other at merge time.
-            role: LexicalRole = "internal"
+            # Issue 006 6c (inheritance / trust model): an import is an
+            # alias-through to an enclosing Astichi scope's binding.
+            # When the enclosing binding is trust-declared (keep /
+            # pass) the import inherits that trust: we classify the
+            # occurrence as `preserved` in the *local* scope so the
+            # inheritance scan keeps the literal name intact through
+            # rename. Untrusted imports default to the surrounding
+            # Astichi scope's binding so same-root splices unify on a
+            # single rename target and sibling roots rename apart.
             binding_kind: BindingKind = (
                 "reference" if isinstance(node.ctx, ast.Load) else "binding"
             )
-            scope_id = self._outer_scope()
+            if node.id in self.trust_names:
+                role: LexicalRole = "preserved"
+                scope_id = self._current_scope()
+            else:
+                role = "internal"
+                scope_id = self._outer_scope()
         elif isinstance(node.ctx, ast.Load):
             role = self._load_role(node.id)
             binding_kind = "reference"
             scope_id = self._outer_scope() if role != "internal" else self._current_scope()
         else:
-            role = "internal"
+            # Issue 006 6c: a Store is `preserved` only when the
+            # *current* Astichi scope explicitly declares trust on the
+            # name (via ``astichi_keep`` / ``astichi_pass`` at that
+            # scope's top). A global trust entry alone is not enough —
+            # an inner shell that happens to bind the same spelling
+            # without its own keep/pass is a fresh binding and must
+            # stay `internal` so rename can separate it from the
+            # trust-declaring scope.
+            if node.id in self._current_trust_declarations():
+                role = "preserved"
+            else:
+                role = "internal"
             binding_kind = "binding"
             scope_id = self._current_scope()
         self.occurrences.append(
@@ -692,6 +894,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
                 self.astichi_scope_imports_stack.pop()
+                self.astichi_scope_trusts_stack.pop()
             self.python_scope_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
@@ -706,6 +909,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
                 self.astichi_scope_imports_stack.pop()
+                self.astichi_scope_trusts_stack.pop()
 
     def _push_fresh_scope_if_needed(self, node: ast.AST) -> bool:
         if id(node) not in self.fresh_scope_node_ids:
@@ -715,6 +919,8 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.astichi_scope_bindings_stack.append(local)
         imported = self.fresh_scope_imported_names.get(id(node), frozenset())
         self.astichi_scope_imports_stack.append(imported)
+        trusts = self.fresh_scope_trust_declarations.get(id(node), frozenset())
+        self.astichi_scope_trusts_stack.append(trusts)
         return True
 
     def _current_scope(self) -> ScopeId:
@@ -740,6 +946,11 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         if not self.astichi_scope_imports_stack:
             return frozenset()
         return self.astichi_scope_imports_stack[-1]
+
+    def _current_trust_declarations(self) -> frozenset[str]:
+        if not self.astichi_scope_trusts_stack:
+            return frozenset()
+        return self.astichi_scope_trusts_stack[-1]
 
     def _load_role(self, raw_name: str) -> LexicalRole:
         astichi_local = self._current_astichi_bindings()

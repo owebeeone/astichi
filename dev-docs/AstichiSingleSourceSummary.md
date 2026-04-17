@@ -275,6 +275,10 @@ Implemented hygiene building blocks:
 
 - permissive vs strict unresolved-name analysis
 - keep-name preservation
+- two-level trust / inheritance model for cross-scope names
+  (soft-pin `preserved_names` vs hard-pin `trust_names`, tracked
+  per-Astichi-scope for Store occurrences and module-wide for
+  import occurrences; see §11.2 `006` `6c` for the full contract)
 - scope identity assignment for fresh Astichi scopes
 - rename-on-collision with suffix form:
   - `name__astichi_scoped_<n>`
@@ -686,13 +690,16 @@ Recommended execution order:
      inner-only for `import`, dual inner+outer for `pass`) is
      deferred to 6c when the resolver lands.
    - `6c` **done** (for `astichi_import`): the hygiene-scope visitor
-     classifies both Store and Load of import-declared names to the
-     *enclosing root's* Astichi scope with `role="internal"` —
-     *not* `"preserved"`, because preserving would short-circuit
-     `rename_scope_collisions` and let sibling root-scopes with the
-     same name collapse onto each other. The residual-marker
-     stripper removes every surviving `astichi_import(...)` /
-     `astichi_pass(...)` Expr statement from the materialized tree.
+     classifies `astichi_import`-declared name occurrences (the
+     declaration site itself and Name/arg references that resolve
+     through it) against the *enclosing* Astichi scope rather than the
+     declaring shell, and the residual-marker stripper removes every
+     surviving `astichi_import(...)` / `astichi_pass(...)` Expr
+     statement from the materialized tree. The visitor uses a
+     two-level trust model (see below) to decide whether an import
+     occurrence is `role="preserved"` (inherits cross-scope trust) or
+     `role="internal"` (same-root splicing unifies onto the enclosing
+     scope's binding, sibling roots rename apart).
      The same `arg_bindings` map that `_resolve_arg_identifiers`
      consumes is also passed to `_resolve_boundary_imports`, which
      rewrites `astichi_import` declarations (and their Name/arg
@@ -725,21 +732,53 @@ Recommended execution order:
      repro (`scratch/test_mat2.py`) builds two sibling roots, each
      running an independent 1+2+3 chain threaded through three
      StepN shells, and each reaches its own `result == 6`.
+   - `6c` **done** (trust / inheritance model): cross-scope name
+     wiring (including cross-root assign) is handled by a two-level
+     trust contract applied during scope identity + rename:
+     * `preserved_names` (soft-pin, set at `assign_scope_identity`
+       time from `composable.keep_names` union `pinned_targets`
+       coming out of `builder.assign` target slots) flags a name as
+       "anchor this scope when it collides with another" — the
+       first scope with a preserved occurrence wins, other colliding
+       scopes still get `__astichi_scoped_N` suffixes. This is the
+       old keep-name behavior and is how sibling roots that both
+       contain `total = ...` but only one declares `astichi_keep` /
+       `keep_names` end up with one `total` and one `total__astichi_scoped_*`.
+     * `trust_names` (hard-pin, the "I know what I'm doing"
+       contract) is built from the user-typed `keep_names=`
+       parameter on `compile()` / `with_keep_names()` /
+       `builder.add.<Name>(keep_names=...)` plus literal
+       `astichi_keep(name)` / `astichi_pass(name)` markers in the
+       source. A name listed in `trust_names` is *never* renamed by
+       `rename_scope_collisions`: every scope that carries a
+       `role="preserved"` occurrence for that name keeps the raw
+       spelling (not just the first one), so a `keep`/`pass` on the
+       producer side and a matching `astichi_import` on the
+       consumer side can co-emit the same literal name even when
+       they live in distinct Astichi scopes (distinct root
+       instances, different build stages, etc.). Scopes that bind
+       the same spelling *without* an explicit trust declaration of
+       their own are still treated as pure-internal and are renamed
+       away. `_ScopeIdentityVisitor` tracks trust at two
+       granularities — a module-level `trust_names` set (used to
+       classify import occurrences, which inherit trust from the
+       enclosing scope's keep/pass contract) and a per-scope
+       `fresh_scope_trust_declarations` map (used to classify Store
+       occurrences, so an inner shell that happens to bind a
+       trusted spelling without its own keep/pass declaration stays
+       `role="internal"` and renames apart).
+     Cross-root assign wiring therefore works end-to-end:
+     `builder.assign.<Src>.<inner>.to().<DstOtherRoot>.<outer>`
+     where `DstOtherRoot` is a different root instance from the one
+     the source is spliced into emits with the literal outer name
+     preserved, because `Src`'s import inherits `DstOtherRoot`'s
+     keep trust through the trust set.
    - `6c` remaining: reshape `astichi_pass` into the expression form
      the spec describes (currently still the statement declaration
      from 6a); wire `astichi_pass` through the materialize resolver
      (value-level) with invariant asserts; enable
      `wire_identifier(...)` on builder slot handles once
-     `astichi_pass` supply sources land; cross-root assign wiring
-     (`builder.assign.<Src>.<inner>.to().<DstOtherRoot>.<outer>`
-     where `DstOtherRoot` is a different root instance from the
-     one the source is spliced into) — the assign presently only
-     rewrites the inner name and relies on hygiene classifying the
-     import to the enclosing root's scope, so cross-root targets
-     need scope-identity threading the current resolver does not
-     do (two xfail tests in `test_boundaries.py` pin this gap:
-     `test_6c_assign_surface_to_non_edge_target_instance`,
-     `test_6c_assign_surface_connects_dangling_pass_across_build_stages`).
+     `astichi_pass` supply sources land.
 4. Soundness closure for 004
    - gate undeclared crossings
    - gate unresolved implied demands
@@ -807,14 +846,15 @@ Do this, in order:
    `ast.Attribute` / per-scope-isolation / `wire_identifier(...)`
    surfaces). `006` boundary-threading: `6a` (markers + placement
    gate + port extraction refactor), `6b` (hygiene pins + interaction
-   matrix),    and `6c` for `astichi_import` (hygiene scope override +
+   matrix), and `6c` for `astichi_import` (hygiene scope override +
    residual stripping + non-identity rebind resolver +
    target-adder `arg_names=` / `keep_names=` + fully-qualified
    `builder.assign.<Src>.<inner>.to().<Dst>.<outer>` surface +
    per-root scope wrap at merge time for sibling-root
-   independence) are done. Next up inside 006 is `astichi_pass`
-   reshape (expression form) plus the value-level resolver;
-   cross-root assign scope threading; then `wire_identifier(...)`
+   independence + two-level trust / inheritance model for
+   cross-scope name wiring including cross-root assign) are done.
+   Next up inside 006 is `astichi_pass` reshape (expression form)
+   plus the value-level resolver; then `wire_identifier(...)`
    surfaces on builder slot handles.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
