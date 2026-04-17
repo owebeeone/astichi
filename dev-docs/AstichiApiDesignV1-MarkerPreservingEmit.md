@@ -1,5 +1,14 @@
 # Astichi API design V1: marker-preserving emission
 
+> **SUPERSEDED** by `AstichiApiDesignV1-CompositionUnification.md`.
+>
+> The `emit(mode="strict"|"markers")` API proposed here is not
+> adopted. In the unified design, `emit()` is parseable-first with no
+> mode parameter, and `materialize().emit()` is the executable path.
+> This document is retained for historical reasoning only. Do not
+> follow its API surface; follow the contracts in
+> `AstichiApiDesignV1-CompositionUnification.md §2`.
+
 This document defines the V2-era surface for marker-preserving emission —
 emitting valid Python source for an un-materialized composable so that
 unresolved markers (holes, external binds) remain as visible, re-parseable

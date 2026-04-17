@@ -531,6 +531,10 @@ It is intentionally left unresolved to avoid premature complexity.
 
 ## 10. Build and materialize
 
+See `AstichiApiDesignV1-CompositionUnification.md §2` for the
+normative emit/materialize/round-trip contracts; this section
+remains for the high-level description of build and materialize.
+
 ### 10.1 `build()`
 
 `build()` returns a new `Composable`.
@@ -541,6 +545,11 @@ The result may still contain unresolved:
 - compile-time loops
 - implied demands
 - exports/offers
+
+`build()` preserves every `.add()` wiring as an `astichi_insert`
+AST node in the returned composable's tree. Materialize later
+flattens these into a plain Python body. This preserves the
+round-trip invariant (§10.3).
 
 ### 10.2 `materialize()`
 
@@ -557,9 +566,32 @@ The result may still contain unresolved:
 Hygiene is enforced most critically at `materialize()` because symbolic
 composition identities must become a concrete, valid Python naming layout.
 
+After the demand gate and hygiene closure, `materialize()` runs a
+flatten pass that consumes each `astichi_hole`/`astichi_insert`
+pair: the hole is removed, the inserted shell functions are
+unwrapped, and their bodies are spliced at the hole position in
+`order=` ascending sequence. See
+`AstichiApiDesignV1-CompositionUnification.md §4`.
+
+### 10.3 Round-trip invariant
+
+For any pre-materialize composable `c`:
+
+```python
+c1 = astichi.compile(c.emit())
+# ast.dump(c1.tree) == ast.dump(c.tree)   # structural equality
+```
+
+This lets callers emit mid-composition, edit, and re-ingest without
+losing composition metadata. Materialize is the terminal step; its
+output does not round-trip back into a re-composable form.
+
 ## 11. Emit
 
-`emit(...)` produces source output from a `Composable`.
+`emit(...)` produces **parseable** Python source from a `Composable`.
+It does not promise runtime executability; surviving markers are
+preserved verbatim. `materialize().emit()` is the path that produces
+executable source.
 
 Directional API:
 
@@ -577,6 +609,7 @@ Phase-1 source output is primarily for:
 - debugging
 - testing
 - inspection
+- round-trip re-ingestion into a fresh `Composable`
 
 ### 11.1 Marker-bearing source
 
