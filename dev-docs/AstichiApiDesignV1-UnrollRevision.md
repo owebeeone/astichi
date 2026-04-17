@@ -3,7 +3,7 @@
 This document re-instates `astichi_for` loop unrolling for V1, after it was
 deferred during the milestone-5 planning pass.
 
-It supersedes the deferral note in `V1Plan.md` section `5b`. Once accepted,
+It supersedes the deferral note in `historical/V1Plan.md` section `5b`. Once accepted,
 loop unrolling becomes a tractable V1 feature instead of a future milestone.
 
 This note is directional. It is meant to prevent semantic drift before the
@@ -14,7 +14,8 @@ Related documents:
 - `astichi/dev-docs/AstichiApiDesignV1.md` (especially §5.7, §9.2, §16.1)
 - `astichi/dev-docs/AstichiApiDesignV1-InsertExpression.md`
 - `astichi/dev-docs/IdentifierHygieneRequirements.md`
-- `astichi/dev-docs/V1Plan.md` (5b deferral notice — superseded by this doc)
+- `astichi/dev-docs/historical/V1Plan.md` (5b deferral notice — superseded
+  by this doc; V2 reinstates unroll in `V2Plan.md`)
 
 ## 1. Why loop unrolling was deferred
 
@@ -533,23 +534,38 @@ Provenance (6b) and round-trip (6c) work unchanged on the unrolled tree.
 
 ## 10. Future extensions (deferred)
 
-Out of scope for the V1 unroll revision:
+Out of scope for the V1 unroll revision (still deferred):
 
-- **External-domain loops**: `astichi_for(my_iterable)` where
-  `my_iterable` is supplied via `astichi_bind_external` or a
-  `build(unroll={...})` parameter dict. Requires the all-or-nothing rule
-  to be enforced over a per-loop parameter map.
+- **Runtime-supplied external-domain loops via `build(unroll={...})`**:
+  a per-loop parameter dict supplied directly at build time (§8.2
+  sketch). Requires the all-or-nothing rule enforced over that map.
 - **Comprehension domains**: `astichi_for([x for x in source])`.
-- **Runtime iterables / arbitrary calls**: anything not literal-reducible.
+- **Runtime iterables / arbitrary calls**: anything not
+  literal-reducible at build time.
 - **Constant folding** of substituted bodies.
-- **Loop variable shadowing** support.
+- **Same-scope rebind of a loop variable as a supported pattern**
+  (§5.3 rejects this; V2 keeps the rejection. Cross-scope shadowing
+  via an inner function/comprehension/for-target is already supported
+  by scope-aware substitution).
 
-These can be addressed as a separate milestone once V1-lite unrolling is
-in production use.
+Explicitly **in scope for V2** (clarifying prior confusion):
+
+- **Post-bind literal domains**: `astichi_for(fields)` where `fields`
+  has been satisfied by `composable.bind(fields=(...))` before unroll
+  runs. The substitution pass replaces the external name with an
+  `ast.Tuple` / `ast.List` literal, which the unroll pass then treats
+  identically to a source-written literal. No per-loop parameter map
+  is needed because the domain has been materialised into the tree
+  by the time the unroller inspects it. See
+  `AstichiApiDesignV1-BindExternal.md §8` for the sequencing contract
+  (bind runs before unroll).
+
+Future extensions can be addressed as separate follow-up work once
+V1-lite unrolling is in production use.
 
 ## 11. Implementation outline
 
-To be elaborated in `V1Plan.md` after this design is accepted. Sketch:
+Elaborated in `V2Plan.md` (Phase 2). Sketch:
 
 1. **New module** `astichi/materialize/unroll.py` with a pure-AST
    `unroll_loops(tree)` pass (and helpers).

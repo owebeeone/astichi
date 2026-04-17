@@ -15,17 +15,25 @@ This file defines repository-specific working instructions for `astichi`.
 
 ## Start here
 
-- Start with `dev-docs/V1StartHere.md`.
+- Start with `dev-docs/V2StartHere.md`.
 
 ## Authoritative docs
 
-For Astichi V1 work, use these docs:
+For Astichi V2 work, use these docs:
 
-- `dev-docs/V1StartHere.md`
+- `dev-docs/V2StartHere.md`
 - `dev-docs/AstichiCodingRules.md`
-- `dev-docs/AstichiApiDesignV1.md`
+- `dev-docs/AstichiApiDesignV1.md` (base V1 design, still normative)
+- `dev-docs/AstichiApiDesignV1-InsertExpression.md` (V1 addendum)
+- `dev-docs/AstichiApiDesignV1-BindExternal.md` (V2 scope)
+- `dev-docs/AstichiApiDesignV1-UnrollRevision.md` (V2 scope)
+- `dev-docs/AstichiApiDesignV1-MarkerPreservingEmit.md` (V2 scope)
 - `dev-docs/AstichiImplementationBoundaries.md`
-- `dev-docs/V1ProgressRegister.md`
+- `dev-docs/V2Plan.md`
+- `dev-docs/V2ProgressRegister.md`
+
+V1 process docs (plan, progress register, deferred-feature list, issue log)
+are archived under `dev-docs/historical/` and should not be edited.
 
 ## Roll-build method
 

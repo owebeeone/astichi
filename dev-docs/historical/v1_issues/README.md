@@ -12,7 +12,11 @@ Each issue document is intentionally short and action-oriented:
 
 Open issues:
 
-- `003-provenance-format-drift.md` — low priority
+- none
+
+Carried forward to V2:
+
+- `../../v2_issues/003-provenance-format-drift.md`
 
 Resolved issues:
 
