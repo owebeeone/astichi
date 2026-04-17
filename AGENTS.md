@@ -15,12 +15,18 @@ This file defines repository-specific working instructions for `astichi`.
 
 ## Start here
 
-- Start with `dev-docs/V2StartHere.md`.
+- **Read `dev-docs/AstichiCompositionModel.md` first.** It is the
+  governing principle for every marker, scope, composition, and
+  hygiene decision. Any proposal that does not fit its shape × state
+  grid is a design bug, not an implementation detail.
+- Then `dev-docs/V2StartHere.md`.
 
 ## Authoritative docs
 
 For Astichi V2 work, use these docs:
 
+- `dev-docs/AstichiCompositionModel.md` (governing principle —
+  required reading before any marker / scope / composition work)
 - `dev-docs/V2StartHere.md`
 - `dev-docs/AstichiCodingRules.md`
 - `dev-docs/AstichiApiDesignV1.md` (base V1 design, still normative)
