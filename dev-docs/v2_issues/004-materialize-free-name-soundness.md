@@ -1,6 +1,6 @@
 # 004: materialize accepts code with latent scope-leak / runtime errors
 
-Status: open
+Status: open (Gaps 1, 2, 3); **Gap 4 resolved**
 Priority: high (soundness)
 Filed: V2 Phase 3 (post-composition-unification)
 
@@ -13,6 +13,11 @@ found while building the materialize test matrix. Together they allow
 broken, which directly contradicts
 `AstichiApiDesignV1-CompositionUnification.md §2.2` ("materialize() on a
 closed composable produces executable Python").
+
+Gap 4 has since been closed by the "hygiene runs only when all insert
+markers are in place" rule (`AstichiApiDesignV1-CompositionUnification.md`
+§2.5(c)); it is retained below for historical record. Gaps 1–3 remain
+open design work for V2 Phase 3.
 
 ## Gap 1 — Cross-scope free-name fall-through
 
@@ -86,54 +91,29 @@ Either (a) tighten `materialize()` to reject non-builtin implied demands,
 or (b) carry a `strict_mode` flag on `BasicComposable.materialize()`
 that opts into this check. Decision deferred to V2 Phase 3.
 
-## Gap 4 — Unmatched `@astichi_insert` shell survives materialize
+## Gap 4 — Unmatched `@astichi_insert` shell survives materialize — **resolved**
 
-`AstichiApiDesignV1-CompositionUnification.md §6` states that any
-surviving `astichi_hole` or `astichi_insert` after the flatten pass is
-an "invariant violation". The current `materialize_composable` does not
-enforce this for unmatched `astichi_insert` shells.
+Status: **resolved** (gate enforcement landed in
+`src/astichi/materialize/api.py` alongside the
+`AstichiApiDesignV1-CompositionUnification.md §2.5(c)` rule).
 
-### Repro
+The rule that "hygiene runs only when all insert markers are in
+place" is now enforced at the materialize gate, before hygiene. Any
+unmatched block-form `@astichi_insert(name)` shell (no sibling
+`astichi_hole(name)`) or unmatched expression-form
+`astichi_insert(name, ...)` (no `astichi_hole(name)` anywhere in the
+tree) raises `ValueError` at the gate. The gate is option (a) from
+the original proposal; option (b) (silent splice-and-strip) was
+rejected because it would grant a "free scope" affordance with no
+declared consumer — exactly the kind of undocumented hole that a
+code-writing agent will latch onto.
 
-```python
-import astichi, ast
+Regression tests live in `astichi/tests/test_materialize.py`:
 
-src = """
-value = 10
+- `test_materialize_rejects_unmatched_block_insert_shell`
+- `test_materialize_rejects_unmatched_expression_insert`
 
-@astichi_insert(slot)
-def __inner():
-    value = 99
-
-astichi_keep(value)
-use = value
-"""
-
-materialized = astichi.compile(src).materialize()
-# emits (un-executable — `astichi_insert` is undefined at runtime):
-#   value = 10
-#
-#   @astichi_insert(slot)
-#   def __inner():
-#       value__astichi_scoped_1 = 99
-#   use = value
-```
-
-### Impact
-
-The shell function definition is emitted with the `@astichi_insert`
-decorator intact. The decorator resolves to an undefined name at
-runtime, so `exec()` of the emitted source raises `NameError` on
-import. Same executability violation as the other gaps.
-
-### Proposal
-
-After the flatten pass, `materialize()` should scan for any residual
-`astichi_insert`-decorated shell (via `_extract_block_insert_shell`)
-and either (a) raise `ValueError` per §6, or (b) splice the shell's
-body at its source position when no hole exists and drop the
-decorator. Decision deferred; (a) matches the spec's "invariant
-violation" language.
+No further work is required for this gap.
 
 ## Gap 3 — Self-referential rename produces UnboundLocalError
 

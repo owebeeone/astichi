@@ -50,14 +50,21 @@ print(fields)
 
 
 def test_materialize_applies_hygiene_closure() -> None:
+    """A matched `astichi_hole(target_slot)` + `@astichi_insert(target_slot)`
+    pair introduces a fresh Astichi scope. Hygiene renames the inner
+    `value` away from the outer `value`, while `astichi_keep(value)` pins
+    the outer name and the residual `astichi_keep` marker is stripped.
+    Per `AstichiApiDesignV1-CompositionUnification.md` \u00a72.5(c) the
+    hole is required: an unmatched `@astichi_insert` would be rejected
+    at the materialize gate."""
     compiled = astichi.compile(
         """
 value = 1
+astichi_hole(target_slot)
 
 @astichi_insert(target_slot)
 def inner():
     value = 2
-    return value
 
 result = astichi_keep(value)
 """
@@ -308,15 +315,17 @@ def test_materialize_without_keep_renames_colliding_outer_name() -> None:
     """Baseline for the `astichi_keep` matrix row: without `astichi_keep`,
     hygiene renames the inner-scope collision but leaves the outer binding
     alone. This pins the hygiene contrast used by
-    `test_materialize_applies_hygiene_closure`."""
+    `test_materialize_applies_hygiene_closure`. The scope boundary is
+    introduced by a matched `astichi_hole` + `@astichi_insert` pair as
+    required by `AstichiApiDesignV1-CompositionUnification.md` \u00a72.5(c)."""
     compiled = astichi.compile(
         """
 value = 1
+astichi_hole(target_slot)
 
 @astichi_insert(target_slot)
 def inner():
     value = 2
-    return value
 """
     )
 
@@ -380,16 +389,11 @@ def test_materialize_gap3_self_ref_rename_xfail() -> None:
     exec(compile(source, "<t>", "exec"), namespace)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Gap 4 (issue 004): an unmatched `@astichi_insert(slot)` shell "
-        "without a sibling `astichi_hole(slot)` survives materialize "
-        "instead of raising per CompositionUnification.md §6 "
-        "(invariant violation)."
-    ),
-)
-def test_materialize_gap4_unmatched_insert_shell_xfail() -> None:
+def test_materialize_rejects_unmatched_block_insert_shell() -> None:
+    """Per CompositionUnification.md \u00a72.5(c): an unmatched
+    `@astichi_insert(slot)` shell (no sibling `astichi_hole(slot)`) is
+    refused at the materialize gate before hygiene runs. Previously
+    tracked as Gap 4 in dev-docs/v2_issues/004."""
     compiled = astichi.compile(
         """
 @astichi_insert(slot)
@@ -397,5 +401,21 @@ def __unmatched():
     leaked = True
 """
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"unmatched astichi_insert supplies"
+    ):
+        compiled.materialize()
+
+
+def test_materialize_rejects_unmatched_expression_insert() -> None:
+    """Per CompositionUnification.md \u00a72.5(c): a bare-statement
+    expression-form `astichi_insert(name, ...)` (an unwired supply
+    declaration) is refused at the materialize gate. Wrapper forms
+    embedded in expression positions by `build()` are legitimate and
+    are unwrapped by `_realize_expression_insert_wrappers`; the gate
+    only rejects the bare statement shape."""
+    compiled = astichi.compile("astichi_insert(slot, 42)\n")
+    with pytest.raises(
+        ValueError, match=r"unmatched astichi_insert supplies"
+    ):
         compiled.materialize()

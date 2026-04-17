@@ -93,9 +93,14 @@ whether `materialize()` has run, not by an emit-mode toggle.
 **`composable.materialize()` closes a composable for runtime
 execution.** A materialized composable satisfies three properties:
 
-- Every mandatory demand port is resolved (holes, bind-externals).
+- Every mandatory demand port is resolved (holes, bind-externals)
+  **and every `astichi_insert` supply points at an extant hole**.
+  Any dangling insert — block shell or expression form — causes
+  `materialize()` to raise at the gate (§2.5 (c)) before hygiene
+  runs.
 - Hygiene closure has been applied (fresh scope IDs assigned,
-  collisions renamed).
+  collisions renamed), with the full complement of astichi markers
+  still visible to the scope pass (§2.5 (b)).
 - All `astichi_insert` contributions have been **flattened**: the
   decorator-wrapped shell functions are removed, their bodies are
   spliced at the hole position in topologically sorted order, and
@@ -170,6 +175,70 @@ is not renamed.
 
 This matches H5 (fresh scope on structural expansion) and the V1
 rationale in `InsertExpression.md §11`.
+
+### 2.5 Hygiene gate (hygiene runs only when all markers are in place)
+
+Hygiene — the scope-identity + collision-rename pass — is owned
+exclusively by `materialize()`. It runs **once**, and only when the
+composable has reached a fully well-formed materializable state.
+Two corollaries:
+
+**(a) Hygiene runs nowhere else.** `compile()`, `build()`, `bind()`,
+and `emit()` do not run hygiene. A pre-materialize composable carries
+the original author-level names verbatim. This is what lets
+compose → emit → re-compile → compose-more preserve the author's
+intent (§2.3): hygiene has not yet committed to any name rewrites,
+so the round-trip is a structural fixed point.
+
+**(b) Hygiene sees every astichi marker still in the tree.**
+Every marker — `astichi_hole`, `astichi_insert` (both block and
+expression forms), `astichi_bind_external`, `astichi_keep`,
+`astichi_export`, `astichi_definitional_name`, `astichi_for`, and
+any future marker (`astichi_import`, `astichi_pass`, …) — is
+present in the AST at the moment hygiene is invoked. Scope
+computation is the single pass that owns scope decisions, and it
+must have full visibility into authorial intent. A marker that
+today looks like "just metadata" may carry scope semantics in a
+future revision; pre-stripping any marker before hygiene would
+silently remove information that a later revision might need to
+consult. The only stripping permitted is the post-hygiene,
+post-flatten residual strip (§6).
+
+**(c) The materialize gate runs before hygiene and rejects any
+composable that is not in its final well-formed shape.** The gate
+refuses:
+
+- any unresolved mandatory `astichi_hole(name)` (no matching
+  `astichi_insert` in the same body);
+- any unsupplied `astichi_bind_external(name)`;
+- any **unmatched `@astichi_insert(name)` block shell** — a
+  decorator-form insert whose target hole does not exist in the
+  same structural body;
+- any **unmatched expression-form `astichi_insert(name, ...)`** —
+  i.e. a bare `ast.Expr` statement whose value is the insert call
+  (an unwired expression supply declaration). The legitimate form
+  after `build()` is an embedded wrapper at the former hole's
+  expression position;
+- (Phase 2) any `astichi_for(domain)` that the unroll pass could
+  not fully resolve.
+
+In other words: before hygiene runs, every insert must point at an
+extant hole, and every hole and demand must be either satisfied or
+explicitly optional. This is the "all markers in place" invariant.
+If anything is out of place, materialize raises `ValueError` and
+does not run hygiene — because running hygiene on a still-open
+composable would commit to name rewrites before the authorial
+intent was fully assembled.
+
+**Rationale for strict rejection of unmatched inserts.** An
+unmatched `@astichi_insert` shell is permissive: it silently grants
+a fresh scope boundary to anonymous code with no consumer on the
+other side. That pattern is exactly the kind of undocumented
+affordance that a code-writing agent will latch onto — a "free
+scope" sigil used to get isolation without declaring intent.
+Rejecting it at the gate forces the author (human or AI) to declare
+both the supply (the insert) and its consumer (the hole), which is
+the structural contract the rest of the library relies on.
 
 ## 3. The unification rule
 
@@ -251,16 +320,25 @@ verbatim.
 
 ## 4. Flatten pass in materialize
 
-`materialize_composable` gains a flatten pass that runs **after**
-hygiene closure and the mandatory-demand gate. Sequence:
+`materialize_composable` runs a strict, ordered pipeline. The key
+invariant, restated: **the gate runs first, then hygiene on the
+still-marker-bearing tree, then the flatten pass, and only then the
+residual-marker strip.** Sequence:
 
-1. Recognize markers.
-2. Deep-copy the tree.
-3. Assign scope identity; rename scope collisions.
-4. Reject unresolved mandatory demands (holes, bind-externals — the
-   existing gate, now extended to refuse both source-authored and
-   `.add()`-wired contributions that are missing their target hole).
-5. **New: flatten `astichi_insert` contributions.** For each
+1. **Gate.** Reject any composable that is not fully well-formed
+   (§2.5): unresolved mandatory holes, unsupplied bind-externals,
+   unmatched `@astichi_insert` block shells, unmatched
+   expression-form `astichi_insert` calls, unresolved `astichi_for`
+   loops. Gate failures raise `ValueError` and do not run any
+   subsequent step.
+2. Deep-copy the tree and recognize markers.
+3. **Hygiene.** Assign scope identity; rename scope collisions. The
+   tree at this point carries **every** astichi marker in its
+   authorial position (§2.5 (b)). Scope boundaries therefore include
+   decorator-wrapped `astichi_insert` shells, expression-form
+   inserts, and any other markers that a future revision may treat
+   as scope-relevant.
+4. **Flatten `astichi_insert` contributions.** For each
    `astichi_hole(name)` with one or more satisfying `astichi_insert`
    contributions in the same body:
    - Sort the contributions by `order` ascending, stable.
@@ -268,16 +346,23 @@ hygiene closure and the mandatory-demand gate. Sequence:
      of each contribution's body, in order. The decorator-wrapped
      shell function wrappers are removed; only the bodies survive.
    - The hole statement is removed.
-6. **New: strip residual markers** per §6.
-7. Re-recognize markers and re-extract ports on the flattened tree.
-   The resulting composable should have no demand ports and no
-   `astichi_hole`/`astichi_insert`/residual markers.
+5. **Strip residual markers** per §6 (`astichi_keep`, `astichi_export`,
+   `astichi_definitional_name`). Stripping happens **after** hygiene
+   and **after** flatten, never before.
+6. Re-recognize markers and re-extract ports on the flattened,
+   stripped tree. The resulting composable should have no demand
+   ports and no `astichi_hole` / `astichi_insert` / residual markers.
 
-The scope-identity and rename step runs **before** the flatten step
-so that collision-rename sees the insert markers as scope boundaries.
-If rename runs after flattening, all boundaries are lost and no
-renaming happens. This ordering is the whole point of storing inserts
-as AST nodes.
+The ordering is load-bearing:
+
+- Gate before hygiene, so hygiene never runs on an incomplete
+  composable.
+- Hygiene before flatten, so collision-rename sees insert shells as
+  scope boundaries; if rename ran after flattening, all boundaries
+  would be lost and no renaming would happen.
+- Flatten before strip, so the flatten pass can rely on hygiene-
+  renamed names already being in place.
+- Strip last, so hygiene had full marker visibility.
 
 ### 4.1 Flattening preserves order
 
@@ -430,17 +515,36 @@ now carried by whether materialize has run, not by an emit argument.
 
 ### 10.2 At materialize time
 
-- **Unresolved hole** (existing): a `astichi_hole(name)` with no
-  matching `astichi_insert(name, ...)` contributions in the same
-  body raises with the hole's name and origin.
-- **Unresolved bind-external** (existing, V2 Phase 1): raised by
-  the demand gate as today.
-- **Invariant: residual `astichi_hole` after flatten** (new): if
-  the flatten step does not consume a hole that the gate accepted,
-  this is a pipeline bug. Raise an internal error citing the hole.
-- **Invariant: residual `astichi_insert` after flatten** (new):
-  same as above for unmatched inserts (an insert whose target hole
-  does not exist at the same structural position).
+All of the following are raised by the **gate** (step 1 of §4),
+before hygiene runs, as `ValueError`:
+
+- **Unresolved mandatory hole** (existing): a `astichi_hole(name)`
+  with no matching `astichi_insert(name, ...)` contributions in the
+  same body. Raised with the hole's name and origin.
+- **Unresolved bind-external** (existing, V2 Phase 1).
+- **Unmatched `@astichi_insert` block shell** (new): a
+  decorator-form insert on a `FunctionDef` whose target hole does
+  not exist in the same structural body. Raised with the shell's
+  target name and enclosing location.
+- **Unmatched expression-form `astichi_insert`** (new): a bare
+  `ast.Expr` statement whose value is an `astichi_insert(name, ...)`
+  call — i.e. an unwired expression-form supply declaration.
+  Wrapper shape is the legitimate post-build form: an
+  `astichi_insert(name, expr)` call embedded in a non-statement
+  expression position (inside an `ast.Assign` value, inside a
+  call-argument list, inside an `ast.Starred`, as a dict entry,
+  etc.). `build()` consumes every matched expression hole by
+  substituting the wrapper at the hole's expression position, so
+  a surviving bare-statement form at materialize time means no
+  `build()` step consumed it and nothing will unwrap it.
+
+Post-gate invariants (bugs, not user errors; surface as internal
+errors):
+
+- **Residual `astichi_hole` after flatten**: if the flatten step
+  does not consume a hole that the gate accepted, the pipeline is
+  broken.
+- **Residual `astichi_insert` after flatten**: same as above.
 
 ### 10.3 At emit time
 

@@ -637,12 +637,17 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     The pipeline (see
     `AstichiApiDesignV1-CompositionUnification.md §4`):
 
-    1. reject unresolved mandatory demands (holes, bind-externals);
+    1. **Gate** (runs before hygiene): reject any composable that is not
+       fully well-formed — unresolved mandatory holes, unsupplied
+       bind-externals, unmatched `@astichi_insert` block shells, or
+       unmatched expression-form `astichi_insert` calls. Per §2.5,
+       hygiene must never run on an out-of-place tree.
     2. deep-copy the tree and recognize markers;
     3. assign scope identity and rename scope collisions (hygiene);
     4. realize expression-insert wrappers;
     5. flatten block-level `astichi_hole`/`astichi_insert` shell pairs;
-    6. re-recognize markers and re-extract ports.
+    6. strip residual metadata markers;
+    7. re-recognize markers and re-extract ports.
     """
     satisfied_holes = _locally_satisfied_hole_names(composable.tree)
     mandatory_holes = [
@@ -667,6 +672,26 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         raise ValueError(
             "external bindings were not supplied: "
             f"{names}; call composable.bind(...) before materializing."
+        )
+
+    unmatched_block_shells = _find_unmatched_block_insert_shells(composable.tree)
+    unmatched_expr_inserts = _find_unmatched_expression_inserts(composable.tree)
+    if unmatched_block_shells or unmatched_expr_inserts:
+        parts: list[str] = []
+        for name, lineno in unmatched_block_shells:
+            parts.append(
+                f"@astichi_insert({name}) at line {lineno} has no matching "
+                f"astichi_hole({name}) in the same body"
+            )
+        for name, lineno in unmatched_expr_inserts:
+            parts.append(
+                f"astichi_insert({name}, ...) at line {lineno} has no "
+                f"matching astichi_hole({name}) expression in the tree"
+            )
+        raise ValueError(
+            "unmatched astichi_insert supplies; every insert must point "
+            "at an extant hole before materialize runs hygiene: "
+            + "; ".join(parts)
         )
 
     tree = copy.deepcopy(composable.tree)
@@ -749,6 +774,85 @@ def _extract_block_insert_shell(stmt: ast.stmt) -> tuple[str, int] | None:
                 order = keyword.value.value
         return (first_arg.id, order)
     return None
+
+
+def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
+    """Return `(target_name, lineno)` for every `@astichi_insert` block
+    shell whose target hole is not a sibling in the same body.
+
+    Per `AstichiApiDesignV1-CompositionUnification.md §2.5 (c)` and §4,
+    a block-form insert must be matched by a sibling `astichi_hole` in
+    the same statement list. Unmatched shells are rejected at the
+    materialize gate before hygiene runs.
+    """
+    unmatched: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            if not value or not all(isinstance(item, ast.stmt) for item in value):
+                continue
+            holes: set[str] = set()
+            shells: list[tuple[str, int]] = []
+            for stmt in value:
+                hole_name = _extract_hole_name(stmt)
+                if hole_name is not None:
+                    holes.add(hole_name)
+                info = _extract_block_insert_shell(stmt)
+                if info is not None:
+                    lineno = getattr(stmt, "lineno", 0) or 0
+                    shells.append((info[0], lineno))
+            for name, lineno in shells:
+                if name not in holes:
+                    unmatched.append((name, lineno))
+    return unmatched
+
+
+def _find_unmatched_expression_inserts(tree: ast.AST) -> list[tuple[str, int]]:
+    """Return `(target_name, lineno)` for every *orphan* expression-form
+    `astichi_insert(name, expr)` — i.e. a bare `ast.Expr` statement
+    whose value is an expression-insert call.
+
+    Per `AstichiApiDesignV1-CompositionUnification.md §2.5 (c)`, an
+    expression-form insert is **matched** when it sits at an expression
+    position that was formerly an `astichi_hole(name)` — that is, when
+    it appears as a wrapper embedded in an expression context. `build()`
+    produces exactly that shape by substituting each expression hole
+    with an `astichi_insert(name, expr)` call at the hole's expression
+    position, so at materialize time the legitimate wrapper form is
+    always embedded (inside an `ast.Assign`, `ast.Call` argument list,
+    inside an `ast.Starred`, etc.), never a bare statement.
+
+    A surviving *bare statement* form is therefore an unwired supply
+    that no `build()` step consumed. It would not be unwrapped by
+    `_realize_expression_insert_wrappers` (that pass replaces call
+    nodes in expression context), so it would leak through hygiene and
+    into the emitted output. The gate refuses it.
+    """
+    unmatched: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            for stmt in value:
+                if not isinstance(stmt, ast.Expr):
+                    continue
+                if not isinstance(stmt.value, ast.Call):
+                    continue
+                if not _is_expression_insert_call(stmt.value):
+                    continue
+                target = _insert_target_name(stmt.value)
+                if target is None:
+                    continue
+                lineno = getattr(stmt, "lineno", 0) or 0
+                unmatched.append((target, lineno))
+    return unmatched
 
 
 def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
