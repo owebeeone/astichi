@@ -32,10 +32,22 @@ class MarkerSpec(ABC):
     def is_permitted_in_unroll_body(self) -> bool:
         """True if N copies of this marker inside an `astichi_for` body are
         safe — either because each copy is renamed per iteration, or because
-        the marker is an idempotent hygiene directive. Defaults to the
-        hygiene-directive answer; markers that are renamed per iteration
-        (see `astichi_hole`) override independently."""
-        return self.is_hygiene_directive()
+        the marker is an idempotent hygiene directive. Defaults to true when
+        either condition holds."""
+        return self.is_hygiene_directive() or self.is_renamed_per_iteration()
+
+    def is_renamed_per_iteration(self) -> bool:
+        """True for markers whose identifier argument is suffixed with
+        `__iter_<i>` per loop iteration during unroll (UnrollRevision §4.1).
+        The argument index is given by `iter_rename_arg_index()`."""
+        return False
+
+    def iter_rename_arg_index(self) -> int:
+        """Positional index of the identifier argument that gets the per-
+        iteration suffix when `is_renamed_per_iteration()` is True."""
+        raise NotImplementedError(
+            f"{type(self).__name__} is not renamed per iteration"
+        )
 
     def accepts_call_context(self, node: ast.Call) -> bool:
         """Whether this marker accepts the given call node in call-expression context."""
@@ -63,14 +75,16 @@ class _SimpleMarker(MarkerSpec):
         name_bearing: bool = False,
         decorator_only: bool = False,
         hygiene_directive: bool = False,
-        permitted_in_unroll_body: bool | None = None,
+        renamed_per_iteration: bool = False,
+        iter_rename_arg_index: int = 0,
     ) -> None:
         self.source_name = source_name
         self._positional_args = positional_args
         self._name_bearing = name_bearing
         self._decorator_only = decorator_only
         self._hygiene_directive = hygiene_directive
-        self._permitted_in_unroll_body = permitted_in_unroll_body
+        self._renamed_per_iteration = renamed_per_iteration
+        self._iter_rename_arg_index = iter_rename_arg_index
 
     def is_decorator_only(self) -> bool:
         return self._decorator_only
@@ -81,10 +95,13 @@ class _SimpleMarker(MarkerSpec):
     def is_hygiene_directive(self) -> bool:
         return self._hygiene_directive
 
-    def is_permitted_in_unroll_body(self) -> bool:
-        if self._permitted_in_unroll_body is not None:
-            return self._permitted_in_unroll_body
-        return super().is_permitted_in_unroll_body()
+    def is_renamed_per_iteration(self) -> bool:
+        return self._renamed_per_iteration
+
+    def iter_rename_arg_index(self) -> int:
+        if not self._renamed_per_iteration:
+            return super().iter_rename_arg_index()
+        return self._iter_rename_arg_index
 
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
@@ -171,7 +188,7 @@ HOLE = _SimpleMarker(
     name_bearing=True,
     # Unroll renames the target per iteration (UnrollRevision §4.1), so
     # N copies produce disambiguated targets rather than a conflict.
-    permitted_in_unroll_body=True,
+    renamed_per_iteration=True,
 )
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(

@@ -32,26 +32,10 @@ import ast
 import copy
 import re
 
-from astichi.lowering.markers import ALL_MARKERS, FOR
+from astichi.lowering.markers import FOR, MARKERS_BY_NAME
 from astichi.lowering.unroll_domain import DomainValue, resolve_domain
 
 __all__ = ["unroll_tree"]
-
-
-# Name-bearing markers whose first argument is a bare identifier — may
-# not carry a loop variable as their name argument (UnrollRevision §5.5).
-_NAME_BEARING_MARKERS = frozenset(
-    m.source_name for m in ALL_MARKERS if m.is_name_bearing()
-)
-
-# Name-bearing markers that are not permitted inside an `astichi_for` body
-# (UnrollRevision §4.3). Each marker answers `is_permitted_in_unroll_body`
-# for itself.
-_FORBIDDEN_MARKERS_IN_BODY = frozenset(
-    m.source_name
-    for m in ALL_MARKERS
-    if m.is_name_bearing() and not m.is_permitted_in_unroll_body()
-)
 
 _ITER_SUFFIX_RE = re.compile(r"__iter_\d+(?:_\d+)*$")
 
@@ -255,18 +239,23 @@ class _BodyValidator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Name):
-            name = node.func.id
-            if name in _FORBIDDEN_MARKERS_IN_BODY:
-                self._errors.append(
-                    f"{name}(...) is not allowed inside an astichi_for body"
-                )
-            elif name in _NAME_BEARING_MARKERS and node.args:
-                first = node.args[0]
-                if isinstance(first, ast.Name) and first.id in self._loop_vars:
+            marker = MARKERS_BY_NAME.get(node.func.id)
+            if marker is not None and marker.is_name_bearing():
+                if not marker.is_permitted_in_unroll_body():
                     self._errors.append(
-                        f"{name} may not use loop variable "
-                        f"{first.id!r} as its name argument"
+                        f"{marker.source_name}(...) is not allowed inside an "
+                        f"astichi_for body"
                     )
+                elif node.args:
+                    first = node.args[0]
+                    if (
+                        isinstance(first, ast.Name)
+                        and first.id in self._loop_vars
+                    ):
+                        self._errors.append(
+                            f"{marker.source_name} may not use loop variable "
+                            f"{first.id!r} as its name argument"
+                        )
         self.generic_visit(node)
 
     def _visit_function_like(
@@ -337,15 +326,14 @@ class _SubstituteAndRename(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "astichi_hole"
-            and node.args
-            and isinstance(node.args[0], ast.Name)
-        ):
-            node.args[0].id = _append_iter_suffix(
-                node.args[0].id, self._iter_index
-            )
+        if isinstance(node.func, ast.Name):
+            marker = MARKERS_BY_NAME.get(node.func.id)
+            if marker is not None and marker.is_renamed_per_iteration():
+                idx = marker.iter_rename_arg_index()
+                if idx < len(node.args) and isinstance(node.args[idx], ast.Name):
+                    node.args[idx].id = _append_iter_suffix(
+                        node.args[idx].id, self._iter_index
+                    )
         return node
 
     # ---- Scope boundaries -----------------------------------------------
