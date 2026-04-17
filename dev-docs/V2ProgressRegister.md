@@ -12,10 +12,10 @@ V1 closed and archived in `historical/`. V2 scope is documented in
 ## Current status
 
 - Active phase: **Phase 1 — external bind** (in progress)
-- Active sub-phase: `1e` (`materialize()` integration)
-- Next concrete action: make `materialize()` reject unresolved
-  `bind_external` demands with a clear materialize-time error and lock
-  that behavior with focused tests.
+- Active sub-phase: `1f` (Phase 1 exit gate)
+- Next concrete action: add an explicit bound-composable emit/provenance
+  round-trip test, then mark Phase 1 complete if the full Phase 1 gate
+  holds.
 
 ## Conventions
 
@@ -94,14 +94,17 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
 
 ### 1e. `materialize()` integration
 
-- Status: pending
+- Status: complete
 - Layer: `materialize`
 - Artifacts:
   - `src/astichi/materialize/api.py` (extend)
   - `tests/test_materialize.py` (extend)
 - Exit: unresolved bind demand raises a clear materialize-time error;
   bound composables materialize end-to-end.
-- Notes: —
+- Notes: `materialize()` now treats unresolved
+  `sources={"bind_external"}` demands as mandatory and raises the
+  bind-specific error from `BindExternal.md §6.2`; focused tests cover
+  both rejection and a fully bound materialization path.
 
 ### Phase 1 exit gate
 

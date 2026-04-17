@@ -24,6 +24,31 @@ def test_materialize_rejects_unresolved_holes() -> None:
         compiled.materialize()
 
 
+def test_materialize_rejects_unresolved_bind_external_demands() -> None:
+    compiled = astichi.compile("astichi_bind_external(fields)\nprint(fields)\n")
+
+    with pytest.raises(
+        ValueError,
+        match=r"external binding for `fields` was not supplied; call composable.bind\(fields=\.\.\.\) before materializing\.",
+    ):
+        compiled.materialize()
+
+
+def test_materialize_allows_fully_bound_composable() -> None:
+    compiled = astichi.compile(
+        """
+astichi_bind_external(fields)
+print(fields)
+"""
+    )
+
+    bound = compiled.bind(fields=("a", "b"))
+    materialized = bound.materialize()
+
+    assert isinstance(materialized, BasicComposable)
+    assert ast.unparse(materialized.tree) == "print(('a', 'b'))"
+
+
 def test_materialize_applies_hygiene_closure() -> None:
     compiled = astichi.compile(
         """

@@ -528,11 +528,29 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     if mandatory_holes:
         names = ", ".join(port.name for port in mandatory_holes)
         raise ValueError(f"mandatory holes remain unresolved: {names}")
+    mandatory_binds = [
+        port for port in composable.demand_ports if "bind_external" in port.sources
+    ]
+    if mandatory_binds:
+        if len(mandatory_binds) == 1:
+            name = mandatory_binds[0].name
+            raise ValueError(
+                f"external binding for `{name}` was not supplied; "
+                f"call composable.bind({name}=...) before materializing."
+            )
+        names = ", ".join(port.name for port in mandatory_binds)
+        raise ValueError(
+            "external bindings were not supplied: "
+            f"{names}; call composable.bind(...) before materializing."
+        )
 
     tree = copy.deepcopy(composable.tree)
     markers = recognize_markers(tree)
     provisional = BasicComposable(
-        tree=tree, origin=composable.origin, markers=markers
+        tree=tree,
+        origin=composable.origin,
+        markers=markers,
+        bound_externals=composable.bound_externals,
     )
 
     analysis = assign_scope_identity(provisional)
@@ -541,7 +559,10 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
 
     markers = recognize_markers(tree)
     post_hygiene = BasicComposable(
-        tree=tree, origin=composable.origin, markers=markers
+        tree=tree,
+        origin=composable.origin,
+        markers=markers,
+        bound_externals=composable.bound_externals,
     )
     classification = analyze_names(post_hygiene, mode="permissive")
 
@@ -552,4 +573,5 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         classification=classification,
         demand_ports=extract_demand_ports(markers, classification),
         supply_ports=extract_supply_ports(markers),
+        bound_externals=composable.bound_externals,
     )
