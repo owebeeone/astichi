@@ -18,8 +18,11 @@ Rejects at unroll time:
   loop body (`UnrollRevision.md` §5.3)
 - a name-bearing marker whose identifier argument is a loop variable
   (`UnrollRevision.md` §5.5)
-- any non-`astichi_hole` name-bearing marker inside a loop body
-  (`UnrollRevision.md` §4.3)
+- port-creating or binding name-bearing markers inside a loop body
+  (`UnrollRevision.md` §4.3): `astichi_export`, `astichi_bind_external`,
+  `astichi_bind_once`, `astichi_bind_shared`, `astichi_insert`. Hygiene
+  directives (`astichi_keep`, `astichi_definitional_name`) are idempotent
+  and permitted.
 - `astichi_for` loops with an `else` clause (V2 reserves the shape)
 """
 
@@ -36,12 +39,23 @@ __all__ = ["unroll_tree"]
 
 _FORBIDDEN_MARKERS_IN_BODY = frozenset(
     {
-        "astichi_keep",
         "astichi_export",
         "astichi_bind_external",
         "astichi_bind_once",
         "astichi_bind_shared",
         "astichi_insert",
+    }
+)
+
+# Name-bearing markers whose first argument is a bare identifier. These may
+# not carry a loop variable as their name argument (UnrollRevision §5.5).
+# Port-creating ones in `_FORBIDDEN_MARKERS_IN_BODY` are already rejected
+# unconditionally; the set below exists for the markers that ARE permitted
+# inside a loop body and still need the §5.5 check.
+_NAME_BEARING_MARKERS = frozenset(
+    {
+        "astichi_hole",
+        "astichi_keep",
         "astichi_definitional_name",
     }
 )
@@ -253,11 +267,11 @@ class _BodyValidator(ast.NodeVisitor):
                 self._errors.append(
                     f"{name}(...) is not allowed inside an astichi_for body"
                 )
-            elif name == "astichi_hole" and node.args:
+            elif name in _NAME_BEARING_MARKERS and node.args:
                 first = node.args[0]
                 if isinstance(first, ast.Name) and first.id in self._loop_vars:
                     self._errors.append(
-                        f"astichi_hole may not use loop variable "
+                        f"{name} may not use loop variable "
                         f"{first.id!r} as its name argument"
                     )
         self.generic_visit(node)

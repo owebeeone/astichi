@@ -289,12 +289,24 @@ def test_reject_export_in_body() -> None:
         )
 
 
-def test_reject_keep_in_body() -> None:
-    with pytest.raises(ValueError, match="astichi_keep"):
+def test_keep_in_body_is_allowed_and_duplicated() -> None:
+    # `astichi_keep` is a hygiene directive, not a port. N copies are
+    # idempotent declarations about the same Python name.
+    result = _lines(
+        """
+        for x in astichi_for((1, 2)):
+            astichi_keep(name)
+        """
+    )
+    assert result == ["astichi_keep(name)", "astichi_keep(name)"]
+
+
+def test_reject_keep_uses_loop_variable() -> None:
+    with pytest.raises(ValueError, match="astichi_keep.*loop variable 'x'"):
         _unroll(
             """
             for x in astichi_for((1,)):
-                astichi_keep(name)
+                astichi_keep(x)
             """
         )
 

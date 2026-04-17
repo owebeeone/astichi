@@ -190,18 +190,34 @@ invented marker target names, and are not renamed:
 | `@astichi_insert(target)` (decorator) | refers to a hole's target | NO direct rename — addressing handles `[i]` |
 | `astichi_insert(target, expr)` (call) | refers to a hole's target | NO direct rename — addressing handles `[i]` |
 
-### 4.3 Constraint on non-`astichi_hole` name-bearing markers inside loops
+### 4.3 Constraint on port-creating and binding markers inside loops
 
-Placing a non-`astichi_hole` name-bearing marker inside an `astichi_for`
-body is rejected at unroll time. Examples that fail:
+Port-creating and binding name-bearing markers inside an `astichi_for`
+body are rejected at unroll time, because N copies would either produce
+duplicate ports or contradict the marker's own cardinality:
 
-- `astichi_export(out)` inside a loop body: would produce N export sites
-  with the same Python name, which is semantically a port-conflict error.
-- `astichi_bind_external(items)` inside a loop body: the external name has
-  no per-iteration variant.
+| marker | why rejected |
+|---|---|
+| `astichi_export(name)` | N supply sites for the same Python name → port conflict |
+| `astichi_bind_external(name)` | external demand has no per-iteration variant |
+| `astichi_bind_once(name, value)` | "once" is violated by duplication |
+| `astichi_bind_shared(name, value)` | loop-var substitution may make the N value expressions disagree |
+| `astichi_insert(target, ...)` (call and decorator) | N supplies of the same target; §4.2 says addressing fills `[i]` from outside the loop, not from within |
 
-This restriction keeps V1 unrolling simple and consistent. Users that need
-per-iteration exports can name them explicitly outside the loop.
+Hygiene directives are **permitted** inside a loop body; N copies of the
+same directive are idempotent and carry no port:
+
+- `astichi_keep(name)` — "trust me, leave this Python name alone."
+  Duplicate declarations about the same name are the same declaration.
+- `astichi_definitional_name(name)` (legacy) / `__astichi_keep__` suffix
+  (new, per issue 005) — same story.
+
+`astichi_hole(target)` is of course permitted and is the one marker that
+gets the `__iter_<i>` per-iteration rename (§4.1).
+
+Independently, §5.5 forbids any name-bearing marker (including permitted
+ones like `astichi_keep`) from using a loop variable as its identifier
+argument.
 
 ## 5. Loop variable substitution
 
