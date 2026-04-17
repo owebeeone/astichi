@@ -140,3 +140,56 @@ class __astichi_arg__:
     pass
 """
         )
+
+
+def test_typo_in_identifier_suffix_warns_and_is_not_recognised() -> None:
+    # Issue 005 §1 / marker recognition: a class/def name that matches the
+    # reserved `<identifier>__astichi_<tag>__` shape but whose `<tag>` is
+    # not a registered suffix is almost certainly a typo. The marker
+    # visitor emits a `UserWarning` listing the known suffixes, does not
+    # register a marker, and leaves the binding intact as an ordinary name.
+    with pytest.warns(UserWarning, match=r"unrecognised Astichi suffix"):
+        compiled = astichi.compile(
+            """
+class foo__astichi_kep__:
+    pass
+"""
+        )
+    suffix_markers = [
+        marker
+        for marker in compiled.markers
+        if marker.source_name
+        in ("astichi_keep_identifier", "astichi_arg_identifier")
+    ]
+    assert suffix_markers == []
+
+
+def test_strip_identifier_suffix_is_regex_driven_and_silent_for_plain_names() -> None:
+    # The recogniser must not emit spurious warnings for ordinary names
+    # that don't match the reserved suffix shape at all.
+    from astichi.lowering.markers import (
+        ARG_IDENTIFIER,
+        KEEP_IDENTIFIER,
+        strip_identifier_suffix,
+    )
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning becomes a test failure
+        assert strip_identifier_suffix("plain_name") == ("plain_name", None)
+        assert strip_identifier_suffix("foo__astichi_keep__") == (
+            "foo",
+            KEEP_IDENTIFIER,
+        )
+        assert strip_identifier_suffix("bar__astichi_arg__") == (
+            "bar",
+            ARG_IDENTIFIER,
+        )
+        # Bare suffix with no identifier prefix does not match the regex
+        # and is reported as (name, None) without a warning; the marker
+        # visitor handles that case via the validator so users still see
+        # a clear error at compile time.
+        assert strip_identifier_suffix("__astichi_keep__") == (
+            "__astichi_keep__",
+            None,
+        )

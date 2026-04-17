@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import re
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -59,6 +61,13 @@ class MarkerSpec(ABC):
 
     def call_context_shape(self) -> MarkerShape | None:
         """Fixed shape override for call context, or None to use _infer_shape."""
+        return None
+
+    def identifier_suffix(self) -> str | None:
+        """Return the reserved name-suffix this marker claims (e.g.
+        `__astichi_keep__`), or None if the marker is not a suffix-form
+        identifier marker (issue 005 §1). Suffix-form markers are
+        recognised by matching class/def names rather than call nodes."""
         return None
 
     @abstractmethod
@@ -128,6 +137,9 @@ class _SuffixIdentifierMarker(MarkerSpec):
 
     def is_definitional_site(self) -> bool:
         return True
+
+    def identifier_suffix(self) -> str:
+        return self.suffix
 
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -234,17 +246,11 @@ INSERT = _InsertMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
 
-# Suffix-form markers recognised on class/def names (issue 005). Iterated
-# in registration order so the first matching suffix wins.
-SUFFIX_IDENTIFIER_MARKERS: tuple[_SuffixIdentifierMarker, ...] = (
-    KEEP_IDENTIFIER,
-    ARG_IDENTIFIER,
-)
-
 # Canonical registry of every marker Astichi knows about. Consumers that
-# need to enumerate markers (e.g. the unroller) iterate this tuple and
-# filter by marker self-description (`is_name_bearing`, `is_hygiene_directive`,
-# ...), so new markers are picked up automatically.
+# need to enumerate markers (e.g. the unroller, the suffix-identifier
+# visitor) iterate this tuple and filter by marker self-description
+# (`is_name_bearing`, `is_hygiene_directive`, `identifier_suffix`, ...),
+# so new markers are picked up automatically.
 ALL_MARKERS: tuple[MarkerSpec, ...] = (
     HOLE,
     BIND_ONCE,
@@ -259,34 +265,76 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
 )
 
 # Markers recognized from an `ast.Call` node by `accepts_call_context` /
-# `accepts_decorator_context`. Excludes suffix-form markers like the
-# identifier-shape ones, which are matched from a class/def node.
+# `accepts_decorator_context`. Derived from `ALL_MARKERS` by filtering
+# out suffix-form markers (those that self-report an identifier suffix
+# and are matched from a class/def node instead).
 MARKERS_BY_NAME: dict[str, MarkerSpec] = {
     marker.source_name: marker
-    for marker in (
-        HOLE,
-        BIND_ONCE,
-        BIND_SHARED,
-        BIND_EXTERNAL,
-        KEEP,
-        EXPORT,
-        FOR,
-        INSERT,
-    )
+    for marker in ALL_MARKERS
+    if marker.identifier_suffix() is None
 }
 
 
-def strip_identifier_suffix(name: str) -> tuple[str, _SuffixIdentifierMarker | None]:
-    """Return `(base_name, marker)` if `name` carries an identifier-shape
-    suffix marker (`__astichi_keep__` / `__astichi_arg__`); otherwise
-    `(name, None)`.
+def _build_identifier_suffix_map() -> dict[str, MarkerSpec]:
+    """Static map from reserved identifier suffix to its marker.
+
+    Built once at import by scanning `ALL_MARKERS` for entries that
+    self-report an `identifier_suffix()` (issue 005 §1). Duplicate
+    registrations are a programmer error and abort import.
     """
-    for marker in SUFFIX_IDENTIFIER_MARKERS:
-        if name.endswith(marker.suffix):
-            base = name[: -len(marker.suffix)]
-            if base.isidentifier():
-                return base, marker
-    return name, None
+    mapping: dict[str, MarkerSpec] = {}
+    for marker in ALL_MARKERS:
+        suffix = marker.identifier_suffix()
+        if suffix is None:
+            continue
+        existing = mapping.get(suffix)
+        if existing is not None:
+            raise RuntimeError(
+                f"duplicate identifier suffix {suffix!r} registered on "
+                f"{existing.source_name} and {marker.source_name}"
+            )
+        mapping[suffix] = marker
+    return mapping
+
+
+_IDENTIFIER_SUFFIX_MARKERS: dict[str, MarkerSpec] = _build_identifier_suffix_map()
+
+
+# Whole-string pattern for `<identifier>__astichi_<tag>__`. The base
+# must be a legal Python identifier prefix (at least one letter /
+# underscore, then word characters), and the tail must match the
+# reserved `__astichi_<tag>__` shape. The `(?P<suffix>...)` group is
+# then looked up in `_IDENTIFIER_SUFFIX_MARKERS` in one O(1) hit.
+_IDENTIFIER_SUFFIX_RE: re.Pattern[str] = re.compile(
+    r"^(?P<base>[a-zA-Z_]\w*?)(?P<suffix>__astichi_\w+?__)$"
+)
+
+
+def strip_identifier_suffix(name: str) -> tuple[str, MarkerSpec | None]:
+    """Return `(base_name, marker)` if `name` carries a registered
+    identifier-shape suffix (issue 005 §1); otherwise `(name, None)`.
+
+    Recognition is a single precompiled regex match plus a static-map
+    lookup. Names matching the `<identifier>__astichi_<tag>__` shape
+    whose `<tag>` is not registered emit a `UserWarning` (almost always
+    a typo in one of the known suffixes) and return `(name, None)`.
+    Names that do not match the shape return silently.
+    """
+    match = _IDENTIFIER_SUFFIX_RE.match(name)
+    if match is None:
+        return name, None
+    suffix = match.group("suffix")
+    marker = _IDENTIFIER_SUFFIX_MARKERS.get(suffix)
+    if marker is None:
+        warnings.warn(
+            f"identifier {name!r} ends with an unrecognised Astichi suffix "
+            f"{suffix!r}; this is almost certainly a typo. Known identifier "
+            f"suffixes: {sorted(_IDENTIFIER_SUFFIX_MARKERS)}",
+            category=UserWarning,
+            stacklevel=3,
+        )
+        return name, None
+    return match.group("base"), marker
 
 
 @dataclass(frozen=True)
@@ -390,16 +438,18 @@ class _MarkerVisitor(ast.NodeVisitor):
     def _visit_suffix_identifier(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
     ) -> None:
-        suffix_marker: _SuffixIdentifierMarker | None = None
-        for candidate in SUFFIX_IDENTIFIER_MARKERS:
-            if node.name.endswith(candidate.suffix):
-                suffix_marker = candidate
-                break
+        _, suffix_marker = strip_identifier_suffix(node.name)
         if suffix_marker is None:
+            # Fallback: catch bare-suffix pathology (e.g.
+            # `class __astichi_keep__:`). `strip_identifier_suffix`
+            # requires an identifier prefix, so the regex path above
+            # returns None; delegate to the marker validator so the
+            # user gets a specific diagnostic rather than silent ignore.
+            for suffix, candidate in _IDENTIFIER_SUFFIX_MARKERS.items():
+                if node.name.endswith(suffix):
+                    candidate.validate_node(node)
+                    return
             return
-        # Validator enforces a legal identifier prefix; a bare suffix
-        # (e.g. `class __astichi_keep__:`) raises with a clear diagnostic
-        # rather than being silently ignored.
         suffix_marker.validate_node(node)
         self.markers.append(
             RecognizedMarker(
