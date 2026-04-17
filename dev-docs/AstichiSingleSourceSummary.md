@@ -22,16 +22,16 @@ items.
   `astichi.Composable`.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
-  - V2 Phase 2 loop unroll has not started.
+  - V2 Phase 2 loop unroll: `2a` (domain resolution) complete; `2b–2e` open.
   - V2 Phase 3 polish has not started.
 - Test status as of 2026-04-17:
-  - full suite: `163 passed, 1 xfailed`
+  - full suite: `194 passed, 1 xfailed`
   - the sole xfail is the known materialize soundness gap for self-referential
     rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
 - Current next concrete action:
-  - implement loop-domain resolution in
-    `src/astichi/lowering/unroll_domain.py`
-  - add focused coverage in `tests/test_unroll_domain.py`
+  - implement the body-copy unroll engine in
+    `src/astichi/lowering/unroll.py` (consumes `unroll_domain.resolve_domain`)
+  - add focused coverage in `tests/test_unroll.py`
 
 ## 2. Governing principle and non-negotiable rules
 
