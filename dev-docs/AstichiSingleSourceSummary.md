@@ -687,38 +687,59 @@ Recommended execution order:
      deferred to 6c when the resolver lands.
    - `6c` **done** (for `astichi_import`): the hygiene-scope visitor
      classifies both Store and Load of import-declared names to the
-     outer Astichi scope so `rename_scope_collisions` unifies them
-     with the outer binding instead of creating a fresh per-shell
-     rename target; the residual-marker stripper removes every
-     surviving `astichi_import(...)` / `astichi_pass(...)` Expr
-     statement from the materialized tree; the same `arg_bindings`
-     map that `_resolve_arg_identifiers` consumes is now also passed
-     to `_resolve_boundary_imports`, which rewrites `astichi_import`
-     declarations (and their Name/arg references within the declaring
-     shell body, stopping at nested shell boundaries) when the user
-     supplies a non-identity rebind such as
-     `arg_names={"total": "accumulator"}`. The builder target-adder
-     surface grows `arg_names=` / `keep_names=` parameters
-     (`target.add.<Name>(order=0, arg_names={"total": "total"})`)
-     that union onto the source instance via the
-     `BuilderGraph.replace_instance` helper, and a new fully-qualified
-     `builder.assign.<Src>.<inner>.to().<Dst>.<outer>` surface records
-     cross-instance wirings (`AssignBinding` entries on the graph)
-     that are applied to local instance-record copies inside
-     `build_merge`, so the target instance may be registered after
-     the assign call and the supplier may live in a sibling
-     composable rather than the edge target. `_validate_arg_names` /
-     `BasicComposable.bind_identifier` now accept IDENTIFIER demand
-     ports sourced from either `__astichi_arg__` suffix or
-     `astichi_import` declarations. End-to-end accumulator repro
-     (`scratch/test_mat2.py`) unifies `total` across three sibling
-     StepN shells and emits a clean module-scope program.
+     *enclosing root's* Astichi scope with `role="internal"` —
+     *not* `"preserved"`, because preserving would short-circuit
+     `rename_scope_collisions` and let sibling root-scopes with the
+     same name collapse onto each other. The residual-marker
+     stripper removes every surviving `astichi_import(...)` /
+     `astichi_pass(...)` Expr statement from the materialized tree.
+     The same `arg_bindings` map that `_resolve_arg_identifiers`
+     consumes is also passed to `_resolve_boundary_imports`, which
+     rewrites `astichi_import` declarations (and their Name/arg
+     references within the declaring shell body, stopping at nested
+     shell boundaries) when the user supplies a non-identity rebind
+     such as `arg_names={"total": "accumulator"}`. The builder
+     target-adder surface grows `arg_names=` / `keep_names=`
+     parameters (`target.add.<Name>(order=0, arg_names={"total":
+     "total"})`) that union onto the source instance via the
+     `BuilderGraph.replace_instance` helper, and a new
+     fully-qualified `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`
+     surface records cross-instance wirings (`AssignBinding` entries
+     on the graph) that are applied to local instance-record copies
+     inside `build_merge`, so the target instance may be registered
+     after the assign call and (for same-root wiring) the supplier
+     may live in a sibling composable rather than the edge target.
+     `_validate_arg_names` / `BasicComposable.bind_identifier` now
+     accept IDENTIFIER demand ports sourced from either
+     `__astichi_arg__` suffix or `astichi_import` declarations.
+     Root-scope wrap: `build_merge` wraps every root instance's body
+     in a synthetic `astichi_hole(__astichi_root__<name>__)` /
+     `@astichi_insert(__astichi_root__<name>__) def __astichi_root__<name>__(): ...`
+     pair before concatenation into the merged module body. The
+     pair is real AST — it round-trips through `emit()` and is
+     consumed by `_flatten_block_inserts` after hygiene — and it
+     gives each root instance a distinct Astichi scope so two
+     sibling roots that both bind `total` at module level emit as
+     renamed-apart variables (`total` vs `total__astichi_scoped_*`)
+     rather than clobbering each other. End-to-end accumulator
+     repro (`scratch/test_mat2.py`) builds two sibling roots, each
+     running an independent 1+2+3 chain threaded through three
+     StepN shells, and each reaches its own `result == 6`.
    - `6c` remaining: reshape `astichi_pass` into the expression form
      the spec describes (currently still the statement declaration
      from 6a); wire `astichi_pass` through the materialize resolver
      (value-level) with invariant asserts; enable
      `wire_identifier(...)` on builder slot handles once
-     `astichi_pass` supply sources land.
+     `astichi_pass` supply sources land; cross-root assign wiring
+     (`builder.assign.<Src>.<inner>.to().<DstOtherRoot>.<outer>`
+     where `DstOtherRoot` is a different root instance from the
+     one the source is spliced into) — the assign presently only
+     rewrites the inner name and relies on hygiene classifying the
+     import to the enclosing root's scope, so cross-root targets
+     need scope-identity threading the current resolver does not
+     do (two xfail tests in `test_boundaries.py` pin this gap:
+     `test_6c_assign_surface_to_non_edge_target_instance`,
+     `test_6c_assign_surface_connects_dangling_pass_across_build_stages`).
 4. Soundness closure for 004
    - gate undeclared crossings
    - gate unresolved implied demands
@@ -786,12 +807,15 @@ Do this, in order:
    `ast.Attribute` / per-scope-isolation / `wire_identifier(...)`
    surfaces). `006` boundary-threading: `6a` (markers + placement
    gate + port extraction refactor), `6b` (hygiene pins + interaction
-   matrix), and `6c` for `astichi_import` (hygiene scope override +
+   matrix),    and `6c` for `astichi_import` (hygiene scope override +
    residual stripping + non-identity rebind resolver +
-   target-adder `arg_names=` / `keep_names=`) are done. Next up
-   inside 006 is `astichi_pass` reshape (expression form) plus the
-   value-level resolver; then `wire_identifier(...)` surfaces on
-   builder slot handles.
+   target-adder `arg_names=` / `keep_names=` + fully-qualified
+   `builder.assign.<Src>.<inner>.to().<Dst>.<outer>` surface +
+   per-root scope wrap at merge time for sibling-root
+   independence) are done. Next up inside 006 is `astichi_pass`
+   reshape (expression form) plus the value-level resolver;
+   cross-root assign scope threading; then `wire_identifier(...)`
+   surfaces on builder slot handles.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup

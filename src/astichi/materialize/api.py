@@ -317,9 +317,16 @@ def build_merge(
         target_set = {edge.target.root_instance for edge in graph.edges}
         root_names = sorted(target_set) if target_set else sorted(trees)
 
+    # Issue 006 6c (root-scope wrap): give every root instance its
+    # own `astichi_hole(__astichi_root__X__)` + `@astichi_insert(...)`
+    # pair before concatenation. The pair is a fresh Astichi scope
+    # that hygiene renames against sibling roots, so two Roots that
+    # both bind `total` at module level emit as distinct variables
+    # instead of clobbering each other. `_flatten_block_inserts`
+    # consumes the pair back into flat module body after hygiene.
     merged_body: list[ast.stmt] = []
     for name in root_names:
-        merged_body.extend(trees[name].body)
+        merged_body.extend(_wrap_in_root_scope(trees[name].body, name))
 
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
@@ -473,6 +480,48 @@ def _make_block_insert_shell(
         type_comment=None,
         type_params=[],
     )
+
+
+def _root_scope_anchor(instance_name: str) -> str:
+    """Anchor name for the per-root-instance scope-isolation shell.
+
+    Issue 006 6c (root-scope wrap): every top-level root instance in
+    a build is given a distinct `astichi_hole(anchor)` +
+    `@astichi_insert(anchor) def anchor(): ...` pair at module scope
+    so hygiene sees each root's bindings as a separate Astichi scope.
+    Using `_sanitize_for_identifier` on the instance name keeps the
+    anchor both unique across sibling roots and persistable through
+    an `emit()` + re-compile round trip.
+    """
+    return f"__astichi_root__{_sanitize_for_identifier(instance_name)}__"
+
+
+def _wrap_in_root_scope(
+    body: list[ast.stmt], instance_name: str
+) -> list[ast.stmt]:
+    """Wrap a root instance's body in a hole+shell pair (issue 006 6c).
+
+    The wrapped body becomes a fresh Astichi scope for hygiene
+    purposes. `_flatten_block_inserts` later consumes the hole and
+    the shell (after rename-collisions has run), inlining the body
+    back at module level — the wrapper exists purely to carry scope
+    identity through the hygiene pass.
+    """
+    anchor = _root_scope_anchor(instance_name)
+    hole = ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id="astichi_hole", ctx=ast.Load()),
+            args=[ast.Name(id=anchor, ctx=ast.Load())],
+            keywords=[],
+        )
+    )
+    shell = _make_block_insert_shell(
+        target_name=anchor,
+        order=0,
+        shell_name=anchor,
+        body=body,
+    )
+    return [hole, shell]
 
 
 def _extract_hole_name(stmt: ast.stmt) -> str | None:

@@ -638,8 +638,11 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # Issue 006 6c: an import-declared name is an alias for the
             # outer scope's binding; both Load and Store occurrences
             # live in the outer Astichi scope so `rename_scope_collisions`
-            # unifies them with the outer binding.
-            role: LexicalRole = "preserved"
+            # unifies them with the outer binding. The role stays
+            # `"internal"` — "preserved" here would falsely anchor the
+            # name against rename and let sibling root-scopes with the
+            # same name collapse onto each other at merge time.
+            role: LexicalRole = "internal"
             binding_kind: BindingKind = (
                 "reference" if isinstance(node.ctx, ast.Load) else "binding"
             )
