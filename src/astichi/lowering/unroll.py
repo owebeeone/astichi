@@ -32,7 +32,7 @@ import ast
 import copy
 import re
 
-from astichi.lowering.markers import ALL_MARKERS, FOR, HOLE
+from astichi.lowering.markers import ALL_MARKERS, FOR
 from astichi.lowering.unroll_domain import DomainValue, resolve_domain
 
 __all__ = ["unroll_tree"]
@@ -45,17 +45,12 @@ _NAME_BEARING_MARKERS = frozenset(
 )
 
 # Name-bearing markers that are not permitted inside an `astichi_for` body
-# because N copies would either produce duplicate ports or violate the
-# marker's own cardinality (UnrollRevision §4.3). `astichi_hole` is the
-# one name-bearing marker renamed per iteration, and hygiene directives
-# (`astichi_keep`, `astichi_definitional_name`) are idempotent declarations
-# with no port and so are permitted.
+# (UnrollRevision §4.3). Each marker answers `is_permitted_in_unroll_body`
+# for itself.
 _FORBIDDEN_MARKERS_IN_BODY = frozenset(
     m.source_name
     for m in ALL_MARKERS
-    if m.is_name_bearing()
-    and m is not HOLE
-    and not m.is_hygiene_directive()
+    if m.is_name_bearing() and not m.is_permitted_in_unroll_body()
 )
 
 _ITER_SUFFIX_RE = re.compile(r"__iter_\d+(?:_\d+)*$")

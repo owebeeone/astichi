@@ -29,6 +29,14 @@ class MarkerSpec(ABC):
         scope are idempotent and do not create N-way conflicts."""
         return False
 
+    def is_permitted_in_unroll_body(self) -> bool:
+        """True if N copies of this marker inside an `astichi_for` body are
+        safe — either because each copy is renamed per iteration, or because
+        the marker is an idempotent hygiene directive. Defaults to the
+        hygiene-directive answer; markers that are renamed per iteration
+        (see `astichi_hole`) override independently."""
+        return self.is_hygiene_directive()
+
     def accepts_call_context(self, node: ast.Call) -> bool:
         """Whether this marker accepts the given call node in call-expression context."""
         return not self.is_decorator_only()
@@ -55,12 +63,14 @@ class _SimpleMarker(MarkerSpec):
         name_bearing: bool = False,
         decorator_only: bool = False,
         hygiene_directive: bool = False,
+        permitted_in_unroll_body: bool | None = None,
     ) -> None:
         self.source_name = source_name
         self._positional_args = positional_args
         self._name_bearing = name_bearing
         self._decorator_only = decorator_only
         self._hygiene_directive = hygiene_directive
+        self._permitted_in_unroll_body = permitted_in_unroll_body
 
     def is_decorator_only(self) -> bool:
         return self._decorator_only
@@ -70,6 +80,11 @@ class _SimpleMarker(MarkerSpec):
 
     def is_hygiene_directive(self) -> bool:
         return self._hygiene_directive
+
+    def is_permitted_in_unroll_body(self) -> bool:
+        if self._permitted_in_unroll_body is not None:
+            return self._permitted_in_unroll_body
+        return super().is_permitted_in_unroll_body()
 
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
@@ -150,7 +165,14 @@ class _InsertMarker(MarkerSpec):
             )
 
 
-HOLE = _SimpleMarker("astichi_hole", positional_args=1, name_bearing=True)
+HOLE = _SimpleMarker(
+    "astichi_hole",
+    positional_args=1,
+    name_bearing=True,
+    # Unroll renames the target per iteration (UnrollRevision §4.1), so
+    # N copies produce disambiguated targets rather than a conflict.
+    permitted_in_unroll_body=True,
+)
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(
     "astichi_bind_shared", positional_args=2, name_bearing=True
