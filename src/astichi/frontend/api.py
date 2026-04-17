@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
-from astichi.lowering import recognize_markers
+from astichi.lowering import recognize_markers, validate_boundary_marker_placement
 from astichi.model import (
     BasicComposable,
     Composable,
@@ -85,6 +85,9 @@ def compile(
             ),
             filename=origin.file_name,
         )
+    # Issue 006 6a: reject misplaced astichi_import / astichi_pass
+    # declarations before any downstream pipeline step observes them.
+    validate_boundary_marker_placement(tree)
     markers = recognize_markers(tree)
     validated_keep_names = _validate_keep_names(keep_names)
     provisional = BasicComposable(

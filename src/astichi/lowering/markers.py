@@ -8,7 +8,32 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from astichi.asttools import BLOCK, NAMED_VARIADIC, POSITIONAL_VARIADIC, SCALAR_EXPR, MarkerShape
+from astichi.asttools import (
+    BLOCK,
+    IDENTIFIER,
+    NAMED_VARIADIC,
+    POSITIONAL_VARIADIC,
+    SCALAR_EXPR,
+    MarkerShape,
+)
+
+
+@dataclass(frozen=True)
+class PortTemplate:
+    """Port parameters contributed by a marker at a single occurrence.
+
+    Each `MarkerSpec` that contributes to demand/supply ports returns
+    one of these (or `None`) from `demand_template` / `supply_template`.
+    The model's `extract_demand_ports` / `extract_supply_ports` then
+    builds the actual `DemandPort` / `SupplyPort` by pairing the
+    template with the marker's `name_id` (and derives `placement` from
+    `shape`). This keeps the per-marker knowledge on the marker spec
+    rather than in a giant `if/elif` chain.
+    """
+
+    shape: MarkerShape
+    mutability: str
+    source_tag: str
 
 
 class MarkerSpec(ABC):
@@ -70,6 +95,18 @@ class MarkerSpec(ABC):
         recognised by matching class/def names rather than call nodes."""
         return None
 
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        """Return the demand-port contribution for a recognised occurrence.
+
+        Markers that don't contribute a demand port (hygiene directives,
+        binding-only markers, supply-only markers) return `None`.
+        """
+        return None
+
+    def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        """Return the supply-port contribution for a recognised occurrence."""
+        return None
+
     @abstractmethod
     def validate_node(self, node: ast.AST) -> None:
         """Validate that the node shape is legal for this marker."""
@@ -86,6 +123,8 @@ class _SimpleMarker(MarkerSpec):
         hygiene_directive: bool = False,
         renamed_per_iteration: bool = False,
         iter_rename_arg_index: int = 0,
+        demand_template: PortTemplate | None = None,
+        supply_template: PortTemplate | None = None,
     ) -> None:
         self.source_name = source_name
         self._positional_args = positional_args
@@ -94,6 +133,8 @@ class _SimpleMarker(MarkerSpec):
         self._hygiene_directive = hygiene_directive
         self._renamed_per_iteration = renamed_per_iteration
         self._iter_rename_arg_index = iter_rename_arg_index
+        self._demand_template = demand_template
+        self._supply_template = supply_template
 
     def is_decorator_only(self) -> bool:
         return self._decorator_only
@@ -111,6 +152,12 @@ class _SimpleMarker(MarkerSpec):
         if not self._renamed_per_iteration:
             return super().iter_rename_arg_index()
         return self._iter_rename_arg_index
+
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        return self._demand_template
+
+    def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        return self._supply_template
 
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
@@ -189,6 +236,34 @@ class _ArgIdentifierMarker(_SuffixIdentifierMarker):
         # don't regress; per-iteration arg semantics are refined in 5b.
         return True
 
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        return PortTemplate(
+            shape=IDENTIFIER, mutability="const", source_tag="arg"
+        )
+
+
+class _HoleMarker(_SimpleMarker):
+    """`astichi_hole(name)` — demand-port with shape inferred at recognition."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "astichi_hole",
+            positional_args=1,
+            name_bearing=True,
+            # Unroll renames the target per iteration (UnrollRevision §4.1),
+            # so N copies produce disambiguated targets rather than a
+            # conflict.
+            renamed_per_iteration=True,
+        )
+
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        assert marker.shape is not None, (
+            "astichi_hole occurrences must carry a shape by recognition time"
+        )
+        return PortTemplate(
+            shape=marker.shape, mutability="const", source_tag="hole"
+        )
+
 
 class _InsertMarker(MarkerSpec):
     """Dual-context insert marker: decorator (1 arg) and expression (2 args)."""
@@ -207,6 +282,16 @@ class _InsertMarker(MarkerSpec):
     def call_context_shape(self) -> MarkerShape | None:
         return SCALAR_EXPR
 
+    def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        # Only the expression-form (call context) contributes a supply
+        # port. Decorator-form inserts are block shells that are matched
+        # by the flatten pass, not by port wiring.
+        if marker.context != "call":
+            return None
+        return PortTemplate(
+            shape=SCALAR_EXPR, mutability="const", source_tag="insert"
+        )
+
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
             raise TypeError("astichi_insert must be recognized from an ast.Call")
@@ -222,29 +307,55 @@ class _InsertMarker(MarkerSpec):
             )
 
 
-HOLE = _SimpleMarker(
-    "astichi_hole",
-    positional_args=1,
-    name_bearing=True,
-    # Unroll renames the target per iteration (UnrollRevision §4.1), so
-    # N copies produce disambiguated targets rather than a conflict.
-    renamed_per_iteration=True,
-)
+HOLE = _HoleMarker()
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(
     "astichi_bind_shared", positional_args=2, name_bearing=True
 )
 BIND_EXTERNAL = _SimpleMarker(
-    "astichi_bind_external", positional_args=1, name_bearing=True
+    "astichi_bind_external",
+    positional_args=1,
+    name_bearing=True,
+    demand_template=PortTemplate(
+        shape=SCALAR_EXPR, mutability="const", source_tag="bind_external"
+    ),
 )
 KEEP = _SimpleMarker(
     "astichi_keep", positional_args=1, name_bearing=True, hygiene_directive=True
 )
-EXPORT = _SimpleMarker("astichi_export", positional_args=1, name_bearing=True)
+EXPORT = _SimpleMarker(
+    "astichi_export",
+    positional_args=1,
+    name_bearing=True,
+    supply_template=PortTemplate(
+        shape=SCALAR_EXPR, mutability="const", source_tag="export"
+    ),
+)
 FOR = _SimpleMarker("astichi_for", positional_args=1)
 INSERT = _InsertMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
+# Issue 006 §9.2: `astichi_import(name)` imports an outer-scope
+# identifier into the inner Astichi scope; `astichi_pass(name)` exposes
+# an inner-scope identifier to the outer scope. Both are boundary
+# declarations whose placement rule (top of inner scope, before real
+# statements) is enforced by the placement gate in `boundaries.py`.
+IMPORT = _SimpleMarker(
+    "astichi_import",
+    positional_args=1,
+    name_bearing=True,
+    demand_template=PortTemplate(
+        shape=IDENTIFIER, mutability="const", source_tag="import"
+    ),
+)
+PASS = _SimpleMarker(
+    "astichi_pass",
+    positional_args=1,
+    name_bearing=True,
+    supply_template=PortTemplate(
+        shape=IDENTIFIER, mutability="const", source_tag="pass"
+    ),
+)
 
 # Canonical registry of every marker Astichi knows about. Consumers that
 # need to enumerate markers (e.g. the unroller, the suffix-identifier
@@ -262,6 +373,8 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     INSERT,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,
+    IMPORT,
+    PASS,
 )
 
 # Markers recognized from an `ast.Call` node by `accepts_call_context` /

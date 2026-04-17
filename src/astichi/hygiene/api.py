@@ -96,13 +96,22 @@ def analyze_names(
     identifier_suffix_preserved = _collect_identifier_suffix_preserved(
         composable.markers
     )
+    # Issue 006 6b: `astichi_import(name)` / `astichi_pass(name)` pin
+    # `name` against hygiene rename and suppress implied-demand
+    # classification for Load references to it within the scope — the
+    # name is supplied across an Astichi scope boundary rather than by
+    # the piece's embedding context as a generic external.
+    boundary_preserved = _collect_boundary_preserved(composable.markers)
     externals = frozenset(
         marker.name_id
         for marker in composable.markers
         if marker.source_name == "astichi_bind_external" and marker.name_id is not None
     )
     preserved = frozenset(
-        set(kept) | set(preserved_names) | set(identifier_suffix_preserved)
+        set(kept)
+        | set(preserved_names)
+        | set(identifier_suffix_preserved)
+        | set(boundary_preserved)
     )
 
     unresolved: set[str] = set()
@@ -178,8 +187,10 @@ def assign_scope_identity(
         for marker in composable.markers
         if marker.source_name == "astichi_keep" and marker.name_id is not None
     )
-    marker_preserved_names = kept_preserved | _collect_identifier_suffix_preserved(
-        composable.markers
+    marker_preserved_names = (
+        kept_preserved
+        | _collect_identifier_suffix_preserved(composable.markers)
+        | _collect_boundary_preserved(composable.markers)
     )
     marker_external_names = frozenset(
         marker.name_id
@@ -273,6 +284,29 @@ def _collect_identifier_suffix_preserved(
         raw = _raw_suffixed_name(marker.node)
         if raw is not None:
             preserved.add(raw)
+    return frozenset(preserved)
+
+
+def _collect_boundary_preserved(
+    markers: tuple[object, ...],
+) -> frozenset[str]:
+    """Names declared by ``astichi_import`` / ``astichi_pass`` (issue 006 6b).
+
+    Both boundary markers pin their name against hygiene rename and
+    suppress implied-demand classification for Load references within
+    the scope. Scope-aware pinning (`import` = inner only, `pass` =
+    both) is deferred to 6c when the scope-aware resolver lands; 6b
+    treats them alike because ``_ScopeIdentityVisitor`` already scopes
+    preserved lookups by the enclosing Astichi scope.
+    """
+    preserved: set[str] = set()
+    for marker in markers:
+        if not isinstance(marker, RecognizedMarker):
+            continue
+        if marker.source_name not in ("astichi_import", "astichi_pass"):
+            continue
+        if marker.name_id is not None:
+            preserved.add(marker.name_id)
     return frozenset(preserved)
 
 

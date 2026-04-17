@@ -6,19 +6,25 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING
 
-from astichi.asttools import BLOCK, SCALAR_EXPR, MarkerShape
+from astichi.asttools import BLOCK, IDENTIFIER, SCALAR_EXPR, MarkerShape
 from astichi.lowering import RecognizedMarker
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
 
-
-class _IdentifierShape(MarkerShape):
-    def __init__(self) -> None:
-        super().__init__("identifier")
-
-
-IDENTIFIER = _IdentifierShape()
+# Re-exported so external consumers (tests, docs) can spell the
+# IDENTIFIER shape as `astichi.model.ports.IDENTIFIER`. The canonical
+# definition lives in `astichi.asttools.shapes`.
+__all__ = (
+    "BLOCK",
+    "IDENTIFIER",
+    "SCALAR_EXPR",
+    "DemandPort",
+    "SupplyPort",
+    "extract_demand_ports",
+    "extract_supply_ports",
+    "validate_port_pair",
+)
 
 
 @dataclass(frozen=True)
@@ -47,49 +53,30 @@ def extract_demand_ports(
     markers: tuple[RecognizedMarker, ...],
     classification: NameClassification,
 ) -> tuple[DemandPort, ...]:
-    """Extract demand ports from lowering and hygiene artifacts."""
+    """Extract demand ports from lowering and hygiene artifacts.
+
+    Per-marker knowledge lives on the marker spec itself: each
+    `MarkerSpec` returns a `PortTemplate` (or `None`) from
+    `demand_template(marker)`. This function is pure glue — it pairs
+    those templates with the marker's `name_id`, derives `placement`
+    from `shape`, and merges duplicates.
+    """
     ports: list[DemandPort] = []
     for marker in markers:
         if marker.name_id is None:
             continue
-        if marker.source_name == "astichi_hole":
-            assert marker.shape is not None
-            ports.append(
-                DemandPort(
-                    name=marker.name_id,
-                    shape=marker.shape,
-                    placement=_placement_for_shape(marker.shape),
-                    mutability="const",
-                    sources=frozenset({"hole"}),
-                )
-            )
+        template = marker.spec.demand_template(marker)
+        if template is None:
             continue
-        if marker.source_name == "astichi_bind_external":
-            ports.append(
-                DemandPort(
-                    name=marker.name_id,
-                    shape=SCALAR_EXPR,
-                    placement="expr",
-                    mutability="const",
-                    sources=frozenset({"bind_external"}),
-                )
+        ports.append(
+            DemandPort(
+                name=marker.name_id,
+                shape=template.shape,
+                placement=_placement_for_shape(template.shape),
+                mutability=template.mutability,
+                sources=frozenset({template.source_tag}),
             )
-            continue
-        if marker.source_name == "astichi_arg_identifier":
-            # Issue 005 §2 / §9.1: `__astichi_arg__` sites are demand ports
-            # (IDENTIFIER shape). Port-merging per (stripped_name, scope)
-            # is 5b; 5a emits one port per occurrence and relies on the
-            # default demand-port merge for collapsing duplicates by name.
-            ports.append(
-                DemandPort(
-                    name=marker.name_id,
-                    shape=IDENTIFIER,
-                    placement="identifier",
-                    mutability="const",
-                    sources=frozenset({"arg"}),
-                )
-            )
-            continue
+        )
     for implied in classification.implied_demands:
         ports.append(
             DemandPort(
@@ -106,33 +93,28 @@ def extract_demand_ports(
 def extract_supply_ports(
     markers: tuple[RecognizedMarker, ...],
 ) -> tuple[SupplyPort, ...]:
-    """Extract supply ports from lowering artifacts."""
+    """Extract supply ports from lowering artifacts.
+
+    Mirrors `extract_demand_ports`: the marker spec provides the
+    `PortTemplate` via `supply_template(marker)`; this function is
+    purely the glue that materialises it into a `SupplyPort`.
+    """
     ports: list[SupplyPort] = []
     for marker in markers:
         if marker.name_id is None:
             continue
-        if marker.source_name == "astichi_export":
-            ports.append(
-                SupplyPort(
-                    name=marker.name_id,
-                    shape=SCALAR_EXPR,
-                    placement="expr",
-                    mutability="const",
-                    sources=frozenset({"export"}),
-                )
-            )
+        template = marker.spec.supply_template(marker)
+        if template is None:
             continue
-        if marker.source_name == "astichi_insert" and marker.context == "call":
-            ports.append(
-                SupplyPort(
-                    name=marker.name_id,
-                    shape=SCALAR_EXPR,
-                    placement="expr",
-                    mutability="const",
-                    sources=frozenset({"insert"}),
-                )
+        ports.append(
+            SupplyPort(
+                name=marker.name_id,
+                shape=template.shape,
+                placement=_placement_for_shape(template.shape),
+                mutability=template.mutability,
+                sources=frozenset({template.source_tag}),
             )
-            continue
+        )
     return _merge_supply_ports(ports)
 
 
