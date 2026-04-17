@@ -196,6 +196,52 @@ class _ScopeMarkers:
     exports: dict[str, int] = field(default_factory=dict)
 
 
+def validate_boundary_interaction_matrix(
+    tree: ast.Module, markers: tuple[RecognizedMarker, ...]
+) -> None:
+    """Reject forbidden boundary-marker combinations on the same name.
+
+    Interaction matrix (issue 006 §9.2): within a single Astichi scope,
+    ``astichi_import(name)`` cannot coexist with any of::
+
+        astichi_pass(name)              # same-scope import + pass
+        name__astichi_keep__            # import + keep suffix
+        name__astichi_arg__             # import + arg suffix
+        astichi_export(name)            # import + export
+
+    ``astichi_pass`` may freely coexist with keep / arg / export —
+    supplying a name outward does not conflict with hygiene pins or
+    export-side supplies on the same name.
+
+    Scope boundaries match `group_markers_by_astichi_scope`: the module
+    body is the root Astichi scope, each ``@astichi_insert``-decorated
+    class/def body is a fresh scope.
+    """
+    groups = group_markers_by_astichi_scope(tree, markers)
+    errors: list[str] = []
+    for bucket in groups.values():
+        for import_name, import_lineno in bucket.imports.items():
+            for other_kind, other_map, rendered in (
+                ("astichi_pass", bucket.passes, "astichi_pass"),
+                ("astichi_keep_identifier", bucket.keeps, "__astichi_keep__ suffix"),
+                ("astichi_arg_identifier", bucket.args, "__astichi_arg__ suffix"),
+                ("astichi_export", bucket.exports, "astichi_export"),
+            ):
+                other_lineno = other_map.get(import_name)
+                if other_lineno is None:
+                    continue
+                errors.append(
+                    f"astichi_import({import_name}) at line {import_lineno} "
+                    f"conflicts with {rendered}({import_name}) at line "
+                    f"{other_lineno} in {bucket.key.label}"
+                )
+    if errors:
+        raise ValueError(
+            "incompatible Astichi boundary-marker combinations: "
+            + "; ".join(errors)
+        )
+
+
 def group_markers_by_astichi_scope(
     tree: ast.Module, markers: tuple[RecognizedMarker, ...]
 ) -> dict[int, _ScopeMarkers]:

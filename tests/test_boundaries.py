@@ -186,3 +186,172 @@ def test_placement_rejects_boundary_marker_as_decorator_or_nested_call() -> None
 result = astichi_import(bad_in_expr)
 """
         )
+
+
+# ---------------------------------------------------------------------------
+# 6b: hygiene pinning + interaction matrix
+# ---------------------------------------------------------------------------
+
+
+def test_hygiene_pins_import_and_pass_names_against_implied_demand() -> None:
+    # Issue 006 6b: Load references to an imported/passed name inside
+    # the scope must NOT be reclassified as implied SCALAR_EXPR demands
+    # (the name is supplied across an Astichi scope boundary). Only the
+    # IDENTIFIER-shape port sourced from the boundary marker survives.
+    compiled = astichi.compile(
+        """
+astichi_import(dep)
+astichi_pass(out)
+
+out = dep + 1
+"""
+    )
+
+    dep_sources = {
+        port.sources
+        for port in compiled.demand_ports
+        if port.name == "dep"
+    }
+    # dep shows up exactly as the IDENTIFIER import demand; no implied
+    # SCALAR_EXPR clone was added.
+    assert dep_sources == {frozenset({"import"})}
+    # `out` is not classified as an implied demand either.
+    assert not any(port.name == "out" for port in compiled.demand_ports)
+
+
+def test_interaction_matrix_rejects_import_and_pass_on_same_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(x\).*conflicts with astichi_pass\(x\)",
+    ):
+        astichi.compile(
+            """
+astichi_import(x)
+astichi_pass(x)
+"""
+        )
+
+
+def test_interaction_matrix_rejects_import_and_keep_suffix_on_same_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(widget\).*__astichi_keep__ suffix\(widget\)",
+    ):
+        astichi.compile(
+            """
+astichi_import(widget)
+
+class widget__astichi_keep__:
+    pass
+"""
+        )
+
+
+def test_interaction_matrix_rejects_import_and_arg_suffix_on_same_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(target\).*__astichi_arg__ suffix\(target\)",
+    ):
+        astichi.compile(
+            """
+astichi_import(target)
+
+def target__astichi_arg__():
+    return 1
+"""
+        )
+
+
+def test_interaction_matrix_rejects_import_and_export_on_same_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(shared\).*astichi_export\(shared\)",
+    ):
+        astichi.compile(
+            """
+astichi_import(shared)
+
+shared = 1
+astichi_export(shared)
+"""
+        )
+
+
+def test_interaction_matrix_allows_pass_alongside_keep_and_arg() -> None:
+    # Issue 006 §9.2: `pass` may coexist with keep-suffix and
+    # arg-suffix on the same name — the matrix gate does not reject.
+    astichi.compile(
+        """
+astichi_pass(handler)
+astichi_pass(knob)
+
+class handler__astichi_keep__:
+    pass
+
+
+def knob__astichi_arg__():
+    return 0
+"""
+    )
+
+
+def test_interaction_matrix_allows_pass_plus_export_via_direct_gate_call() -> None:
+    # Issue 006 §9.2: `pass + astichi_export` on the same name is
+    # valid at the interaction-matrix level. We exercise the gate
+    # directly because `pass` contributes an IDENTIFIER supply and
+    # `export` contributes a SCALAR_EXPR supply for the same name;
+    # the compile-time supply-port merge across distinct shapes is
+    # a separate concern handled by 6c.
+    import ast as _ast
+    from astichi.lowering import (
+        recognize_markers,
+        validate_boundary_interaction_matrix,
+    )
+
+    tree = _ast.parse(
+        """
+astichi_pass(shared)
+
+shared = 42
+astichi_export(shared)
+"""
+    )
+    markers = recognize_markers(tree)
+    validate_boundary_interaction_matrix(tree, markers)
+
+
+def test_interaction_matrix_is_scoped_per_astichi_scope() -> None:
+    # Issue 006 §9.2: the forbidden combinations apply per-scope. An
+    # import at module level + a keep-suffix inside an `@astichi_insert`
+    # shell does not collide because they live in different Astichi
+    # scopes.
+    astichi.compile(
+        """
+astichi_import(widget)
+
+widget
+
+@astichi_insert(target)
+def shell_block():
+    class widget__astichi_keep__:
+        pass
+"""
+    )
+
+
+def test_interaction_matrix_rejects_same_scope_conflict_inside_shell() -> None:
+    # ... but *within* the shell scope, the rule still applies.
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(widget\).*__astichi_keep__ suffix\(widget\)",
+    ):
+        astichi.compile(
+            """
+@astichi_insert(target)
+def shell_block():
+    astichi_import(widget)
+
+    class widget__astichi_keep__:
+        pass
+"""
+        )

@@ -664,9 +664,31 @@ Recommended execution order:
      `wire_identifier(...)` on builder slot handles is deferred
      because IDENTIFIER-shape supply sources are 006 territory.
 3. Boundary-threading implementation for 006
-   - add `astichi_import`
-   - add `astichi_pass`
-   - extend ports, hygiene pins, and materialize resolution
+   - `6a` **done**: `astichi_import` / `astichi_pass` registered as
+     call-form boundary markers (ALL_MARKERS + port templates); the
+     placement gate rejects boundary declarations that aren't at the
+     top-of-body prefix of their immediately enclosing Astichi scope
+     (module body, or an `@astichi_insert`-decorated class/def body);
+     IDENTIFIER-shape demand (for `import`) and supply (for `pass`)
+     ports surface at the composable boundary. Also collapses
+     `extract_demand_ports` / `extract_supply_ports` onto a new
+     `MarkerSpec.demand_template` / `supply_template` hook returning
+     a `PortTemplate`, so per-marker knowledge lives on the marker
+     spec instead of in an if/elif chain. `IDENTIFIER` is now a
+     first-class shape in `asttools.shapes`.
+   - `6b` **done**: hygiene pins for `import` / `pass` names keep
+     them out of implied-demand classification and protect them
+     from rename; the per-Astichi-scope interaction-matrix gate
+     rejects `import + pass`, `import + __astichi_keep__`,
+     `import + __astichi_arg__`, and `import + astichi_export` on
+     the same name in the same scope while allowing `pass` to
+     coexist with keep / arg / export. Scope-aware pinning (strict
+     inner-only for `import`, dual inner+outer for `pass`) is
+     deferred to 6c when the resolver lands.
+   - `6c` remaining: resolution passes in materialize (`pass`
+     then `import` with invariant asserts); enable
+     `wire_identifier(...)` on builder slot handles once supply
+     sources land.
 4. Soundness closure for 004
    - gate undeclared crossings
    - gate unresolved implied demands
@@ -732,7 +754,10 @@ Do this, in order:
 3. Phase 2 (`2a`–`2e`) is closed; identifier cluster (§11.2) is closed
    (`005` `5a`–`5d` all landed, modulo the explicitly-deferred
    `ast.Attribute` / per-scope-isolation / `wire_identifier(...)`
-   surfaces). Pick up at issue `006` (cross-scope threading) next.
+   surfaces). `006` is in flight: `6a` (markers + placement gate +
+   port extraction refactor) and `6b` (hygiene pins + interaction
+   matrix) are done. Pick up at `6c` (materialize resolution passes
+   for `astichi_pass` / `astichi_import`) next.
 4. implement the rest of the identifier cluster in the order from §11.2
 5. finish Phase 3 polish
 6. only then spend time on provenance drift or recognized-only marker cleanup
