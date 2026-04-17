@@ -11,10 +11,12 @@ V1 closed and archived in `historical/`. V2 scope is documented in
 
 ## Current status
 
-- Active phase: **Phase 1 — external bind** (not yet started)
-- Active sub-phase: `1a` (value-shape policy and AST converter)
-- Next concrete action: create `src/astichi/model/external_values.py`
-  with `value_to_ast` and `validate_external_value`, plus focused tests.
+- Active phase: **Phase 1 — external bind** (in progress)
+- Active sub-phase: `1b` (demand port extraction for
+  `astichi_bind_external`)
+- Next concrete action: extend `src/astichi/model/ports.py` so
+  `extract_demand_ports` emits bind-external demand ports and lock it
+  with focused model tests.
 
 ## Conventions
 
@@ -37,14 +39,16 @@ Spec: `AstichiApiDesignV1-BindExternal.md`.
 
 ### 1a. Value-shape policy and AST converter
 
-- Status: pending
+- Status: complete
 - Layer: `model`
 - Artifacts:
   - `src/astichi/model/external_values.py` (new)
   - `tests/test_external_values.py` (new)
 - Exit: converters handle all V1 literal types incl. nested tuple/list;
   non-literal inputs rejected with clear errors; depth guard tested.
-- Notes: —
+- Notes: implemented `value_to_ast` and `validate_external_value` in
+  `src/astichi/model/external_values.py`; focused tests landed in
+  `tests/test_external_values.py`.
 
 ### 1b. Demand port extraction for `astichi_bind_external`
 
