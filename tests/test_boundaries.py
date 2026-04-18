@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 import astichi
+from astichi.builder.graph import AssignBinding
 from astichi.lowering import MARKERS_BY_NAME
 from astichi.model.ports import IDENTIFIER
 
@@ -686,21 +687,99 @@ def test_6c_assign_surface_rejects_unknown_target_at_build() -> None:
 
 def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
     # Issue 006 6c: when the referenced inner name is not a demand
-    # port on the source instance, `bind_identifier` rejects at build
-    # time with the same error as the `arg_names=` surface.
+    # port on a registered source instance, the fluent surface rejects
+    # immediately with the same error as the `arg_names=` surface.
     builder = astichi.build()
     builder.add.Step1(astichi.compile(_accum_step_src(1)))
     builder.add.Root(
         astichi.compile(_ACCUM_ROOT_SRC)
     )
-    builder.assign.Step1.nonexistent.to().Root.total
-
     with pytest.raises(
         ValueError,
         match=(
             r"no __astichi_arg__ / astichi_import slot named "
             r"`nonexistent`"
         ),
+    ):
+        builder.assign.Step1.nonexistent.to().Root.total
+
+
+def test_6c_assign_surface_rejects_index_at_end_of_source_path() -> None:
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+
+    with pytest.raises(
+        ValueError,
+        match=r"assign identifier paths may not end with index segments",
+    ):
+        builder.assign.Step1.total[0].to().Root.total
+
+
+def test_6c_assign_surface_rejects_index_after_final_target_name() -> None:
+    builder = astichi.build()
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.add.Root(astichi.compile(_ACCUM_ROOT_SRC))
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"assign target identifier paths may not continue with index segments "
+            r"after final outer name `Root\.total`"
+        ),
+    ):
+        builder.assign.Step1.total.to().Root.total[0]
+
+
+def test_6c_assign_surface_raw_build_rejects_unknown_deep_source_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("astichi_import(total)\nvalue = total + 1\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    builder = astichi.build()
+    builder.add.Pipeline(built)
+    builder.add.Root(astichi.compile(_ACCUM_ROOT_SRC))
+    builder.graph.add_assign(
+        AssignBinding(
+            source_instance="Pipeline",
+            inner_name="total",
+            source_ref_path=("Missing",),
+            target_instance="Root",
+            outer_name="total",
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown assign source path `Pipeline\.Missing`",
+    ):
+        builder.build()
+
+
+def test_6c_assign_surface_raw_build_rejects_unknown_deep_target_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("total = 10\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    builder = astichi.build()
+    builder.add.Pipeline(built)
+    builder.add.Step1(astichi.compile(_accum_step_src(1)))
+    builder.graph.add_assign(
+        AssignBinding(
+            source_instance="Step1",
+            inner_name="total",
+            target_instance="Pipeline",
+            outer_name="total",
+            target_ref_path=("Missing",),
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown assign target path `Pipeline\.Missing`",
     ):
         builder.build()
 

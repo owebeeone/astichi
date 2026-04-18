@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from astichi.model import Composable
+from astichi.model.basic import BasicComposable
+from astichi.path_resolution import ShellIndex
 from astichi.shell_refs import RefPath
 
 
@@ -64,12 +66,24 @@ class BuilderGraph:
     _edges: list[AdditiveEdge] = field(default_factory=list)
     _assigns: list[AssignBinding] = field(default_factory=list)
 
+    def _validate_instance_composable(
+        self,
+        name: str,
+        composable: Composable,
+    ) -> None:
+        if not isinstance(composable, BasicComposable):
+            return
+        ShellIndex.from_tree(composable.tree).require_unique_non_root_paths(
+            instance_name=name
+        )
+
     def add_instance(self, name: str, composable: Composable) -> InstanceRecord:
         """Register a named composable instance."""
         if not name.isidentifier():
             raise ValueError(f"instance name must be a valid identifier: {name!r}")
         if name in self._instances:
             raise ValueError(f"duplicate instance name: {name}")
+        self._validate_instance_composable(name, composable)
         record = InstanceRecord(name=name, composable=composable)
         self._instances[name] = record
         return record
@@ -89,6 +103,7 @@ class BuilderGraph:
         """
         if name not in self._instances:
             raise ValueError(f"unknown instance: {name}")
+        self._validate_instance_composable(name, composable)
         record = InstanceRecord(name=name, composable=composable)
         self._instances[name] = record
         return record

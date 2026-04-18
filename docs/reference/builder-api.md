@@ -39,6 +39,14 @@ builder.assign.Step.total.to().Pipeline.Right.total
 Named descendant hops come from shells preserved across earlier `build()`
 stages; index segments attach to the immediately preceding descendant/leaf.
 
+For registered instances, the fluent surface validates descendant refs eagerly:
+
+- unknown descendant hops reject
+- deep target/source leaves inside a resolved descendant shell reject when the
+  named hole or identifier slot does not exist
+- reused built composables with duplicate full descendant refs reject at
+  `builder.add.<Name>(...)`
+
 ## Handle-oriented API (equivalent semantics)
 
 The same graph can be built with **stable handle objects** instead of a single

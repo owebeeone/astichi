@@ -201,6 +201,52 @@ def test_descendant_target_handles_accumulate_ref_path_across_build_stages() -> 
     )
 
 
+def test_descendant_target_handle_rejects_unknown_registered_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown descendant path `Pipeline\.Missing`",
+    ):
+        _ = stage2.Pipeline.Missing.body
+
+
+def test_deep_target_add_rejects_unknown_leaf_in_registered_shell() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("astichi_hole(slot)\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    stage2.add.Step(astichi.compile("value = 1\n"))
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown target site `Pipeline\.Inner\.missing`",
+    ):
+        stage2.Pipeline.Inner.missing.add.Step()
+
+
+def test_builder_add_rejects_duplicate_descendant_refs_in_reused_build() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("value = 1\n"))
+    stage1.Root.body.add.Inner(order=0)
+    stage1.Root.body.add.Inner(order=1)
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    with pytest.raises(ValueError, match=r"reused build refs must be unique"):
+        stage2.add.Pipeline(built)
+
+
 def test_assign_descendant_target_records_full_ref_path() -> None:
     stage1 = astichi.build()
     stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
@@ -223,3 +269,24 @@ def test_assign_descendant_target_records_full_ref_path() -> None:
             target_ref_path=("Inner",),
         ),
     )
+
+
+def test_assign_descendant_target_rejects_unknown_registered_path_cleanly() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    stage2.add.Step(astichi.compile("astichi_import(total)\nvalue = total + 1\n"))
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"assign target path cannot continue after final outer name "
+            r"`Pipeline\.Missing`"
+        ),
+    ):
+        stage2.assign.Step.total.to().Pipeline.Missing.total
+
+    assert stage2.graph.assigns == ()

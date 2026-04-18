@@ -44,6 +44,16 @@ This applies to:
 - emitted shell refs such as
   `@astichi_insert(body, ref=Pipeline.Parse[1, 2].Normalize)`
 
+Rules:
+
+- A descendant path must resolve to **exactly one** preserved shell on the
+  addressed instance.
+- **Unknown** descendant refs reject.
+- **Ambiguous repeated-use** descendant refs reject; reused built composables
+  must carry unique full `ref=` paths.
+- On already-registered instances, descendant hops are validated eagerly by the
+  fluent builder surface.
+
 ## Loop-expanded indices
 
 When the parent snippet uses **`astichi_for`** over a compile-time domain, the

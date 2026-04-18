@@ -13,7 +13,14 @@ from astichi.builder.graph import (
 )
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
-from astichi.shell_refs import RefPath, next_insert_ref_segments, normalize_ref_path
+from astichi.path_resolution import (
+    ShellIndex,
+    collect_hole_names_in_body,
+    collect_identifier_demands_in_body,
+    collect_identifier_suppliers_in_body,
+    format_instance_leaf,
+)
+from astichi.shell_refs import RefPath, format_ref_path, normalize_ref_path
 
 
 @dataclass(frozen=True)
@@ -49,16 +56,20 @@ class TargetHandle:
         """Advance one descendant hop and leave ``name`` as the new leaf."""
         if name.startswith("_"):
             raise AttributeError(name)
+        candidate_ref = _descend_registered_ref(
+            graph=self.graph,
+            instance_name=self.target.root_instance,
+            ref_path=self.target.ref_path,
+            leaf_name=self.target.target_name,
+            leaf_path=self.target.path,
+            role="descendant path",
+        )
         return TargetHandle(
             graph=self.graph,
             target=TargetRef(
                 root_instance=self.target.root_instance,
                 target_name=name,
-                ref_path=normalize_ref_path(
-                    self.target.ref_path
-                    + (self.target.target_name,)
-                    + self.target.path
-                ),
+                ref_path=candidate_ref,
             ),
         )
 
@@ -212,6 +223,7 @@ class _NamedTargetAdder:
             if arg_names is not None:
                 piece = piece.bind_identifier(arg_names)
             self.graph.replace_instance(self.source_instance, piece)
+        _validate_registered_target_site(self.graph, self.target)
         return self.graph.add_additive_edge(
             target=self.target,
             source_instance=self.source_instance,
@@ -236,18 +248,146 @@ class AddToTargetProxy:
         )
 
 
-def _instance_descendant_segments(
+def _registered_shell_index(
+    graph: BuilderGraph,
+    instance_name: str,
+ ) -> ShellIndex | None:
+    record = graph._instances.get(instance_name)
+    if record is None:
+        return None
+    piece = record.composable
+    if not isinstance(piece, BasicComposable):
+        return None
+    return ShellIndex.from_tree(piece.tree)
+
+
+def _descend_registered_ref(
+    *,
     graph: BuilderGraph,
     instance_name: str,
     ref_path: RefPath,
-) -> frozenset[str | int]:
-    record = graph._instances.get(instance_name)
-    if record is None:
-        return frozenset()
-    piece = record.composable
-    if not isinstance(piece, BasicComposable):
-        return frozenset()
-    return next_insert_ref_segments(piece.tree, normalize_ref_path(ref_path))
+    leaf_name: str,
+    leaf_path: tuple[int, ...],
+    role: str,
+) -> RefPath:
+    candidate_ref = normalize_ref_path(ref_path + (leaf_name,) + leaf_path)
+    shell_index = _registered_shell_index(graph, instance_name)
+    if shell_index is not None:
+        shell_index.resolve(candidate_ref).require(
+            instance_name=instance_name,
+            role=role,
+        )
+    return candidate_ref
+
+
+def _format_target_address(target: TargetRef) -> str:
+    ref_prefix = ""
+    target_ref_path = normalize_ref_path(target.ref_path)
+    if target_ref_path:
+        ref_prefix = f".{format_ref_path(target_ref_path)}"
+    suffix = "".join(f"[{index}]" for index in target.path)
+    return f"{target.root_instance}{ref_prefix}.{target.target_name}{suffix}"
+
+
+def _validate_registered_target_site(
+    graph: BuilderGraph,
+    target: TargetRef,
+) -> None:
+    if not target.ref_path:
+        return
+    shell_index = _registered_shell_index(graph, target.root_instance)
+    if shell_index is None:
+        return
+    shell = shell_index.resolve(target.ref_path).require(
+        instance_name=target.root_instance,
+        role="target path",
+    )
+    if target.target_name in collect_hole_names_in_body(shell.body):
+        return
+    raise ValueError(f"unknown target site `{_format_target_address(target)}`")
+
+
+def _validate_registered_identifier_demand(
+    *,
+    graph: BuilderGraph,
+    instance_name: str,
+    ref_path: RefPath,
+    inner_name: str,
+) -> None:
+    shell_index = _registered_shell_index(graph, instance_name)
+    if shell_index is None:
+        return
+    shell = shell_index.resolve(ref_path).require(
+        instance_name=instance_name,
+        role="assign source path",
+    )
+    if inner_name in collect_identifier_demands_in_body(shell.body):
+        return
+    raise ValueError(
+        "no __astichi_arg__ / astichi_import slot named "
+        f"`{inner_name}` at "
+        f"`{format_instance_leaf(instance_name, ref_path, inner_name)}`"
+    )
+
+
+def _validate_registered_identifier_supplier(
+    *,
+    graph: BuilderGraph,
+    instance_name: str,
+    ref_path: RefPath,
+    outer_name: str,
+) -> None:
+    if not ref_path:
+        return
+    shell_index = _registered_shell_index(graph, instance_name)
+    if shell_index is None:
+        return
+    shell = shell_index.resolve(ref_path).require(
+        instance_name=instance_name,
+        role="assign target path",
+    )
+    if outer_name in collect_identifier_suppliers_in_body(shell.body):
+        return
+    raise ValueError(
+        "no readable supplier named "
+        f"`{outer_name}` at "
+        f"`{format_instance_leaf(instance_name, ref_path, outer_name)}`"
+    )
+
+
+@dataclass(frozen=True)
+class _CommittedAssignBinding:
+    """Finalized assign leaf that can still reject stray extra chaining."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    binding: AssignBinding
+    binding_added: bool
+
+    def __getattr__(self, name: str) -> None:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        self._rollback_if_needed()
+        raise ValueError(
+            "assign target path cannot continue after final outer name "
+            f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`"
+        )
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> None:
+        del key
+        self._rollback_if_needed()
+        raise ValueError(
+            "assign target identifier paths may not continue with index segments "
+            "after final outer name "
+            f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`"
+        )
+
+    def _rollback_if_needed(self) -> None:
+        if not self.binding_added:
+            return
+        for index in range(len(self.graph._assigns) - 1, -1, -1):
+            if self.graph._assigns[index] == self.binding:
+                del self.graph._assigns[index]
+                break
 
 
 @dataclass(frozen=True)
@@ -260,7 +400,6 @@ class _AssignTargetHandle:
     inner_name: str
     target_instance: str
     target_ref_path: RefPath = ()
-    pending_leaf_path: tuple[int, ...] = ()
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "_AssignTargetHandle":
         if isinstance(key, tuple):
@@ -269,40 +408,54 @@ class _AssignTargetHandle:
             items = (key,)
         if any(not isinstance(item, int) for item in items):
             raise TypeError("target path indexes must be integers")
+        if not self.target_ref_path:
+            raise ValueError(
+                "assign target descendant paths may not start with index segments"
+            )
+        candidate_ref = normalize_ref_path(self.target_ref_path + items)
+        shell_index = _registered_shell_index(self.graph, self.target_instance)
+        if shell_index is not None:
+            shell_index.resolve(candidate_ref).require(
+                instance_name=self.target_instance,
+                role="assign target path",
+            )
         return _AssignTargetHandle(
             graph=self.graph,
             source_instance=self.source_instance,
             source_ref_path=self.source_ref_path,
             inner_name=self.inner_name,
             target_instance=self.target_instance,
-            target_ref_path=self.target_ref_path,
-            pending_leaf_path=self.pending_leaf_path + items,
+            target_ref_path=candidate_ref,
         )
 
-    def __getattr__(self, name: str) -> "_AssignTargetHandle | None":
+    def __getattr__(self, name: str) -> "_AssignTargetHandle | _CommittedAssignBinding":
         if name.startswith("_"):
             raise AttributeError(name)
-        descendants = _instance_descendant_segments(
-            self.graph, self.target_instance, self.target_ref_path
+        shell_index = _registered_shell_index(self.graph, self.target_instance)
+        candidate_ref = normalize_ref_path(self.target_ref_path + (name,))
+        if shell_index is not None:
+            resolution = shell_index.resolve(candidate_ref)
+            if resolution.is_resolved():
+                resolution.require(
+                    instance_name=self.target_instance,
+                    role="assign target path",
+                )
+                return _AssignTargetHandle(
+                    graph=self.graph,
+                    source_instance=self.source_instance,
+                    source_ref_path=self.source_ref_path,
+                    inner_name=self.inner_name,
+                    target_instance=self.target_instance,
+                    target_ref_path=candidate_ref,
+                )
+        _validate_registered_identifier_supplier(
+            graph=self.graph,
+            instance_name=self.target_instance,
+            ref_path=self.target_ref_path,
+            outer_name=name,
         )
-        candidate_ref = normalize_ref_path(
-            self.target_ref_path + (name,) + self.pending_leaf_path
-        )
-        if name in descendants:
-            return _AssignTargetHandle(
-                graph=self.graph,
-                source_instance=self.source_instance,
-                source_ref_path=self.source_ref_path,
-                inner_name=self.inner_name,
-                target_instance=self.target_instance,
-                target_ref_path=candidate_ref,
-                pending_leaf_path=(),
-            )
-        if self.pending_leaf_path:
-            raise ValueError(
-                "assign identifier paths may not end with index segments"
-            )
-        self.graph.add_assign(
+        before = len(self.graph._assigns)
+        binding = self.graph.add_assign(
             AssignBinding(
                 source_instance=self.source_instance,
                 inner_name=self.inner_name,
@@ -312,7 +465,11 @@ class _AssignTargetHandle:
                 target_ref_path=normalize_ref_path(self.target_ref_path),
             )
         )
-        return None
+        return _CommittedAssignBinding(
+            graph=self.graph,
+            binding=binding,
+            binding_added=len(self.graph._assigns) > before,
+        )
 
 
 @dataclass(frozen=True)
@@ -371,20 +528,30 @@ class _AssignSourceReady:
     def __getattr__(self, name: str) -> "_AssignSourceReady":
         if name.startswith("_"):
             raise AttributeError(name)
+        candidate_ref = _descend_registered_ref(
+            graph=self.graph,
+            instance_name=self.source_instance,
+            ref_path=self.source_ref_path,
+            leaf_name=self.inner_name,
+            leaf_path=self.leaf_path,
+            role="assign source path",
+        )
         return _AssignSourceReady(
             graph=self.graph,
             source_instance=self.source_instance,
-            source_ref_path=normalize_ref_path(
-                self.source_ref_path + (self.inner_name,) + self.leaf_path
-            ),
+            source_ref_path=candidate_ref,
             inner_name=name,
         )
 
     def to(self) -> _AssignTargetPicker:
+        _validate_registered_identifier_demand(
+            graph=self.graph,
+            instance_name=self.source_instance,
+            ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+        )
         if self.leaf_path:
-            raise ValueError(
-                "assign identifier paths may not end with index segments"
-            )
+            raise ValueError("assign identifier paths may not end with index segments")
         return _AssignTargetPicker(
             graph=self.graph,
             source_instance=self.source_instance,

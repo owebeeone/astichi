@@ -5,6 +5,8 @@ import ast
 import pytest
 
 import astichi
+from astichi.builder.graph import BuilderGraph, TargetRef
+from astichi.materialize import build_merge
 from astichi.model import BasicComposable
 
 
@@ -128,6 +130,29 @@ def test_build_chain_resolution() -> None:
     assert "astichi_hole" not in materialized_src
     assert "astichi_insert" not in materialized_src
     assert materialized_src.index("x = 1") < materialized_src.index("y = 2")
+
+
+def test_build_merge_raw_graph_rejects_unknown_descendant_target_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("astichi_hole(slot)\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    raw = BuilderGraph()
+    raw.add_instance("Pipeline", built)
+    raw.add_instance("Step", astichi.compile("value = 1\n"))
+    raw.add_additive_edge(
+        target=TargetRef(
+            root_instance="Pipeline",
+            target_name="slot",
+            ref_path=("Missing",),
+        ),
+        source_instance="Step",
+    )
+
+    with pytest.raises(ValueError, match=r"unknown target path `Pipeline\.Missing`"):
+        build_merge(raw)
 
 
 def test_build_multistage_deep_order_preserves_inner_ties() -> None:

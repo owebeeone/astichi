@@ -24,9 +24,18 @@ from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import DemandPort, SupplyPort, extract_demand_ports, extract_supply_ports, validate_port_pair
+from astichi.path_resolution import (
+    ShellIndex,
+    boundary_import_statement,
+    collect_hole_names_in_body,
+    collect_identifier_demands_in_body,
+    collect_identifier_suppliers_in_body,
+    extract_block_insert_shell,
+    format_instance_leaf,
+    is_astichi_insert_shell,
+)
 from astichi.shell_refs import (
     RefPath,
-    extract_insert_ref,
     format_ref_path,
     normalize_ref_path,
     prefix_insert_ref,
@@ -59,13 +68,6 @@ class _BlockContribution:
     body: list[ast.stmt]
     shell_name: str
     ref_path: RefPath
-
-
-@dataclass(frozen=True)
-class _BlockInsertShell:
-    target_name: str
-    order: int
-    ref_path: RefPath | None = None
 
 
 _IDENTIFIER_SANITIZER = re.compile(r"[^0-9A-Za-z_]")
@@ -148,6 +150,7 @@ def _apply_assign_bindings(
     assigns: tuple[AssignBinding, ...],
     instance_records: dict[str, InstanceRecord],
     trees: dict[str, ast.Module],
+    shell_indexes: dict[str, ShellIndex],
 ) -> None:
     """Apply ``builder.assign`` wirings to local tree copies shell-locally."""
     published_target_aliases: set[tuple[str, RefPath, str]] = set()
@@ -174,17 +177,24 @@ def _apply_assign_bindings(
                 f"must be a BasicComposable; got {type(piece).__name__}"
             )
         resolved_outer_name = binding.outer_name
-        if target_ref_path:
-            target_tree = trees[binding.target_instance]
-            target_shell_body = _find_shell_body_by_ref(
-                target_tree, target_ref_path
+        target_tree = trees[binding.target_instance]
+        target_shell = shell_indexes[binding.target_instance].resolve(
+            target_ref_path
+        ).require(
+            instance_name=binding.target_instance,
+            role="assign target path",
+        )
+        if (
+            target_ref_path
+            and binding.outer_name
+            not in collect_identifier_suppliers_in_body(target_shell.body)
+        ):
+            raise ValueError(
+                "no readable supplier named "
+                f"`{binding.outer_name}` at "
+                f"`{format_instance_leaf(binding.target_instance, target_ref_path, binding.outer_name)}`"
             )
-            if target_shell_body is None:
-                rendered = format_ref_path(target_ref_path)
-                raise ValueError(
-                    f"builder.assign target path `{binding.target_instance}."
-                    f"{rendered}` has no matching descendant shell"
-                )
+        if target_ref_path:
             alias_key = (
                 binding.target_instance,
                 target_ref_path,
@@ -193,7 +203,7 @@ def _apply_assign_bindings(
             resolved_outer_name = _assign_target_alias_name(binding)
             if alias_key not in published_target_aliases:
                 _publish_assign_target_alias(
-                    target_shell_body,
+                    target_shell.body,
                     source_name=binding.outer_name,
                     alias_name=resolved_outer_name,
                 )
@@ -203,92 +213,32 @@ def _apply_assign_bindings(
                     name=binding.target_instance,
                     composable=target_piece,
                 )
+                shell_indexes[binding.target_instance] = ShellIndex.from_tree(
+                    target_tree
+                )
         source_tree = trees[binding.source_instance]
-        shell_body = _find_shell_body_by_ref(source_tree, source_ref_path)
-        if shell_body is None:
-            rendered = format_ref_path(source_ref_path)
-            raise ValueError(
-                f"builder.assign source path `{binding.source_instance}."
-                f"{rendered}` has no matching descendant shell"
-            )
-        local_demands = _collect_identifier_demands_in_body(shell_body)
+        source_shell = shell_indexes[binding.source_instance].resolve(
+            source_ref_path
+        ).require(
+            instance_name=binding.source_instance,
+            role="assign source path",
+        )
+        local_demands = collect_identifier_demands_in_body(source_shell.body)
         if binding.inner_name not in local_demands:
             raise ValueError(
                 f"no __astichi_arg__ / astichi_import slot named "
-                f"`{binding.inner_name}`"
+                f"`{binding.inner_name}` at "
+                f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`"
             )
         _rewrite_identifier_demands_in_body(
-            shell_body,
+            source_shell.body,
             {binding.inner_name: resolved_outer_name},
         )
         piece = _refresh_composable(piece, source_tree)
         instance_records[binding.source_instance] = InstanceRecord(
             name=binding.source_instance, composable=piece
         )
-
-
-def _find_shell_body_by_ref(
-    tree: ast.Module,
-    ref_path: RefPath,
-) -> list[ast.stmt] | None:
-    ref_path = normalize_ref_path(ref_path)
-    if not ref_path:
-        return tree.body
-    matches: list[list[ast.stmt]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        info = _extract_block_insert_shell(node)
-        if info is None or info.ref_path != ref_path:
-            continue
-        matches.append(node.body)
-    if len(matches) > 1:
-        raise ValueError(
-            f"ambiguous descendant shell ref `{format_ref_path(ref_path)}`"
-        )
-    return matches[0] if matches else None
-
-
-def _collect_identifier_demands_in_body(body: list[ast.stmt]) -> frozenset[str]:
-    names: set[str] = set()
-    for statement in body:
-        info = _boundary_import_statement(statement)
-        if info is None:
-            break
-        names.add(info[0])
-
-    class _Collector(ast.NodeVisitor):
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            if _is_astichi_insert_shell(node):
-                return
-            self._check(node.name)
-            self.generic_visit(node)
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            if _is_astichi_insert_shell(node):
-                return
-            self._check(node.name)
-            self.generic_visit(node)
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self._check(node.name)
-            self.generic_visit(node)
-
-        def visit_Name(self, node: ast.Name) -> None:
-            self._check(node.id)
-
-        def visit_arg(self, node: ast.arg) -> None:
-            self._check(node.arg)
-
-        def _check(self, raw_name: str) -> None:
-            base, marker = strip_identifier_suffix(raw_name)
-            if marker is ARG_IDENTIFIER:
-                names.add(base)
-
-    collector = _Collector()
-    for statement in body:
-        collector.visit(statement)
-    return frozenset(names)
+        shell_indexes[binding.source_instance] = ShellIndex.from_tree(source_tree)
 
 
 def _rewrite_identifier_demands_in_body(
@@ -298,7 +248,7 @@ def _rewrite_identifier_demands_in_body(
     arg_resolver = _ShellArgIdentifierResolver(bindings)
     import_resolver = _BoundaryImportRenamer(bindings)
     for index, statement in enumerate(body):
-        info = _boundary_import_statement(statement)
+        info = boundary_import_statement(statement)
         if info is not None and info[0] in bindings:
             _rewrite_boundary_import_name(statement, bindings[info[0]])
         rewritten = arg_resolver.visit(statement)
@@ -358,13 +308,13 @@ class _ShellArgIdentifierResolver(ast.NodeTransformer):
         return self._bindings.get(base, raw_name)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        if _is_astichi_insert_shell(node):
+        if is_astichi_insert_shell(node):
             return node
         node.name = self._resolve(node.name)
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        if _is_astichi_insert_shell(node):
+        if is_astichi_insert_shell(node):
             return node
         node.name = self._resolve(node.name)
         return self.generic_visit(node)
@@ -418,6 +368,7 @@ def build_merge(
 
     trees: dict[str, ast.Module] = {}
     instance_records: dict[str, InstanceRecord] = {}
+    shell_indexes: dict[str, ShellIndex] = {}
     for record in graph.instances:
         if not isinstance(record.composable, BasicComposable):
             raise TypeError(
@@ -431,8 +382,9 @@ def build_merge(
             composable = record.composable
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
-            name=record.name, composable=composable
+                name=record.name, composable=composable
         )
+        shell_indexes[record.name] = ShellIndex.from_tree(tree)
 
     # Issue 006 6c (assign surface):
     # ``builder.assign.<Src>.<inner>.to().<Dst>.<outer>`` declarations
@@ -441,7 +393,7 @@ def build_merge(
     # ``target.add.<Src>(arg_names=...)`` surface, the assign surface
     # never mutates the graph's instance records; the wiring is held as
     # ``AssignBinding`` records on the graph and applied fresh here.
-    _apply_assign_bindings(graph.assigns, instance_records, trees)
+    _apply_assign_bindings(graph.assigns, instance_records, trees, shell_indexes)
 
     edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
@@ -471,6 +423,19 @@ def build_merge(
         ), indexed_edges in edges_by_target.items():
             if root != inst_name:
                 continue
+            target_shell = shell_indexes[inst_name].resolve(target_ref_path).require(
+                instance_name=inst_name,
+                role="target path",
+            )
+            if (
+                target_ref_path
+                and effective_target_name
+                not in collect_hole_names_in_body(target_shell.body)
+            ):
+                raise ValueError(
+                    f"unknown target site "
+                    f"`{format_instance_leaf(inst_name, target_ref_path, effective_target_name)}`"
+                )
             target_record = instance_records[inst_name]
             target_port = _lookup_demand_port(
                 target_record.composable, effective_target_name
@@ -1274,47 +1239,6 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         bound_externals=composable.bound_externals,
         keep_names=effective_keep_names,
     )
-
-
-def _extract_block_insert_shell(stmt: ast.stmt) -> _BlockInsertShell | None:
-    """Return block-insert metadata for an `astichi_insert`-decorated def.
-
-    A block-form `astichi_insert` has a single positional argument (the
-    target name, as a bare `ast.Name`) and may carry an optional
-    integer `order=` keyword and structured `ref=` path.
-    """
-    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    for decorator in stmt.decorator_list:
-        if not isinstance(decorator, ast.Call):
-            continue
-        if not isinstance(decorator.func, ast.Name):
-            continue
-        if decorator.func.id != "astichi_insert":
-            continue
-        if len(decorator.args) != 1:
-            continue
-        first_arg = decorator.args[0]
-        if not isinstance(first_arg, ast.Name):
-            continue
-        order = 0
-        for keyword in decorator.keywords:
-            if keyword.arg == "order":
-                if not isinstance(keyword.value, ast.Constant) or not isinstance(
-                    keyword.value.value, int
-                ):
-                    raise ValueError(
-                        "astichi_insert order must be an integer constant"
-                    )
-                order = keyword.value.value
-        return _BlockInsertShell(
-            target_name=first_arg.id,
-            order=order,
-            ref_path=extract_insert_ref(decorator),
-        )
-    return None
-
-
 def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
     """Prefix every builder-carried shell ref inside ``body`` in-place."""
 
@@ -1330,7 +1254,7 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
         def _prefix_node(
             self, node: ast.FunctionDef | ast.AsyncFunctionDef
         ) -> None:
-            info = _extract_block_insert_shell(node)
+            info = extract_block_insert_shell(node)
             if info is None or info.ref_path is None:
                 return
             for decorator in node.decorator_list:
@@ -1373,7 +1297,7 @@ def _replace_targets_in_tree(
                 expr_replacements=local_expr,
             )
         for stmt in body:
-            info = _extract_block_insert_shell(stmt)
+            info = extract_block_insert_shell(stmt)
             if info is None or not isinstance(
                 stmt, (ast.FunctionDef, ast.AsyncFunctionDef)
             ):
@@ -1410,7 +1334,7 @@ def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
                 hole_name = _extract_hole_name(stmt)
                 if hole_name is not None:
                     holes.add(hole_name)
-                info = _extract_block_insert_shell(stmt)
+                info = extract_block_insert_shell(stmt)
                 if info is not None:
                     lineno = getattr(stmt, "lineno", 0) or 0
                     shells.append((info.target_name, lineno))
@@ -1488,7 +1412,7 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                 hole_name = _extract_hole_name(stmt)
                 if hole_name is not None:
                     holes.add(hole_name)
-                info = _extract_block_insert_shell(stmt)
+                info = extract_block_insert_shell(stmt)
                 if info is not None:
                     shells.add(info.target_name)
             matched.update(holes & shells)
@@ -1775,7 +1699,7 @@ def _resolve_boundary_imports(
         if not local_map:
             continue
         for statement in shell_node.body:
-            info = _boundary_import_statement(statement)
+            info = boundary_import_statement(statement)
             if info is not None and info[0] in local_map:
                 _rewrite_boundary_import_name(statement, local_map[info[0]])
                 continue
@@ -1804,28 +1728,13 @@ def _declared_imports_at_shell_top(
 ) -> frozenset[str]:
     names: set[str] = set()
     for statement in shell.body:
-        info = _boundary_import_statement(statement)
+        info = boundary_import_statement(statement)
         if info is None:
             break
         names.add(info[0])
     return frozenset(names)
-
-
-def _boundary_import_statement(stmt: ast.stmt) -> tuple[str, ast.Call] | None:
-    if not isinstance(stmt, ast.Expr):
-        return None
-    value = stmt.value
-    if not isinstance(value, ast.Call):
-        return None
-    if not isinstance(value.func, ast.Name) or value.func.id != "astichi_import":
-        return None
-    if not value.args or not isinstance(value.args[0], ast.Name):
-        return None
-    return value.args[0].id, value
-
-
 def _rewrite_boundary_import_name(stmt: ast.stmt, new_name: str) -> None:
-    info = _boundary_import_statement(stmt)
+    info = boundary_import_statement(stmt)
     assert info is not None, "caller must pre-check the statement"
     _, call = info
     target = call.args[0]
@@ -1847,17 +1756,17 @@ class _BoundaryImportRenamer(ast.NodeTransformer):
         self._rename_map = rename_map
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        if _is_astichi_insert_shell(node):
+        if is_astichi_insert_shell(node):
             return node
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        if _is_astichi_insert_shell(node):
+        if is_astichi_insert_shell(node):
             return node
         return self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        if _is_astichi_insert_shell(node):
+        if is_astichi_insert_shell(node):
             return node
         return self.generic_visit(node)
 
@@ -1872,21 +1781,6 @@ class _BoundaryImportRenamer(ast.NodeTransformer):
         if replacement is not None:
             node.arg = replacement
         return self.generic_visit(node)
-
-
-def _is_astichi_insert_shell(
-    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
-) -> bool:
-    for decorator in node.decorator_list:
-        if (
-            isinstance(decorator, ast.Call)
-            and isinstance(decorator.func, ast.Name)
-            and decorator.func.id == "astichi_insert"
-        ):
-            return True
-    return False
-
-
 def _assert_no_arg_suffix_remains(tree: ast.AST) -> None:
     """Sanity check that the arg-resolver + gate cover every occurrence.
 
@@ -1944,7 +1838,7 @@ def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:
     """Splice sibling `astichi_insert` shells into their matching hole positions."""
     shells_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]] = {}
     for index, stmt in enumerate(body):
-        info = _extract_block_insert_shell(stmt)
+        info = extract_block_insert_shell(stmt)
         if info is None:
             continue
         target = info.target_name
