@@ -1,0 +1,229 @@
+"""Helpers for structured build-path refs on Astichi insert shells."""
+
+from __future__ import annotations
+
+import ast
+from typing import TypeAlias
+
+RefSegment: TypeAlias = str | int
+RefPath: TypeAlias = tuple[RefSegment, ...]
+
+
+def format_ref_path(path: RefPath) -> str:
+    """Render a mixed ref path in a compact diagnostic form."""
+    path = normalize_ref_path(path)
+    if not path:
+        return "<root>"
+    parts: list[str] = []
+    for segment in path:
+        if isinstance(segment, int):
+            parts.append(f"[{segment}]")
+        else:
+            if not parts:
+                parts.append(segment)
+            elif parts[-1].startswith("["):
+                parts.append(f".{segment}")
+            else:
+                parts.append(f".{segment}")
+    return "".join(parts)
+
+
+def normalize_ref_path(path: RefPath) -> RefPath:
+    """Canonicalize a ref path to name-first fluent order.
+
+    The V3 public/source form is fluent (`Foo.Parse[1, 2]`), so the
+    canonical internal layout is also name-first:
+
+    - name segments stay in-order
+    - index segments follow the name they qualify
+
+    Older intermediate tuples may still carry an initial index run
+    (`(0, 'Foo')`); normalize those to the fluent shape (`('Foo', 0)`).
+    """
+    if not path:
+        return path
+    if isinstance(path[0], str):
+        return path
+    split = 0
+    while split < len(path) and isinstance(path[split], int):
+        split += 1
+    if split == len(path):
+        raise ValueError(
+            "astichi_insert ref paths may not contain only index segments"
+        )
+    first_name = path[split]
+    assert isinstance(first_name, str)
+    return (first_name,) + path[:split] + path[split + 1 :]
+
+
+def ref_path_to_ast(path: RefPath) -> ast.expr:
+    """Encode a canonical ref path as fluent Python AST."""
+    path = normalize_ref_path(path)
+    if not path:
+        raise ValueError("astichi_insert ref path may not be empty")
+    expr: ast.expr | None = None
+    index_run: list[int] = []
+    for segment in path:
+        if isinstance(segment, int):
+            index_run.append(segment)
+            continue
+        if expr is None:
+            expr = ast.Name(id=segment, ctx=ast.Load())
+        else:
+            if index_run:
+                expr = _apply_index_run(expr, tuple(index_run))
+                index_run.clear()
+            expr = ast.Attribute(value=expr, attr=segment, ctx=ast.Load())
+    if expr is None:
+        raise ValueError("astichi_insert ref path must contain a name segment")
+    if index_run:
+        expr = _apply_index_run(expr, tuple(index_run))
+    return expr
+
+
+def parse_ref_path_literal(node: ast.AST) -> RefPath:
+    """Decode a ref path from fluent syntax or a legacy tuple literal."""
+    if isinstance(node, ast.Tuple):
+        return normalize_ref_path(
+            tuple(_parse_ref_segment(elt) for elt in node.elts)
+        )
+    components = _parse_ref_components(node)
+    path: list[RefSegment] = []
+    for name, indices in components:
+        path.append(name)
+        path.extend(indices)
+    return tuple(path)
+
+
+def extract_insert_ref(call: ast.Call) -> RefPath | None:
+    """Return the structured ``ref=...`` path from an insert call, if present."""
+    seen: RefPath | None = None
+    for keyword in call.keywords:
+        if keyword.arg != "ref":
+            continue
+        if seen is not None:
+            raise ValueError("astichi_insert may not repeat the `ref=` keyword")
+        seen = parse_ref_path_literal(keyword.value)
+    return seen
+
+
+def set_insert_ref(call: ast.Call, path: RefPath) -> None:
+    """Set or replace the structured ``ref=...`` keyword on an insert call."""
+    new_keyword = ast.keyword(arg="ref", value=ref_path_to_ast(path))
+    for index, keyword in enumerate(call.keywords):
+        if keyword.arg == "ref":
+            call.keywords[index] = new_keyword
+            return
+    call.keywords.append(new_keyword)
+
+
+def prefix_insert_ref(call: ast.Call, prefix: RefPath) -> None:
+    """Prefix an existing insert ``ref=...`` path in-place if present."""
+    existing = extract_insert_ref(call)
+    if existing is None:
+        return
+    set_insert_ref(call, normalize_ref_path(prefix + existing))
+
+
+def iter_insert_shell_ref_paths(tree: ast.AST) -> tuple[RefPath, ...]:
+    """Return every structured shell ref carried by insert-decorated shells."""
+    refs: list[RefPath] = []
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            if not isinstance(decorator.func, ast.Name):
+                continue
+            if decorator.func.id != "astichi_insert":
+                continue
+            ref = extract_insert_ref(decorator)
+            if ref is not None:
+                refs.append(ref)
+            break
+    return tuple(refs)
+
+
+def next_insert_ref_segments(tree: ast.AST, prefix: RefPath) -> frozenset[RefSegment]:
+    """Return the direct child segments under ``prefix`` in the shell ref tree."""
+    prefix = normalize_ref_path(prefix)
+    next_segments: set[RefSegment] = set()
+    prefix_len = len(prefix)
+    for ref in iter_insert_shell_ref_paths(tree):
+        if len(ref) <= prefix_len:
+            continue
+        if ref[:prefix_len] != prefix:
+            continue
+        next_segments.add(ref[prefix_len])
+    return frozenset(next_segments)
+
+
+def _parse_ref_segment(node: ast.AST) -> RefSegment:
+    if not isinstance(node, ast.Constant):
+        raise ValueError(
+            "astichi_insert ref must be a fluent path expression "
+            "or a tuple literal of str/int segments"
+        )
+    value = node.value
+    if isinstance(value, bool):
+        raise ValueError(
+            "astichi_insert ref segments must be str/int literals, got bool"
+        )
+    if isinstance(value, (str, int)):
+        return value
+    raise ValueError(
+        "astichi_insert ref segments must be str/int literals"
+    )
+
+
+def _apply_index_run(expr: ast.expr, indices: tuple[int, ...]) -> ast.expr:
+    if len(indices) == 1:
+        slice_node: ast.expr = ast.Constant(value=indices[0])
+    else:
+        slice_node = ast.Tuple(
+            elts=[ast.Constant(value=index) for index in indices],
+            ctx=ast.Load(),
+        )
+    return ast.Subscript(value=expr, slice=slice_node, ctx=ast.Load())
+
+
+def _parse_ref_components(node: ast.AST) -> list[tuple[str, tuple[int, ...]]]:
+    if isinstance(node, ast.Name):
+        return [(node.id, ())]
+    if isinstance(node, ast.Attribute):
+        components = _parse_ref_components(node.value)
+        components.append((node.attr, ()))
+        return components
+    if isinstance(node, ast.Subscript):
+        components = _parse_ref_components(node.value)
+        if not components:
+            raise ValueError(
+                "astichi_insert ref subscript must follow a named path segment"
+            )
+        name, existing = components[-1]
+        components[-1] = (name, existing + _parse_subscript_indices(node.slice))
+        return components
+    raise ValueError(
+        "astichi_insert ref must be a fluent path expression "
+        "or a tuple literal of str/int segments"
+    )
+
+
+def _parse_subscript_indices(node: ast.AST) -> tuple[int, ...]:
+    if isinstance(node, ast.Tuple):
+        indices = tuple(_parse_index_segment(elt) for elt in node.elts)
+    else:
+        indices = (_parse_index_segment(node),)
+    if not indices:
+        raise ValueError("astichi_insert ref index groups may not be empty")
+    return indices
+
+
+def _parse_index_segment(node: ast.AST) -> int:
+    segment = _parse_ref_segment(node)
+    if not isinstance(segment, int):
+        raise ValueError("astichi_insert ref indexes must be integer literals")
+    return segment

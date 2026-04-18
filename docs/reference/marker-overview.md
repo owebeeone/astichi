@@ -23,7 +23,7 @@ astichi_bind_external(name)
 astichi_keep(name)
 astichi_export(name)
 astichi_for(domain)
-@astichi_insert(target, order=…)
+@astichi_insert(target, order=…, ref=…)
 ```
 
 ## Identifier arguments

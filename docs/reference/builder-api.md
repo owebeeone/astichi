@@ -28,6 +28,17 @@ builder.A.third.add.B(order=10)
 result = builder.build()
 ```
 
+Descendant addressing uses the same fluent path shape:
+
+```python
+builder.Pipeline.Parse.body.add.Step(order=0)
+builder.Pipeline.Parse.rows[1, 2].Normalize.body.add.Step(order=10)
+builder.assign.Step.total.to().Pipeline.Right.total
+```
+
+Named descendant hops come from shells preserved across earlier `build()`
+stages; index segments attach to the immediately preceding descendant/leaf.
+
 ## Handle-oriented API (equivalent semantics)
 
 The same graph can be built with **stable handle objects** instead of a single

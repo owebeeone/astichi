@@ -20,7 +20,8 @@ def test_build_simple_block_hole_replacement() -> None:
     rendered = ast.unparse(result.tree)
     assert "value = 1" in rendered
     assert "astichi_hole(body)" in rendered
-    assert "@astichi_insert(body)" in rendered
+    assert "@astichi_insert(body" in rendered
+    assert "ref=B" in rendered
     assert [p.name for p in result.demand_ports] == []
 
     materialized = result.materialize()
@@ -43,7 +44,8 @@ def test_build_preserves_surrounding_code() -> None:
     assert "z = 3" in rendered
     assert "y = 2" in rendered
     assert "astichi_hole(body)" in rendered
-    assert "@astichi_insert(body)" in rendered
+    assert "@astichi_insert(body" in rendered
+    assert "ref=B" in rendered
 
     materialized_src = ast.unparse(result.materialize().tree)
     assert "x = 1" in materialized_src
@@ -114,8 +116,10 @@ def test_build_chain_resolution() -> None:
     assert "y = 2" in rendered
     assert "astichi_hole(outer)" in rendered
     assert "astichi_hole(inner)" in rendered
-    assert "@astichi_insert(outer)" in rendered
-    assert "@astichi_insert(inner)" in rendered
+    assert "@astichi_insert(outer" in rendered
+    assert "@astichi_insert(inner" in rendered
+    assert "ref=B" in rendered
+    assert "ref=B.C" in rendered
     assert [p.name for p in result.demand_ports] == []
 
     materialized_src = ast.unparse(result.materialize().tree)
@@ -124,6 +128,32 @@ def test_build_chain_resolution() -> None:
     assert "astichi_hole" not in materialized_src
     assert "astichi_insert" not in materialized_src
     assert materialized_src.index("x = 1") < materialized_src.index("y = 2")
+
+
+def test_build_multistage_deep_order_preserves_inner_ties() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Mid(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.First(astichi.compile("first_marker = 1\n"))
+    stage1.add.Second(astichi.compile("second_marker = 2\n"))
+    stage1.Root.body.add.Mid(order=0)
+    stage1.Mid.body.add.First(order=5)
+    stage1.Mid.body.add.Second(order=5)
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Outer(astichi.compile("astichi_hole(body)\n"))
+    stage2.add.Before(astichi.compile("before_marker = 0\n"))
+    stage2.add.After(astichi.compile("after_marker = 3\n"))
+    stage2.add.Nested(built)
+    stage2.Outer.body.add.Before(order=0)
+    stage2.Outer.body.add.Nested(order=1)
+    stage2.Outer.body.add.After(order=2)
+
+    source = stage2.build().materialize().emit(provenance=False)
+    assert source.index("before_marker = 0") < source.index("first_marker = 1")
+    assert source.index("first_marker = 1") < source.index("second_marker = 2")
+    assert source.index("second_marker = 2") < source.index("after_marker = 3")
 
 
 def test_build_no_edges_concatenates_bodies() -> None:
@@ -181,8 +211,10 @@ def test_indexed_edge_autounrolls_and_routes_per_index() -> None:
     # Loop is gone after auto-unroll, and each synthetic slot got its
     # own contribution.
     assert "astichi_for" not in rendered
-    assert "@astichi_insert(slot__iter_0)" in rendered
-    assert "@astichi_insert(slot__iter_1)" in rendered
+    assert "@astichi_insert(slot__iter_0" in rendered
+    assert "@astichi_insert(slot__iter_1" in rendered
+    assert "ref=B0[0]" in rendered
+    assert "ref=B1[1]" in rendered
     assert "zero = 0" in rendered
     assert "one = 1" in rendered
     assert [p.name for p in result.demand_ports] == []

@@ -16,6 +16,7 @@ from astichi.asttools import (
     SCALAR_EXPR,
     MarkerShape,
 )
+from astichi.shell_refs import parse_ref_path_literal
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,13 @@ class _InsertMarker(MarkerSpec):
             raise ValueError(
                 "astichi_insert requires a bare identifier as the target argument"
             )
+        for keyword in node.keywords:
+            if keyword.arg == "ref":
+                if len(node.args) != 1:
+                    raise ValueError(
+                        "astichi_insert ref= is only valid on decorator-form shells"
+                    )
+                parse_ref_path_literal(keyword.value)
 
 
 HOLE = _HoleMarker()

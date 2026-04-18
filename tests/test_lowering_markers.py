@@ -62,6 +62,16 @@ def insert_block():
     assert compiled.markers[-1].context == "decorator"
 
 
+def test_insert_ref_accepts_fluent_descendant_path_syntax() -> None:
+    astichi.compile(
+        """
+@astichi_insert(target, ref=Foo.Parse[1, 2].Normalize)
+def insert_block():
+    return 1
+"""
+    )
+
+
 def test_marker_recognition_is_bare_name_only() -> None:
     compiled = astichi.compile(
         """

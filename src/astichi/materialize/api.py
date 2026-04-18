@@ -24,6 +24,14 @@ from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import DemandPort, SupplyPort, extract_demand_ports, extract_supply_ports, validate_port_pair
+from astichi.shell_refs import (
+    RefPath,
+    extract_insert_ref,
+    format_ref_path,
+    normalize_ref_path,
+    prefix_insert_ref,
+    set_insert_ref,
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,14 @@ class _BlockContribution:
     edge_index: int
     body: list[ast.stmt]
     shell_name: str
+    ref_path: RefPath
+
+
+@dataclass(frozen=True)
+class _BlockInsertShell:
+    target_name: str
+    order: int
+    ref_path: RefPath | None = None
 
 
 _IDENTIFIER_SANITIZER = re.compile(r"[^0-9A-Za-z_]")
@@ -66,8 +82,15 @@ def _sanitize_for_identifier(raw: str) -> str:
 
 def _format_target_address(edge: AdditiveEdge) -> str:
     """Human-readable `root.slot[i][j]` form for diagnostics."""
+    ref_prefix = ""
+    target_ref_path = normalize_ref_path(edge.target.ref_path)
+    if target_ref_path:
+        ref_prefix = f".{format_ref_path(target_ref_path)}"
     suffix = "".join(f"[{i}]" for i in edge.target.path)
-    return f"{edge.target.root_instance}.{edge.target.target_name}{suffix}"
+    return (
+        f"{edge.target.root_instance}{ref_prefix}."
+        f"{edge.target.target_name}{suffix}"
+    )
 
 
 def _refresh_composable(
@@ -76,9 +99,18 @@ def _refresh_composable(
     """Re-extract markers/classification/ports against an unrolled tree."""
     markers = recognize_markers(tree)
     provisional = BasicComposable(
-        tree=tree, origin=original.origin, markers=markers
+        tree=tree,
+        origin=original.origin,
+        markers=markers,
+        bound_externals=original.bound_externals,
+        arg_bindings=original.arg_bindings,
+        keep_names=original.keep_names,
     )
-    classification = analyze_names(provisional, mode="permissive")
+    classification = analyze_names(
+        provisional,
+        mode="permissive",
+        preserved_names=original.keep_names,
+    )
     return BasicComposable(
         tree=tree,
         origin=original.origin,
@@ -86,15 +118,18 @@ def _refresh_composable(
         classification=classification,
         demand_ports=extract_demand_ports(markers, classification),
         supply_ports=extract_supply_ports(markers),
+        bound_externals=original.bound_externals,
+        arg_bindings=original.arg_bindings,
+        keep_names=original.keep_names,
     )
 
 
 def _validate_indexed_targets(
-    edges_by_target: dict[tuple[str, str], list[tuple[int, AdditiveEdge]]],
+    edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]],
     instance_records: dict[str, InstanceRecord],
 ) -> None:
     """Reject indexed edges whose post-unroll hole does not exist."""
-    for (root, effective_name), indexed_edges in edges_by_target.items():
+    for (root, _ref_path, effective_name), indexed_edges in edges_by_target.items():
         origin_edge = indexed_edges[0][1]
         if not origin_edge.target.path:
             continue
@@ -112,28 +147,13 @@ def _validate_indexed_targets(
 def _apply_assign_bindings(
     assigns: tuple[AssignBinding, ...],
     instance_records: dict[str, InstanceRecord],
+    trees: dict[str, ast.Module],
 ) -> None:
-    """Apply ``builder.assign`` wirings to local instance-record copies.
-
-    Issue 006 6c (assign surface): each ``AssignBinding`` becomes a
-    ``{inner_name: outer_name}`` entry on the source instance's
-    ``arg_bindings`` (via ``BasicComposable.bind_identifier``). The
-    surface validates fully-qualified names here rather than at the
-    ``builder.assign....`` call site so the user can declare wirings
-    against instances that have not yet been registered.
-
-    Validation performed here:
-
-    - ``source_instance`` is registered and carries a demand for
-      ``inner_name`` from either ``__astichi_arg__`` (005) or
-      ``astichi_import`` (006);
-    - ``target_instance`` is registered; cross-instance supply-side
-      validation (i.e. that ``target_instance`` actually publishes
-      ``outer_name``) is deferred to existing port / hygiene checks on
-      the merged tree, because ``outer_name`` may be a keep_name, an
-      ``astichi_export`` supply, or a free module-scope binding.
-    """
+    """Apply ``builder.assign`` wirings to local tree copies shell-locally."""
+    published_target_aliases: set[tuple[str, RefPath, str]] = set()
     for binding in assigns:
+        source_ref_path = normalize_ref_path(binding.source_ref_path)
+        target_ref_path = normalize_ref_path(binding.target_ref_path)
         src = instance_records.get(binding.source_instance)
         if src is None:
             raise ValueError(
@@ -153,10 +173,213 @@ def _apply_assign_bindings(
                 f"builder.assign source instance `{binding.source_instance}` "
                 f"must be a BasicComposable; got {type(piece).__name__}"
             )
-        piece = piece.bind_identifier({binding.inner_name: binding.outer_name})
+        resolved_outer_name = binding.outer_name
+        if target_ref_path:
+            target_tree = trees[binding.target_instance]
+            target_shell_body = _find_shell_body_by_ref(
+                target_tree, target_ref_path
+            )
+            if target_shell_body is None:
+                rendered = format_ref_path(target_ref_path)
+                raise ValueError(
+                    f"builder.assign target path `{binding.target_instance}."
+                    f"{rendered}` has no matching descendant shell"
+                )
+            alias_key = (
+                binding.target_instance,
+                target_ref_path,
+                binding.outer_name,
+            )
+            resolved_outer_name = _assign_target_alias_name(binding)
+            if alias_key not in published_target_aliases:
+                _publish_assign_target_alias(
+                    target_shell_body,
+                    source_name=binding.outer_name,
+                    alias_name=resolved_outer_name,
+                )
+                published_target_aliases.add(alias_key)
+                target_piece = _refresh_composable(dst.composable, target_tree)
+                instance_records[binding.target_instance] = InstanceRecord(
+                    name=binding.target_instance,
+                    composable=target_piece,
+                )
+        source_tree = trees[binding.source_instance]
+        shell_body = _find_shell_body_by_ref(source_tree, source_ref_path)
+        if shell_body is None:
+            rendered = format_ref_path(source_ref_path)
+            raise ValueError(
+                f"builder.assign source path `{binding.source_instance}."
+                f"{rendered}` has no matching descendant shell"
+            )
+        local_demands = _collect_identifier_demands_in_body(shell_body)
+        if binding.inner_name not in local_demands:
+            raise ValueError(
+                f"no __astichi_arg__ / astichi_import slot named "
+                f"`{binding.inner_name}`"
+            )
+        _rewrite_identifier_demands_in_body(
+            shell_body,
+            {binding.inner_name: resolved_outer_name},
+        )
+        piece = _refresh_composable(piece, source_tree)
         instance_records[binding.source_instance] = InstanceRecord(
             name=binding.source_instance, composable=piece
         )
+
+
+def _find_shell_body_by_ref(
+    tree: ast.Module,
+    ref_path: RefPath,
+) -> list[ast.stmt] | None:
+    ref_path = normalize_ref_path(ref_path)
+    if not ref_path:
+        return tree.body
+    matches: list[list[ast.stmt]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        info = _extract_block_insert_shell(node)
+        if info is None or info.ref_path != ref_path:
+            continue
+        matches.append(node.body)
+    if len(matches) > 1:
+        raise ValueError(
+            f"ambiguous descendant shell ref `{format_ref_path(ref_path)}`"
+        )
+    return matches[0] if matches else None
+
+
+def _collect_identifier_demands_in_body(body: list[ast.stmt]) -> frozenset[str]:
+    names: set[str] = set()
+    for statement in body:
+        info = _boundary_import_statement(statement)
+        if info is None:
+            break
+        names.add(info[0])
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if _is_astichi_insert_shell(node):
+                return
+            self._check(node.name)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if _is_astichi_insert_shell(node):
+                return
+            self._check(node.name)
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self._check(node.name)
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            self._check(node.id)
+
+        def visit_arg(self, node: ast.arg) -> None:
+            self._check(node.arg)
+
+        def _check(self, raw_name: str) -> None:
+            base, marker = strip_identifier_suffix(raw_name)
+            if marker is ARG_IDENTIFIER:
+                names.add(base)
+
+    collector = _Collector()
+    for statement in body:
+        collector.visit(statement)
+    return frozenset(names)
+
+
+def _rewrite_identifier_demands_in_body(
+    body: list[ast.stmt],
+    bindings: dict[str, str],
+) -> None:
+    arg_resolver = _ShellArgIdentifierResolver(bindings)
+    import_resolver = _BoundaryImportRenamer(bindings)
+    for index, statement in enumerate(body):
+        info = _boundary_import_statement(statement)
+        if info is not None and info[0] in bindings:
+            _rewrite_boundary_import_name(statement, bindings[info[0]])
+        rewritten = arg_resolver.visit(statement)
+        if rewritten is None:
+            continue
+        assert isinstance(rewritten, ast.stmt)
+        body[index] = import_resolver.visit(rewritten)
+
+
+def _assign_target_alias_name(binding: AssignBinding) -> str:
+    target_ref_path = normalize_ref_path(binding.target_ref_path)
+    parts = [
+        "__astichi_assign",
+        "inst",
+        _sanitize_for_identifier(binding.target_instance),
+    ]
+    for segment in target_ref_path:
+        if isinstance(segment, int):
+            parts.extend(("idx", str(segment)))
+        else:
+            parts.extend(("ref", _sanitize_for_identifier(segment)))
+    parts.extend(("name", _sanitize_for_identifier(binding.outer_name)))
+    return "__".join(parts)
+
+
+def _publish_assign_target_alias(
+    body: list[ast.stmt],
+    *,
+    source_name: str,
+    alias_name: str,
+) -> None:
+    body.extend(
+        (
+            ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="astichi_pass", ctx=ast.Load()),
+                    args=[ast.Name(id=alias_name, ctx=ast.Load())],
+                    keywords=[],
+                )
+            ),
+            ast.Assign(
+                targets=[ast.Name(id=alias_name, ctx=ast.Store())],
+                value=ast.Name(id=source_name, ctx=ast.Load()),
+            ),
+        )
+    )
+
+
+class _ShellArgIdentifierResolver(ast.NodeTransformer):
+    def __init__(self, bindings: dict[str, str]) -> None:
+        self._bindings = bindings
+
+    def _resolve(self, raw_name: str) -> str:
+        base, marker = strip_identifier_suffix(raw_name)
+        if marker is not ARG_IDENTIFIER:
+            return raw_name
+        return self._bindings.get(base, raw_name)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        if _is_astichi_insert_shell(node):
+            return node
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        if _is_astichi_insert_shell(node):
+            return node
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        node.name = self._resolve(node.name)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        node.id = self._resolve(node.id)
+        return node
+
+    def visit_arg(self, node: ast.arg) -> ast.AST:
+        node.arg = self._resolve(node.arg)
+        return self.generic_visit(node)
 
 
 def build_merge(
@@ -218,14 +441,18 @@ def build_merge(
     # ``target.add.<Src>(arg_names=...)`` surface, the assign surface
     # never mutates the graph's instance records; the wiring is held as
     # ``AssignBinding`` records on the graph and applied fresh here.
-    _apply_assign_bindings(graph.assigns, instance_records)
+    _apply_assign_bindings(graph.assigns, instance_records, trees)
 
-    edges_by_target: dict[tuple[str, str], list[tuple[int, AdditiveEdge]]] = {}
+    edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
         effective_name = iter_target_name(
             edge.target.target_name, edge.target.path
         )
-        key = (edge.target.root_instance, effective_name)
+        key = (
+            edge.target.root_instance,
+            normalize_ref_path(edge.target.ref_path),
+            effective_name,
+        )
         edges_by_target.setdefault(key, []).append((idx, edge))
     for key in edges_by_target:
         edges_by_target[key].sort(key=lambda item: (item[1].order, item[0]))
@@ -235,9 +462,13 @@ def build_merge(
     resolution_order = _topo_sort_targets(graph)
 
     for inst_name in resolution_order:
-        block_replacements: dict[str, list[_BlockContribution]] = {}
-        expr_replacements: dict[str, list[_ExpressionInsert]] = {}
-        for (root, effective_target_name), indexed_edges in edges_by_target.items():
+        scoped_block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]] = {}
+        scoped_expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]] = {}
+        for (
+            root,
+            target_ref_path,
+            effective_target_name,
+        ), indexed_edges in edges_by_target.items():
             if root != inst_name:
                 continue
             target_record = instance_records[inst_name]
@@ -280,17 +511,25 @@ def build_merge(
                     f"__{counter}"
                     f"__{_sanitize_for_identifier(edge.source_instance)}"
                 )
+                inserted_ref_path = normalize_ref_path(
+                    edge.target.ref_path
+                    + (edge.source_instance,)
+                    + edge.target.path
+                )
+                contrib_body = copy.deepcopy(trees[edge.source_instance].body)
+                _prefix_shell_refs_in_body(contrib_body, inserted_ref_path)
                 contributions.append(
                     _BlockContribution(
                         source_instance=edge.source_instance,
                         order=edge.order,
                         edge_index=_idx,
-                        body=copy.deepcopy(trees[edge.source_instance].body),
+                        body=contrib_body,
                         shell_name=shell_name,
+                        ref_path=inserted_ref_path,
                     )
                 )
             if inserts:
-                expr_replacements[effective_target_name] = sorted(
+                scoped_expr_replacements[(target_ref_path, effective_target_name)] = sorted(
                     inserts,
                     key=lambda item: (
                         item.edge_order,
@@ -300,15 +539,15 @@ def build_merge(
                     ),
                 )
             if contributions:
-                block_replacements[effective_target_name] = sorted(
+                scoped_block_replacements[(target_ref_path, effective_target_name)] = sorted(
                     contributions,
                     key=lambda item: (item.order, item.edge_index),
                 )
-        if block_replacements or expr_replacements:
-            trees[inst_name].body = _replace_targets_in_body(
-                trees[inst_name].body,
-                block_replacements=block_replacements,
-                expr_replacements=expr_replacements,
+        if scoped_block_replacements or scoped_expr_replacements:
+            _replace_targets_in_tree(
+                trees[inst_name],
+                block_replacements=scoped_block_replacements,
+                expr_replacements=scoped_expr_replacements,
             )
 
     consumed = {edge.source_instance for edge in graph.edges}
@@ -444,6 +683,7 @@ def _make_block_insert_shell(
     order: int,
     shell_name: str,
     body: list[ast.stmt],
+    ref_path: RefPath | None = None,
 ) -> ast.FunctionDef:
     """Build an `astichi_insert`-decorated shell for a block contribution.
 
@@ -463,6 +703,8 @@ def _make_block_insert_shell(
         args=[ast.Name(id=target_name, ctx=ast.Load())],
         keywords=keywords,
     )
+    if ref_path is not None:
+        set_insert_ref(decorator, ref_path)
     return ast.FunctionDef(
         name=shell_name,
         args=ast.arguments(
@@ -704,6 +946,7 @@ class _HoleReplacementTransformer(ast.NodeTransformer):
                     order=contrib.order,
                     shell_name=contrib.shell_name,
                     body=contrib.body,
+                    ref_path=contrib.ref_path,
                 )
                 result.append(shell)
             return result
@@ -1033,12 +1276,12 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     )
 
 
-def _extract_block_insert_shell(stmt: ast.stmt) -> tuple[str, int] | None:
-    """Return (target_name, order) if stmt is an `astichi_insert`-decorated def.
+def _extract_block_insert_shell(stmt: ast.stmt) -> _BlockInsertShell | None:
+    """Return block-insert metadata for an `astichi_insert`-decorated def.
 
     A block-form `astichi_insert` has a single positional argument (the
     target name, as a bare `ast.Name`) and may carry an optional
-    integer `order=` keyword.
+    integer `order=` keyword and structured `ref=` path.
     """
     if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
@@ -1064,8 +1307,82 @@ def _extract_block_insert_shell(stmt: ast.stmt) -> tuple[str, int] | None:
                         "astichi_insert order must be an integer constant"
                     )
                 order = keyword.value.value
-        return (first_arg.id, order)
+        return _BlockInsertShell(
+            target_name=first_arg.id,
+            order=order,
+            ref_path=extract_insert_ref(decorator),
+        )
     return None
+
+
+def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
+    """Prefix every builder-carried shell ref inside ``body`` in-place."""
+
+    class _ShellRefPrefixer(ast.NodeTransformer):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+            self._prefix_node(node)
+            return self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            self._prefix_node(node)
+            return self.generic_visit(node)
+
+        def _prefix_node(
+            self, node: ast.FunctionDef | ast.AsyncFunctionDef
+        ) -> None:
+            info = _extract_block_insert_shell(node)
+            if info is None or info.ref_path is None:
+                return
+            for decorator in node.decorator_list:
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Name)
+                    and decorator.func.id == "astichi_insert"
+                ):
+                    prefix_insert_ref(decorator, prefix)
+                    return
+
+    prefixer = _ShellRefPrefixer()
+    for index, stmt in enumerate(body):
+        body[index] = prefixer.visit(stmt)  # type: ignore[assignment]
+
+
+def _replace_targets_in_tree(
+    tree: ast.Module,
+    *,
+    block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]],
+    expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]],
+) -> None:
+    """Apply target replacements keyed by ``(shell_ref_path, hole_name)``."""
+
+    def _apply_to_body(body: list[ast.stmt], current_ref: RefPath) -> list[ast.stmt]:
+        local_block = {
+            target_name: contributions
+            for (ref_path, target_name), contributions in block_replacements.items()
+            if ref_path == current_ref
+        }
+        local_expr = {
+            target_name: inserts
+            for (ref_path, target_name), inserts in expr_replacements.items()
+            if ref_path == current_ref
+        }
+        if local_block or local_expr:
+            body = _replace_targets_in_body(
+                body,
+                block_replacements=local_block,
+                expr_replacements=local_expr,
+            )
+        for stmt in body:
+            info = _extract_block_insert_shell(stmt)
+            if info is None or not isinstance(
+                stmt, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                continue
+            next_ref = info.ref_path if info.ref_path is not None else current_ref
+            stmt.body = _apply_to_body(stmt.body, next_ref)
+        return body
+
+    tree.body = _apply_to_body(tree.body, ())
 
 
 def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
@@ -1096,7 +1413,7 @@ def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
                 info = _extract_block_insert_shell(stmt)
                 if info is not None:
                     lineno = getattr(stmt, "lineno", 0) or 0
-                    shells.append((info[0], lineno))
+                    shells.append((info.target_name, lineno))
             for name, lineno in shells:
                 if name not in holes:
                     unmatched.append((name, lineno))
@@ -1173,7 +1490,7 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                     holes.add(hole_name)
                 info = _extract_block_insert_shell(stmt)
                 if info is not None:
-                    shells.add(info[0])
+                    shells.add(info.target_name)
             matched.update(holes & shells)
     return frozenset(matched)
 
@@ -1630,7 +1947,8 @@ def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:
         info = _extract_block_insert_shell(stmt)
         if info is None:
             continue
-        target, order = info
+        target = info.target_name
+        order = info.order
         assert isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
         if isinstance(stmt, ast.FunctionDef):
             shells_by_target.setdefault(target, []).append((order, index, stmt))

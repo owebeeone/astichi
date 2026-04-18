@@ -84,6 +84,16 @@ If you use indexed targets such as `builder.Root.slot[0]`, `builder.build()`
 defaults to `unroll="auto"` and unrolls `astichi_for(...)` sites as needed for
 those indexed edges.
 
+If a later stage reuses a built composable, descendant paths stay fluent:
+
+```python
+builder.Pipeline.Parse.body.add.Step(order=0)
+builder.assign.Step.total.to().Pipeline.Right.total
+```
+
+The same fluent descendant syntax appears in emitted block-shell metadata as
+`@astichi_insert(..., ref=Pipeline.Parse)`.
+
 `build()` on the graph returns a **new** `Composable`. Boundary **holes** may
 still be open if you chose not to wire every demand.
 

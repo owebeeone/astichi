@@ -15,6 +15,11 @@ strengthen confidence in:
 This plan assumes the current implemented surface in `src/` and the green test
 suite as of `2026-04-18`.
 
+**Related design:** `AstichiSingleSourceSummary.md` §3.2 (build surface, ref-path
+`assign`, deferred **aliases**). Optional detail: `BuilderIdentityAndAliasesDesign.md`.
+When alias support lands, extend spine tests here for stable named references
+across stages.
+
 ## 1. Problem statement
 
 Current testing is reasonably good at single-stage merge behavior and at
@@ -81,6 +86,14 @@ Use the following notation in this plan and in future discussion.
 - `wire T.H <- S @o=k`: additive edge from source instance `S` into target hole
   `H` on target instance `T`, with `order=k`
 - `assign S.inner => T.outer`: builder-level identifier wiring
+- descendant/ref paths stay in the same fluent form as the public builder API:
+  - `T` may be just a root instance (`Root`)
+  - or a descendant path (`Pipeline.Parse`, `Pipeline.Parse.rows[1,2].Normalize`)
+  - examples:
+    - `wire Pipeline.Parse.body <- Step @o=0`
+    - `assign Step.total => Pipeline.Right.total`
+- emitted shell metadata for the same addressed descendant uses
+  `@astichi_insert(..., ref=Pipeline.Parse[1, 2].Normalize)`
 - `bind X {name=value}`: apply `.bind(...)` to a composable
 - `arg X {inner->outer}`: apply identifier binding (`arg_names=` /
   `.bind_identifier(...)`)
@@ -124,7 +137,9 @@ composition tests.
 - `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`
 - `builder.<Target>.<hole>.add.<Source>(order=..., arg_names=..., keep_names=...)`
 - `builder.<Target>.<hole>[i]...add.<Source>(...)`
+- `builder.<Target>.<descendant>...[i]...<hole>.add.<Source>(...)`
 - `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`
+- `builder.assign.<Src>.<descendant>...<inner>.to().<Dst>.<descendant>...<outer>`
 - `builder.build(unroll="auto" | True | False)`
 
 ### 4.3 Between-stage operations
@@ -156,6 +171,9 @@ The suite should cover these axes.
 | Rename mode | identity (`x -> x`), non-identity (`x -> y`) |
 | Keep surface | marker keep, suffix keep, `keep_names=` |
 | Ordering mode | increasing order, decreasing order, equal-order stable tie |
+| Ref-path shape | root-only, one-hop descendant, multi-hop descendant, descendant + index |
+| Ref-path surface | additive target path, assign source path, assign target path, emitted `ref=` shell metadata |
+| Registration timing | target/source already registered, forward-declared root, forward-declared deep target |
 | Unroll timing | literal domain now, bind-fed domain later, auto-unroll, forced unroll |
 | Failure phase | build-time reject, materialize-time reject, runtime contract |
 
@@ -210,18 +228,44 @@ Current tests cover many features individually, but not enough scenarios where
 the same pipeline combines:
 
 - block stitching
+- descendant/ref-path addressing
 - identifier wiring
 - keeps
 - pass/export supply
 - delayed unroll
 
-### 7.4 Export as a staged supplier
+### 7.4 Ref-path semantics vs metadata surface
+
+We need explicit tests that separate:
+
+- the **semantic** guarantee: descendant add / assign resolves against the
+  intended nested shell
+- the **metadata** guarantee: emitted block shells carry the same path in the
+  public fluent `ref=...` syntax
+
+Both matter. The semantic tests catch incorrect merge/materialize behavior; the
+metadata tests catch drift between the public source form and the runtime's
+internal decomposed representation.
+
+### 7.5 Export as a staged supplier
 
 `pass/import` is better covered than `export` as a later-stage supplier. We need
 tests that prove stage-built exports survive and are consumable in the next
 stage.
 
-### 7.5 Expression and variadic surfaces under staging
+### 7.6 Registration-order limits on deep assign
+
+Current deep target-side `assign` discovery depends on the target instance
+already being registered so descendant hops are knowable from its shell refs.
+The plan should cover both:
+
+- supported case: deep target path on an already-registered target instance
+- current limitation: deep target path on a forward-declared target instance
+
+If the limitation remains intentional for now, the test should assert the
+current failure clearly rather than silently assuming support.
+
+### 7.7 Expression and variadic surfaces under staging
 
 Most staged discussion defaults to block holes. V3 should explicitly cover:
 
@@ -307,7 +351,47 @@ Assertions:
 - runtime output reflects the outer binding, not a shell-local leak
 - same test should be written once for `arg_names=` and once for `assign`
 
-### 8.4 `test_v3_spine_reuse_same_built_composable_with_distinct_bindings`
+### 8.4 `test_v3_spine_descendant_ref_paths_survive_stage_boundary`
+
+Purpose:
+
+- prove that descendant shell refs are preserved across `build()` boundaries in
+  the same fluent shape the public API uses
+
+Shape:
+
+- `S1` builds `B1` with at least two nested descendants
+- `S2` reuses `B1` and inserts it under another root
+- inspect the pre-materialize merged tree from `S2.build()`
+
+Assertions:
+
+- the merged tree contains block shells with `ref=...` in fluent syntax
+- prefixed descendant refs reflect the later-stage insertion point
+- indexed descendants emit `ref=Foo.Parse[1, 2].Normalize`, not an internal
+  tuple or reordered path encoding
+
+### 8.5 `test_v3_spine_descendant_add_and_assign_match_same_shell_path`
+
+Purpose:
+
+- prove that additive wiring and identifier wiring both interpret the same
+  descendant path against the same nested shell structure
+
+Shape:
+
+- `S1` builds `B1` with nested descendants such as `Pipeline.Parse` and
+  `Pipeline.Right`
+- `S2` uses one descendant path on the add side and another on the assign side
+  against the same reused `B1`
+
+Assertions:
+
+- the add lands in the intended descendant shell only
+- the assign resolves against the intended descendant supplier only
+- no sibling descendant with the same leaf name is accidentally selected
+
+### 8.6 `test_v3_spine_reuse_same_built_composable_with_distinct_bindings`
 
 Purpose:
 
@@ -327,7 +411,7 @@ Assertions:
 - emitted names and runtime outputs differ exactly as expected
 - `keep` pins stay local to the intended instance
 
-### 8.5 `test_v3_spine_export_survives_stage_boundary`
+### 8.7 `test_v3_spine_export_survives_stage_boundary`
 
 Purpose:
 
@@ -403,6 +487,18 @@ Assertions:
 - resolved name appears exactly where expected
 - unresolved slot rejects at the correct phase
 
+Add a ref-path dimension:
+
+- root-only
+- descendant source path
+- descendant target path
+
+Add a registration-order dimension:
+
+- target already registered
+- forward-declared root target
+- forward-declared deep target (current limitation or future support)
+
 ### 9.3 Keep-resolution matrix
 
 Purpose:
@@ -451,6 +547,10 @@ Assertions:
 - unroll timing matches expectation
 - indexed holes route to the correct synthetic names
 - unresolved domain rejects when required
+
+Also include at least one descendant-ref case where the addressed shell path
+contains indices, so unroll interacts with descendant addressing and emitted
+`ref=` metadata together.
 
 ### 9.5 Expression/variadic staged matrix
 
@@ -513,6 +613,15 @@ Recommended helpers:
 - `make_import_step(name: str, delta: int)`
 - `make_pass_producer(name: str, value: int)`
 - `make_export_piece(name: str, expr: str)`
+- `assert_shell_refs(piece, expected_refs: list[str])`
+- `assert_ref_targeting(piece, ref: str, hole: str, expected_sources: list[str])`
+
+Helper policy:
+
+- semantic tests should prefer runtime behavior or localized tree assertions
+  over brittle whole-source string matching
+- metadata tests should assert the fluent `ref=...` spelling directly, because
+  public/source syntax is now part of the contract
 - `exec_materialized(comp) -> dict[str, object]`
 - `run_trace(comp) -> list[str]`
 

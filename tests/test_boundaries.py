@@ -752,3 +752,52 @@ result = counter * 2
     namespace = _exec_emitted(stage2.build().materialize())
     assert namespace["counter"] == 42
     assert namespace["result"] == 84
+
+
+def test_6c_assign_surface_deep_source_path_across_stage_boundary() -> None:
+    inner_src = """
+astichi_import(total)
+
+result = total + 1
+"""
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile(inner_src, keep_names=["result"]))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Init(astichi.compile("total = 10\nastichi_keep(total)\n"))
+    stage2.add.Pipeline(built)
+    stage2.assign.Pipeline.Inner.total.to().Init.total
+
+    namespace = _exec_emitted(stage2.build().materialize())
+    assert namespace["total"] == 10
+    assert namespace["result"] == 11
+
+
+def test_6c_assign_surface_deep_target_path_selects_nested_supplier() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Left(astichi.compile("total = 10\n"))
+    stage1.add.Right(astichi.compile("total = 20\n"))
+    stage1.Root.body.add.Left(order=0)
+    stage1.Root.body.add.Right(order=1)
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    stage2.add.Step(
+        astichi.compile(
+            "astichi_import(total)\nstep_result = total + 1\n",
+            keep_names=["step_result"],
+        )
+    )
+    stage2.Pipeline.body.add.Step(order=2)
+    stage2.assign.Step.total.to().Pipeline.Right.total
+
+    namespace = _exec_emitted(stage2.build().materialize())
+    values = [
+        value for key, value in namespace.items() if key.startswith("step_result")
+    ]
+    assert values == [21, 21]

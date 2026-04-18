@@ -586,6 +586,13 @@ def _ignored_name_nodes(markers: tuple[object, ...]) -> set[int]:
                 first_arg = marker.node.args[0]
                 if isinstance(first_arg, ast.Name):
                     ignored.add(id(first_arg))
+            if marker.source_name == "astichi_insert":
+                for keyword in marker.node.keywords:
+                    if keyword.arg != "ref":
+                        continue
+                    for child in ast.walk(keyword.value):
+                        if isinstance(child, ast.Name):
+                            ignored.add(id(child))
     return ignored
 
 

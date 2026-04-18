@@ -245,6 +245,250 @@ builder.assign.Pipeline.Parse.rows[1, 2].field.to().Schema.Customer.id
 This is the simplified rule set for the first implementation. Anything beyond
 that should be treated as a follow-up issue, not folded into this one.
 
+## Implementation step plan
+
+The simplest implementation path is to make the existing Astichi shell
+boundaries carry the full build-scope path explicitly, then reuse the current
+"names are resolved within one Astichi scope" semantics inside the matched
+shell.
+
+That suggests one intentional extension:
+
+- decorator-form `astichi_insert(target, ...)` may carry an optional full-path
+  reference keyword
+
+Builder-generated insert shells should emit that keyword automatically. The
+keyword can remain an internal V3 mechanism at first even if the parser accepts
+it in source.
+
+Important: the `ref=` value should represent the **build path**, not the raw
+tree nesting shape. Conceptually this is:
+
+```text
+ref=Foo.Parse
+```
+
+when instance `Parse` becomes a descendant under `Foo`.
+
+For the actual AST/source encoding, use the same fluent descendant syntax as
+the builder surface:
+
+```python
+@astichi_insert(body, ref=Foo.Parse)
+```
+
+or, when indices are part of the build path:
+
+```python
+@astichi_insert(body, ref=Foo.Parse[1, 2].Normalize)
+```
+
+At runtime the implementation may still decompose that fluent path into a
+structured mixed segment tuple for matching. The public/source form should stay
+fluent.
+
+### Step 1. Base shell/boundary plumbing
+
+Goal: make `@astichi_insert(...)` shells carry a stable full build-path
+identity and teach the boundary helpers to see it.
+
+#### Step 1.1. Add shell-ref extraction helpers
+
+- add a helper that extracts a structured `ref=` path from decorator-form
+  `astichi_insert`
+- keep expression-form `astichi_insert(name, expr)` unchanged and reject
+  `ref=` there
+- keep `order=` semantics unchanged
+
+The helper should return a structured mixed path, not a dotted string.
+
+#### Step 1.2. Teach boundary/scope code about shell refs
+
+- extend boundary helpers so a shell can report both:
+  - its target hole name
+  - its full build-path ref, when present
+- keep Astichi scope grouping rooted in shell bodies, but allow diagnostics and
+  later traversal helpers to refer to shells by `ref`
+- root-wrap shells remain scope boundaries but do not become public descendant
+  refs
+
+#### Step 1.3. Emit builder-generated shells with descendant refs
+
+- when `build_merge()` synthesizes a block insert shell for source instance
+  `Parse`, emit the full build path on `ref=...`
+- when a stage-built composable is inserted under `Foo`, prefix every carried
+  descendant shell ref from that composable with `Foo`
+- keep root-wrap shells internal: no public `ref`, or a reserved internal-only
+  marker that traversal explicitly ignores
+
+This step should land before any fluent deep-path work. It gives the merged AST
+the explicit build-scope paths instead of forcing later code to infer them from
+synthetic function names or raw tree nesting.
+
+### Step 2. Mixed path model in the builder graph and handles
+
+Goal: let the builder record descendant paths without resolving them yet.
+
+#### Step 2.1. Extend raw path structures
+
+- change `TargetRef` so it can carry:
+  - root instance
+  - pre-leaf mixed path segments
+  - leaf target name
+  - leaf index path
+- change `AssignBinding` so both source and target sides can carry:
+  - root instance
+  - full mixed path segments up to the addressed shell
+  - leaf identifier name
+
+The path model should stay structured, not stringly typed. The pre-leaf path
+segments represent build-scope traversal, not raw hole-label nesting.
+
+#### Step 2.2. Extend fluent handles
+
+- add descendant-aware intermediate handles on the add side
+- add descendant-aware intermediate handles on the assign side
+- preserve existing `[i, ...]` indexing semantics as leaf index segments
+
+This keeps the public API change bounded to "more hops plus existing indexing"
+while deferring all actual validation to build time.
+
+### Step 3. Deep additive resolution by shell scope
+
+Goal: stop resolving holes globally by leaf name and instead resolve them
+inside the shell whose `ref=` matches the addressed full path.
+
+#### Step 3.1. Add descendant traversal helpers
+
+- given a built tree and a full mixed path, find the addressed shell body by
+  exact `ref=` match
+- do not reconstruct the path from AST parent/child nesting
+- do not use synthetic wrapper function names as the addressing contract
+
+#### Step 3.2. Localize hole replacement
+
+- replace the current global hole matching with scope-local hole matching
+- once the target descendant scope is found, reuse the current hole-name
+  replacement logic inside that body only
+
+This is the key simplification: full-path shell matching chooses the scope,
+then the existing target semantics operate within that scope.
+
+### Step 4. Deep identifier resolution by shell scope
+
+Goal: stop binding identifier demands globally by plain name.
+
+#### Step 4.1. Make assign bindings path-aware
+
+- `builder.assign.Root.Parse.total.to().Schema.Customer.id` must identify the
+  source shell scope first by full path, then the local demand name inside that
+  scope
+- same rule on the target side for supply lookup / validation
+
+#### Step 4.2. Make arg/import rewrites shell-local
+
+- `bind_identifier` / merged `arg_bindings` logic must no longer be keyed only
+  by stripped name
+- resolution passes in `materialize()` must apply to the addressed shell scope,
+  not every matching name in the whole tree
+- existing same-scope semantics remain unchanged once the shell scope is chosen
+
+This is the other major implementation seam. Deep assign will not work if the
+rewrite stays global-by-name.
+
+### Step 5. Validation and rejection rules
+
+Goal: keep the MVP strict and unsurprising.
+
+#### Step 5.1. Reject ambiguity early
+
+- sibling descendant-ref collisions reject
+- descendant-ref vs hole-name collisions reject
+- descendant-ref vs identifier-port-name collisions reject
+- ambiguous repeated-use descendant paths reject
+
+Validation policy:
+
+- reject at the operation site whenever the graph already contains enough
+  information to know the path is invalid or ambiguous
+- reject at `.add(...)` when that add introduces duplicate full `ref` paths
+  into the reachable descendant set
+- reject at reference time for malformed paths, unknown reachable descendants on
+  already-registered instances, and immediate ambiguity
+- keep `build()` rejection only for intentionally deferred cases such as
+  forward-declared `assign` targets or stage-built descendant paths whose final
+  prefixed refs are not knowable until insertion
+- do not use build warnings as API behavior; invalid graphs should fail
+
+#### Step 5.2. Reject non-addressable internal structure
+
+- unknown descendant ref rejects
+- root-wrap/internal synthetic shells are not addressable
+- malformed mixed path usage rejects clearly
+
+### Step 6. Tests and documentation
+
+Goal: prove the scoped-down model, not a larger one.
+
+#### Step 6.1. Builder/graph tests
+
+- mixed path recording on add and assign
+- duplicate / conflicting path rejection
+
+#### Step 6.2. Merge/materialize tests
+
+- one-hop and multi-hop descendant add
+- one-hop and multi-hop descendant assign
+- descendant paths across stage-built composables
+- mixed descendant + `[i, ...]` addressing
+- ambiguous repeated-use rejection
+- early rejection on `.add(...)` / reference when enough information is already
+  available
+
+#### Step 6.3. Docs
+
+- document the mixed path model
+- document the default-public descendant rule
+- document the explicit MVP rejection rules
+
+## Assumption check
+
+The scoped-down one-shot assumptions still hold, but three implementation facts
+matter:
+
+### 1. Tree shape and build scope are different
+
+The current AST nesting shape is not the same thing as the public build path.
+Trying to reconstruct build paths from shell nesting will be brittle.
+
+V3 should therefore carry the build path explicitly on builder-generated
+`@astichi_insert(..., ref=...)` shells and match by that path directly.
+
+### 2. Descendant metadata alone is not enough
+
+The current add path does not target a subtree. It groups contributions by leaf
+target name and then replaces matching holes anywhere in the whole target tree.
+
+So V3 must change not only what metadata is stored, but also how target holes
+are located.
+
+### 3. Deep assign is not a small extension of current `arg_bindings`
+
+Current identifier binding is global-by-name after merge. That is fine for
+`<instance>.<name>`, but it is wrong for `<instance>.<descendant>...<name>`.
+
+So V3 must scope identifier rewrites to the addressed shell body, not just add
+more names to the existing flat map.
+
+### 4. The `astichi_insert(ref=...)` idea appears viable
+
+Current marker recognition and materialize code already tolerate extra keywords
+on `astichi_insert` calls as long as positional arguments stay valid. Boundary
+scope detection keys off the decorator name, not the exact keyword set.
+
+That makes `ref=` a practical way to anchor build-scope identity in the tree
+without inventing a separate serialized metadata format for V3.
+
 ### 1. Surface and naming model
 
 V3 needs a descendant/reference chain surface for both:

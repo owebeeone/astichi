@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from astichi.model import Composable
+from astichi.shell_refs import RefPath
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,7 @@ class TargetRef:
 
     root_instance: str
     target_name: str
+    ref_path: RefPath = ()
     path: tuple[int, ...] = ()
 
 
@@ -50,6 +52,8 @@ class AssignBinding:
     inner_name: str
     target_instance: str
     outer_name: str
+    source_ref_path: RefPath = ()
+    target_ref_path: RefPath = ()
 
 
 @dataclass
@@ -119,8 +123,12 @@ class BuilderGraph:
         ``build_merge`` so the user may declare wirings against pieces
         that have not yet been registered.
         """
-        for name in (binding.source_instance, binding.inner_name,
-                     binding.target_instance, binding.outer_name):
+        for name in (
+            binding.source_instance,
+            binding.inner_name,
+            binding.target_instance,
+            binding.outer_name,
+        ):
             if not isinstance(name, str) or not name.isidentifier():
                 raise ValueError(
                     "assign binding names must be valid Python "
@@ -129,6 +137,7 @@ class BuilderGraph:
         for existing in self._assigns:
             if (
                 existing.source_instance == binding.source_instance
+                and existing.source_ref_path == binding.source_ref_path
                 and existing.inner_name == binding.inner_name
             ):
                 if existing == binding:

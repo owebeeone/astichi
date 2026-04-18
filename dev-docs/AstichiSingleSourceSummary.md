@@ -146,18 +146,25 @@ locations.
 
 `astichi.build() -> BuilderHandle`
 
-Current fluent surface:
+- `builder.add.A(comp)` registers root instance `A`.
+- `builder.A` returns a handle for a registered root; **`A` is the stable graph
+  id** (not a hygiene output name from inside a piece).
+- `builder.A.slot.add.B(order=0)`, `builder.A.slot[i, ...]` — additive wiring and
+  indexed hole paths.
+- `builder.assign.<Src>… .to().<Dst>…` — cross-instance boundary wiring. The
+  fluent chain can carry **ref paths** into nested insert shells (`AssignBinding`
+  `source_ref_path` / `target_ref_path`), not only `Src` / `Dst` at the root.
+- `builder.build()` merges the graph to one composable.
 
-- `builder.add.A(comp)`
-- `builder.A.slot.add.B(order=0)`
-- `builder.A.slot[0]`
-- `builder.A.slot[0, 1]`
-- `builder.build()`
+**Merge ordering:** lower `order` inserts first; equal `order` uses first-registered
+edge first.
 
-Current builder ordering rule:
-
-- lower `order` inserts first
-- equal `order` resolves by first-added edge first
+**Names vs graph identity:** ref paths key off **composition structure** in the
+graph. **Lexical** names in emitted Python can still be renamed by hygiene. For
+multi-stage pipelines that must not depend on emitted spellings or on treating a
+raw AST path string as the only long-lived id, **deferred: aliases** — bind a
+stable logical name to a fully qualified build reference (instance + ref path +
+role) that survives a `build()` stage.
 
 ### 3.3 Composable
 
@@ -343,8 +350,7 @@ These are the active ownership points in the codebase.
 - `src/astichi/builder/graph.py`
   - raw graph structures
 - `src/astichi/builder/handles.py`
-  - fluent builder DSL
-  - indexed path accumulation
+  - fluent builder DSL; indexed paths; `builder.assign` ref-path chains
 - `src/astichi/materialize/api.py`
   - `build_merge`
   - materialize gate

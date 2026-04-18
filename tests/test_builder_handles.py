@@ -13,6 +13,7 @@ from astichi.builder import (
     TargetHandle,
     TargetRef,
 )
+from astichi.builder.graph import AssignBinding
 
 
 def test_build_returns_builder_handle_with_empty_graph() -> None:
@@ -176,3 +177,49 @@ def test_fluent_equal_order_keeps_insertion_order() -> None:
     assert builder.graph.edges == (first, second)
     assert builder.graph.edges[0].source_instance == "B"
     assert builder.graph.edges[1].source_instance == "C"
+
+
+def test_descendant_target_handles_accumulate_ref_path_across_build_stages() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("astichi_hole(slot)\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+
+    target = stage2.Pipeline.Inner.slot
+
+    assert target == TargetHandle(
+        graph=stage2.graph,
+        target=TargetRef(
+            root_instance="Pipeline",
+            target_name="slot",
+            ref_path=("Inner",),
+        ),
+    )
+
+
+def test_assign_descendant_target_records_full_ref_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("total = 10\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    stage2.add.Step(astichi.compile("astichi_import(total)\nvalue = total + 1\n"))
+
+    stage2.assign.Step.total.to().Pipeline.Inner.total
+
+    assert stage2.graph.assigns == (
+        AssignBinding(
+            source_instance="Step",
+            inner_name="total",
+            target_instance="Pipeline",
+            outer_name="total",
+            target_ref_path=("Inner",),
+        ),
+    )

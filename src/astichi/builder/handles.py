@@ -13,11 +13,12 @@ from astichi.builder.graph import (
 )
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
+from astichi.shell_refs import RefPath, next_insert_ref_segments, normalize_ref_path
 
 
 @dataclass(frozen=True)
 class TargetHandle:
-    """Stable handle for a target inside a root instance."""
+    """Stable handle for a target path inside a root instance."""
 
     graph: BuilderGraph = field(compare=False, repr=False)
     target: TargetRef
@@ -27,7 +28,7 @@ class TargetHandle:
         return AddToTargetProxy(graph=self.graph, target=self.target)
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "TargetHandle":
-        """Return a new target handle with an accumulated path."""
+        """Return a new target handle with accumulated indexes on the leaf."""
         if isinstance(key, tuple):
             items = key
         else:
@@ -39,7 +40,25 @@ class TargetHandle:
             target=TargetRef(
                 root_instance=self.target.root_instance,
                 target_name=self.target.target_name,
+                ref_path=self.target.ref_path,
                 path=self.target.path + items,
+            ),
+        )
+
+    def __getattr__(self, name: str) -> "TargetHandle":
+        """Advance one descendant hop and leave ``name`` as the new leaf."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return TargetHandle(
+            graph=self.graph,
+            target=TargetRef(
+                root_instance=self.target.root_instance,
+                target_name=name,
+                ref_path=normalize_ref_path(
+                    self.target.ref_path
+                    + (self.target.target_name,)
+                    + self.target.path
+                ),
             ),
         )
 
@@ -57,6 +76,38 @@ class InstanceHandle:
         return TargetHandle(
             graph=self.graph,
             target=TargetRef(root_instance=self.root_instance, target_name=name),
+        )
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_IndexedInstanceHandle":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _IndexedInstanceHandle(
+            graph=self.graph,
+            root_instance=self.root_instance,
+            path=items,
+        )
+
+
+@dataclass(frozen=True)
+class _IndexedInstanceHandle:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    root_instance: str
+    path: tuple[int, ...]
+
+    def __getattr__(self, name: str) -> TargetHandle:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return TargetHandle(
+            graph=self.graph,
+            target=TargetRef(
+                root_instance=self.root_instance,
+                target_name=name,
+                path=self.path,
+            ),
         )
 
 
@@ -185,31 +236,80 @@ class AddToTargetProxy:
         )
 
 
-@dataclass(frozen=True)
-class _AssignTargetReady:
-    """Penultimate picker in ``builder.assign.<Src>.<inner>.to().<Dst>``.
+def _instance_descendant_segments(
+    graph: BuilderGraph,
+    instance_name: str,
+    ref_path: RefPath,
+) -> frozenset[str | int]:
+    record = graph._instances.get(instance_name)
+    if record is None:
+        return frozenset()
+    piece = record.composable
+    if not isinstance(piece, BasicComposable):
+        return frozenset()
+    return next_insert_ref_segments(piece.tree, normalize_ref_path(ref_path))
 
-    The final ``__getattr__`` (the ``<outer>`` hop) records the
-    binding on the graph as an unavoidable side effect of attribute
-    access. This intentionally matches the bare-expression surface
-    the user wants (``builder.assign.X.a.to().Y.b``) rather than
-    requiring an explicit call site.
-    """
+
+@dataclass(frozen=True)
+class _AssignTargetHandle:
+    """Target-side path handle after ``to().<Dst>`` has named the root."""
 
     graph: BuilderGraph = field(compare=False, repr=False)
     source_instance: str
+    source_ref_path: RefPath
     inner_name: str
     target_instance: str
+    target_ref_path: RefPath = ()
+    pending_leaf_path: tuple[int, ...] = ()
 
-    def __getattr__(self, outer_name: str) -> None:
-        if outer_name.startswith("_"):
-            raise AttributeError(outer_name)
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_AssignTargetHandle":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _AssignTargetHandle(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+            target_instance=self.target_instance,
+            target_ref_path=self.target_ref_path,
+            pending_leaf_path=self.pending_leaf_path + items,
+        )
+
+    def __getattr__(self, name: str) -> "_AssignTargetHandle | None":
+        if name.startswith("_"):
+            raise AttributeError(name)
+        descendants = _instance_descendant_segments(
+            self.graph, self.target_instance, self.target_ref_path
+        )
+        candidate_ref = normalize_ref_path(
+            self.target_ref_path + (name,) + self.pending_leaf_path
+        )
+        if name in descendants:
+            return _AssignTargetHandle(
+                graph=self.graph,
+                source_instance=self.source_instance,
+                source_ref_path=self.source_ref_path,
+                inner_name=self.inner_name,
+                target_instance=self.target_instance,
+                target_ref_path=candidate_ref,
+                pending_leaf_path=(),
+            )
+        if self.pending_leaf_path:
+            raise ValueError(
+                "assign identifier paths may not end with index segments"
+            )
         self.graph.add_assign(
             AssignBinding(
                 source_instance=self.source_instance,
                 inner_name=self.inner_name,
                 target_instance=self.target_instance,
-                outer_name=outer_name,
+                outer_name=name,
+                source_ref_path=normalize_ref_path(self.source_ref_path),
+                target_ref_path=normalize_ref_path(self.target_ref_path),
             )
         )
         return None
@@ -221,14 +321,16 @@ class _AssignTargetPicker:
 
     graph: BuilderGraph = field(compare=False, repr=False)
     source_instance: str
+    source_ref_path: RefPath
     inner_name: str
 
-    def __getattr__(self, target_instance: str) -> _AssignTargetReady:
+    def __getattr__(self, target_instance: str) -> _AssignTargetHandle:
         if target_instance.startswith("_"):
             raise AttributeError(target_instance)
-        return _AssignTargetReady(
+        return _AssignTargetHandle(
             graph=self.graph,
             source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
             inner_name=self.inner_name,
             target_instance=target_instance,
         )
@@ -236,7 +338,7 @@ class _AssignTargetPicker:
 
 @dataclass(frozen=True)
 class _AssignSourceReady:
-    """Holds ``(source_instance, inner_name)`` until ``to()`` is called.
+    """Holds one source-side path until ``to()`` is called.
 
     ``to()`` is the explicit phase separator between the source and
     target sides of the wiring. It keeps the chain unambiguous:
@@ -247,12 +349,46 @@ class _AssignSourceReady:
 
     graph: BuilderGraph = field(compare=False, repr=False)
     source_instance: str
+    source_ref_path: RefPath
     inner_name: str
+    leaf_path: tuple[int, ...] = ()
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_AssignSourceReady":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _AssignSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+            leaf_path=self.leaf_path + items,
+        )
+
+    def __getattr__(self, name: str) -> "_AssignSourceReady":
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return _AssignSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=normalize_ref_path(
+                self.source_ref_path + (self.inner_name,) + self.leaf_path
+            ),
+            inner_name=name,
+        )
 
     def to(self) -> _AssignTargetPicker:
+        if self.leaf_path:
+            raise ValueError(
+                "assign identifier paths may not end with index segments"
+            )
         return _AssignTargetPicker(
             graph=self.graph,
             source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
             inner_name=self.inner_name,
         )
 
@@ -263,6 +399,22 @@ class _AssignSourcePicker:
 
     graph: BuilderGraph = field(compare=False, repr=False)
     source_instance: str
+    source_ref_path: RefPath = ()
+    pending_leaf_path: tuple[int, ...] = ()
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_AssignSourcePicker":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _AssignSourcePicker(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            pending_leaf_path=self.pending_leaf_path + items,
+        )
 
     def __getattr__(self, inner_name: str) -> _AssignSourceReady:
         if inner_name.startswith("_"):
@@ -270,7 +422,9 @@ class _AssignSourcePicker:
         return _AssignSourceReady(
             graph=self.graph,
             source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
             inner_name=inner_name,
+            leaf_path=self.pending_leaf_path,
         )
 
 
