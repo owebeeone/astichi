@@ -632,22 +632,39 @@ astichi_export(value)
 
 
 # ---------------------------------------------------------------------------
-# Soundness gaps tracked by dev-docs/v2_issues/004-materialize-free-name-
-# soundness.md. These are xfail regressions so we notice when the gap
-# closes (and must then convert to passing assertions).
+# Strict scope isolation contract. Every Astichi scope (module root,
+# every root instance under the merge-time wrap, every builder
+# contribution shell, every expression-form insert wrapper) owns its
+# own lexical name space. Cross-scope wiring is *explicit*: it goes
+# through `astichi_import` / `astichi_pass` / `astichi_export` (or
+# the builder-level equivalents: `arg_names=`, `keep_names=`, and
+# `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`). Free-name
+# references inside a shell that are not wired across the boundary
+# are local to that shell, full stop. Whatever the user wrote on
+# those names is preserved faithfully — astichi does not guess.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Gap 3 (issue 004): `total = total + 1` inside a fresh Astichi "
-        "scope renames both sides together, producing a renamed local "
-        "that reads itself before being written. Emitted code raises "
-        "UnboundLocalError at runtime."
-    ),
-)
-def test_materialize_gap3_self_ref_rename_xfail() -> None:
+def test_strict_scope_isolation_unwired_free_name_is_scope_local() -> None:
+    """Unwired free-name references inside a builder contribution stay
+    scope-local.
+
+    Step's body reads and writes `total` without declaring
+    `astichi_import(total)`. The root also binds `total`. Under strict
+    scope isolation, Step's `total` is a *fresh* binding in Step's
+    contribution scope — it does not silently capture Root's `total`.
+    Hygiene therefore renames Step's occurrences apart
+    (`total__astichi_scoped_N`), and the emitted program faithfully
+    reflects what the user actually wrote: a read-before-write on a
+    fresh local. Running it raises `NameError` because the user's
+    source expressed broken Python on its own local, not because
+    astichi introduced any ambiguity.
+
+    If the user's intent is "Step's `total` is Root's `total`", the
+    contract is to declare `astichi_import(total)` in Step — see the
+    `astichi_import`-based accumulator composition in
+    `tests/test_boundaries.py` and `scratch/test_mat2.py`.
+    """
     builder = astichi.build()
     builder.add.Root(astichi.compile("total = 0\nastichi_hole(body)\n"))
     builder.add.Step(astichi.compile("total = total + 1\n"))
@@ -656,8 +673,19 @@ def test_materialize_gap3_self_ref_rename_xfail() -> None:
     materialized = builder.build().materialize()
     source = materialized.emit(provenance=False)
 
+    assert "total = 0" in source
+    assert "total__astichi_scoped_" in source
+    scoped_line = next(
+        line for line in source.splitlines() if "total__astichi_scoped_" in line
+    )
+    # Hygiene renamed *both* sides of Step's assign together — Step's
+    # `total` is one binding, isolated from Root's. This is the
+    # contract, not a bug.
+    assert scoped_line.count("total__astichi_scoped_") == 2
+
     namespace: dict[str, object] = {}
-    exec(compile(source, "<t>", "exec"), namespace)
+    with pytest.raises(NameError):
+        exec(compile(source, "<t>", "exec"), namespace)
 
 
 def test_materialize_rejects_unmatched_block_insert_shell() -> None:

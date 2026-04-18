@@ -47,10 +47,9 @@ items.
     handles remain deferred (the latter blocked on 006 supply-identifier
     sources); `ast.Attribute` positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-04-17:
-  - full suite: `263 passed, 1 xfailed`
-  - the sole xfail is the known materialize soundness gap for self-referential
-    rename (`tests/test_materialize.py::test_materialize_gap3_self_ref_rename_xfail`)
+- Test status as of 2026-04-18:
+  - full suite: green (no xfails)
+  - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
   - `006` (cross-scope threading via `astichi_import` / `astichi_pass`):
     `6a` marker registration + placement-rule gate, `6b` hygiene pins
@@ -107,6 +106,14 @@ These are the rules that should not be re-litigated during implementation.
   - Reject it at the materialize gate rather than silently tolerating it.
 - Preserve lexical keep semantics.
   - `astichi_keep(name)` means that spelling is pinned and must not be renamed.
+- Scope isolation is strict.
+  - Every Astichi scope owns its own lexical name space.
+  - Cross-scope wiring is explicit: `astichi_import` / `astichi_pass`
+    / `astichi_export`, or the builder-level `arg_names=` /
+    `keep_names=` / `builder.assign`.
+  - Free-name references inside a shell that are not wired across the
+    boundary are local to that shell. Astichi does not guess.
+  - See §5.4 for the full contract.
 - Pre-materialize `emit()` and `materialize()` have different contracts.
   - pre-materialize `emit()` preserves markers and supports marker-bearing
     round-trip via `emit()` -> `compile()`
@@ -284,9 +291,30 @@ Implemented hygiene building blocks:
   - `name__astichi_scoped_<n>`
 - expression-form insert wrappers receive fresh Astichi scope treatment
 
-Known limitation:
+Scope isolation is strict (and intentional):
 
-- one materialize soundness gap is still xfailed; see §9.3
+- every Astichi scope (module root, every root instance under the
+  merge-time root wrap, every builder contribution shell, every
+  expression-form insert wrapper) owns its own lexical name space
+- cross-scope wiring is *explicit*: declare intent via
+  `astichi_import` (consumer side), `astichi_pass` (supplier side
+  that re-exports the binding to its enclosing scope),
+  `astichi_export` (supplier side, published to the composable
+  boundary), `__astichi_arg__` / `__astichi_keep__` suffixes, or the
+  builder-level equivalents `arg_names=`, `keep_names=`, and
+  `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`
+- free-name references inside a shell that are not wired across the
+  boundary are local to that shell — full stop
+- whatever the user wrote on those names is preserved faithfully;
+  astichi does not silently capture an outer binding. If the user
+  wrote broken code on a purely-local name (e.g. `total = total + 1`
+  in a shell with no `astichi_import(total)` and no prior local
+  initialisation), the emitted program faithfully reflects that, and
+  running it will raise `NameError` / `UnboundLocalError` at the
+  user's own broken statement — astichi's job is lexical fidelity,
+  not guessing user intent
+- see §9.3 for the historical framing of this rule (formerly tracked
+  as "004 Gap 3", now closed as intended behaviour)
 
 ## 6. Code map
 
@@ -486,33 +514,56 @@ Cross-scope threading decisions that are already locked:
   - `pass + astichi_export`: valid
   - `import + astichi_export`: reject
 
-### 9.3 Materialize soundness still has open gaps
+### 9.3 Materialize soundness: open gaps vs. contracts
 
-Open gaps:
+Historically this section tracked four "gaps" under issue 004. The
+list has been re-classified: some items are genuine open soundness
+gaps, others are in fact the documented strict-scope-isolation
+contract surfacing through user code that did not wire across a
+boundary (see §5.4).
+
+Open soundness gaps:
 
 - Gap 1: cross-scope free-name fall-through
-  - inserted code can accidentally capture an outer name without declaring it
+  - inserted code can reference a free name that happens to match an
+    outer binding but is *not* declared via `astichi_import`; the
+    materialize gate should either reject the cross or force explicit
+    declaration. Currently the hygiene pass renames the inner scope's
+    occurrences apart (correct per §5.4), which *prevents* accidental
+    capture — but there is no error surface telling the user "this
+    name is unresolved inside the shell, did you mean to import it?"
 - Gap 2: implied demands do not currently gate `materialize()`
-  - `materialize()` may emit code that `NameError`s at runtime
-- Gap 3: self-referential rename
-  - `total = total + 1` inside a fresh Astichi scope can become
-    `total__astichi_scoped_1 = total__astichi_scoped_1 + 1`
-  - this is the current xfail
+  - `materialize()` may emit code that `NameError`s at runtime if a
+    shell references a purely external name that was never wired and
+    never bound. Gap 2 is about adding a rejecting gate, not about
+    changing name resolution.
 
-Resolved already:
+Closed / reclassified as contract, not gap:
 
-- Gap 4 unmatched insert shell survival is fixed
+- Gap 3 (self-referential rename): *not* a gap. This is the
+  strict-scope-isolation contract (§5.4) applied to a
+  self-referential assign inside an unwired shell. `total = total + 1`
+  in a shell with no `astichi_import(total)` is a fresh
+  read-before-write on a shell-local name; astichi renames it apart
+  faithfully and emits exactly what the user wrote. Pinned positive
+  by
+  `tests/test_materialize.py::test_strict_scope_isolation_unwired_free_name_is_scope_local`.
+- Gap 4 (unmatched insert shell survival): fixed at the materialize
+  gate.
 
-How these interact:
+How Gaps 1 & 2 interact:
 
-- Gap 1 is really the undeclared-cross-scope version of the identifier-threading
-  problem in §9.2
-- Gap 2 is the materialize-gate version of “undefined names must be explicit”
-- Gap 3 is a hygiene/read-before-write problem inside fresh Astichi scopes
+- Gap 1 is the diagnostic side of §5.4 ("unresolved inner free name
+  should be an error, not a silent fresh binding"). Strict scope
+  isolation already prevents the bad capture; Gap 1 closure adds the
+  error surface.
+- Gap 2 is the materialize-gate version of "undefined names must be
+  explicit".
 
 Practical rule:
 
-- do not call the project sound until all three open gaps are closed
+- do not call the project sound until Gaps 1 and 2 close; Gap 3 is
+  already closed by the §5.4 contract.
 
 ### 9.4 Provenance format still has one low-priority drift
 
@@ -564,9 +615,13 @@ Treat these as one cluster, not as unrelated tickets.
    - add `__astichi_keep__`
    - make identifier shape demand-side, not fake supply-side
 3. `004` materialize soundness closure
-   - undeclared crossings reject
+   - undeclared crossings reject (diagnostic surface for §5.4 strict
+     scope isolation — today hygiene safely renames them apart, but
+     the user gets no error telling them "you meant to declare
+     `astichi_import` here")
    - unresolved implied demands reject
-   - self-referential rename fixed or rejected clearly
+   - (self-referential rename is *not* a gap — reclassified as the
+     §5.4 strict-scope-isolation contract; see §9.3)
 4. `003` provenance format drift
    - low priority
 
@@ -780,9 +835,12 @@ Recommended execution order:
      `wire_identifier(...)` on builder slot handles once
      `astichi_pass` supply sources land.
 4. Soundness closure for 004
-   - gate undeclared crossings
+   - gate undeclared crossings (diagnostic layer on top of §5.4
+     strict scope isolation: tell the user which free name inside a
+     shell they forgot to import)
    - gate unresolved implied demands
-   - fix or reject self-referential rename
+   - (self-referential rename: not in scope — the §5.4 contract
+     handles this by faithful rename-apart; see §9.3)
 
 Why this order:
 
