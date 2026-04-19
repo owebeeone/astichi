@@ -175,29 +175,29 @@ Current proving tests:
 - `tests/test_lowering_shapes.py`
 - `tests/test_expression_insert_pipeline.py`
 
-## Step 3. Internal payload model
+## Completed in roll-build: Step 3. Internal payload model
 
-Goal: extract authored `astichi_funcargs(...)` into a structured internal form.
+The internal payload model now lives in
+`src/astichi/lowering/call_argument_payloads.py`.
 
-### Step 3a. Define the payload structure
+Completed behavior:
 
-- positional items
-- starred items
-- named keyword items
-- double-star items
-- non-emitting directive items
+- authored `astichi_funcargs(...)` extracts to `FuncArgPayload`
+- the payload currently preserves five item classes:
+  - `PositionalFuncArgItem`
+  - `StarredFuncArgItem`
+  - `KeywordFuncArgItem`
+  - `DoubleStarFuncArgItem`
+  - `DirectiveFuncArgItem`
+- extraction preserves authored item order within one payload
+- repeated direct `_=` directive carriers preserve authored order
+- ordinary `_=` values extract as ordinary keyword items, not directives
 
-### Step 3b. Extract payloads
+Current proving tests:
 
-- convert `astichi_funcargs(...)` into the internal payload model
-- preserve authored order within one payload
-- preserve repeated `_=` directive order
-
-Exit rules:
-
-- extraction tests prove the authored AST becomes the expected internal model
-- ordering is explicit and tested
-- no lowering to final call syntax is required yet
+- `tests/test_call_argument_payload_model.py`
+- `tests/test_call_argument_payload_recognition.py`
+- `tests/test_lowering_shapes.py`
 
 ## Step 4. Boundary and binding resolution
 

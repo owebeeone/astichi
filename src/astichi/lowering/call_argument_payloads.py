@@ -3,10 +3,50 @@
 from __future__ import annotations
 
 import ast
+import copy
+from dataclasses import dataclass
 
 
 _FUNCARGS_NAME = "astichi_funcargs"
 _DIRECTIVE_NAMES: frozenset[str] = frozenset({"astichi_import", "astichi_export"})
+
+
+@dataclass(frozen=True)
+class FuncArgPayloadItem:
+    """Base payload item for one authored ``astichi_funcargs(...)`` entry."""
+
+
+@dataclass(frozen=True)
+class PositionalFuncArgItem(FuncArgPayloadItem):
+    expr: ast.expr
+
+
+@dataclass(frozen=True)
+class StarredFuncArgItem(FuncArgPayloadItem):
+    expr: ast.expr
+
+
+@dataclass(frozen=True)
+class KeywordFuncArgItem(FuncArgPayloadItem):
+    name: str
+    expr: ast.expr
+
+
+@dataclass(frozen=True)
+class DoubleStarFuncArgItem(FuncArgPayloadItem):
+    expr: ast.expr
+
+
+@dataclass(frozen=True)
+class DirectiveFuncArgItem(FuncArgPayloadItem):
+    directive_name: str
+    name: str
+    call: ast.Call
+
+
+@dataclass(frozen=True)
+class FuncArgPayload:
+    items: tuple[FuncArgPayloadItem, ...]
 
 
 def is_astichi_funcargs_call(node: ast.AST) -> bool:
@@ -27,6 +67,43 @@ def direct_funcargs_directive_calls(call: ast.Call) -> tuple[ast.Call, ...]:
         if _call_name(keyword.value) in _DIRECTIVE_NAMES:
             directives.append(keyword.value)
     return tuple(directives)
+
+
+def extract_funcargs_payload(call: ast.Call) -> FuncArgPayload:
+    """Extract one authored ``astichi_funcargs(...)`` call into a payload model."""
+    if not is_astichi_funcargs_call(call):
+        raise TypeError("extract_funcargs_payload expects an astichi_funcargs(...) call")
+    items: list[FuncArgPayloadItem] = []
+    for arg in call.args:
+        if isinstance(arg, ast.Starred):
+            items.append(StarredFuncArgItem(expr=copy.deepcopy(arg.value)))
+            continue
+        items.append(PositionalFuncArgItem(expr=copy.deepcopy(arg)))
+    for keyword in call.keywords:
+        if keyword.arg == "_" and _is_direct_directive_call(keyword.value):
+            assert isinstance(keyword.value, ast.Call)
+            directive_name = _call_name(keyword.value)
+            first_arg = keyword.value.args[0]
+            assert directive_name is not None
+            assert isinstance(first_arg, ast.Name)
+            items.append(
+                DirectiveFuncArgItem(
+                    directive_name=directive_name,
+                    name=first_arg.id,
+                    call=copy.deepcopy(keyword.value),
+                )
+            )
+            continue
+        if keyword.arg is None:
+            items.append(DoubleStarFuncArgItem(expr=copy.deepcopy(keyword.value)))
+            continue
+        items.append(
+            KeywordFuncArgItem(
+                name=keyword.arg,
+                expr=copy.deepcopy(keyword.value),
+            )
+        )
+    return FuncArgPayload(items=tuple(items))
 
 
 def validate_call_argument_payload_surface(tree: ast.Module) -> None:
