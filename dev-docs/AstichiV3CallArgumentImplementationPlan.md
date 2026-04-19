@@ -199,91 +199,85 @@ Current proving tests:
 - `tests/test_call_argument_payload_recognition.py`
 - `tests/test_lowering_shapes.py`
 
-## Step 4. Boundary and binding resolution
+## Completed in roll-build: Step 4. Boundary, binding, and lowering
 
-Goal: make payload-local boundary markers work with the existing binding
-surfaces.
+The combined boundary/binding/lowering work now lives across:
 
-### Step 4a. Payload-scope import classification
+- `src/astichi/materialize/api.py`
+- `src/astichi/lowering/external_bind.py`
+- `src/astichi/lowering/call_argument_payloads.py`
 
-- ensure `astichi_import(name)` carried in `_=` belongs to the fresh expression
-  payload scope
-- ensure payload-local imported names classify with the correct outer scope
-  identity
+Completed behavior:
 
-### Step 4b. Payload-scope pass/export behavior
-
-- ensure `astichi_pass(name)` in emitted argument expressions behaves as the
-  value-level boundary form
-- ensure `astichi_export(name)` carried in `_=` publishes from the payload
-  scope, not the surrounding module scope
-
-### Step 4c. `arg_names=` and `builder.assign` support
-
-- extend import rewrite/resolution so payload-local `astichi_import(...)` is
-  rewritten by `arg_names=` and `builder.assign`
-- do not limit import rewrite to top-of-shell decorator-form bodies
-
-### Step 4d. Implement resolved interaction and collision rules
-
-- preserve the current import/pass/export interaction rules where they still
-  apply
-- lock and test that `astichi_bind_external(...)` is a value-form participant in
-  payloads, not a directive
-- reject payload-local `astichi_import(name)` + `astichi_bind_external(name)` on
-  the same name
-- reject payload-local `astichi_export(name)` + `astichi_bind_external(name)` on
-  the same name
-- test those mixed-mode rejections directly
-
-Exit rules:
-
-- focused tests cover `arg_names=`, `builder.assign`, walrus payloads, and
-  payload-local import/export/pass
-- supplied bindings reach payload-local imports correctly
-- unresolved payload-local imports fail with direct diagnostics
-
-## Step 5. Materialize lowering
-
-Goal: lower payloads into final call syntax and strip directive carriers.
-
-### Step 5a. Implement resolved call-hole lowering
-
-- implement lowering for:
+- payload-local `astichi_import(...)` in direct `_=` carriers is now rewritten
+  by both `arg_names=` and `builder.assign`
+- payload-local `astichi_export(...)` in direct `_=` carriers now survives
+  materialize as a supply port even though the carrier itself is stripped from
+  emitted Python
+- payload-local `astichi_pass(...)` remains the value-level boundary form in
+  emitted argument positions
+- payload-local `astichi_import/export(...)` on the same name as
+  `astichi_bind_external(...)` reject directly
+- `astichi_bind_external(...)` now works as a normal emitted value form inside
+  `astichi_funcargs(...)`, including `.bind(...)` before materialize
+- plain call-hole lowering is implemented for:
   - `func(astichi_hole(a))`
   - `func(*astichi_hole(a))`
   - `func(**astichi_hole(a))`
-- preserve the resolved hole/contribution/item ordering contract
-- normalize payloads through generated internal `astichi_insert(...)` wrappers
-  until realization
+- plain call-position holes now keep positional/starred items in the hole
+  region and append keyword / `**` items after the authored keyword region of
+  the enclosing call
+- `*astichi_hole(...)` rejects keyword / `**mapping` payload items
+- `**astichi_hole(...)` rejects positional / starred payload items
+- statically-known duplicate explicit keyword names reject during build
+- dynamic collisions knowable only through `**mapping` expansion are still left
+  to normal Python runtime behavior
+- `_=` carriers and generated internal expression placement metadata are now
+  stripped during realization
+- emitted Python no longer contains `astichi_funcargs(...)` or `_=` carriers
+- unsatisfied payload-local `astichi_import(...)` sites remain ordinary demand
+  ports on the materialized composable rather than disappearing
 
-### Step 5b. Implement region-specific validation
+Current proving tests:
 
-- reject named keyword / `**mapping` items targeting `*astichi_hole(...)`
-- reject positional / starred items targeting `**astichi_hole(...)`
-- preserve the resolved plain-hole split between positional-region items and
-  keyword-region items
+- `tests/test_call_argument_payload_materialize.py`
+- `tests/test_call_argument_payload_recognition.py`
+- `tests/test_call_argument_payload_model.py`
+- `tests/test_expression_insert_pipeline.py`
+- `tests/test_bind_external.py`
+- `tests/test_boundaries.py`
+- `tests/test_materialize.py`
 
-### Step 5c. Duplicate keyword rejection
+## Step 5. Staged build coverage
 
-- reject statically-known duplicate explicit keyword names
-- reject them during build
-- leave collisions knowable only through dynamic `**mapping` expansion to
-  normal Python runtime behavior
+Goal: prove the new payload surface survives build boundaries.
 
-### Step 5d. Strip carriers and generated metadata
+### Step 5a. Stage-built payload reuse
 
-- strip `_=` directive carriers
-- strip any generated expression placement metadata
-- keep generated internal `astichi_insert(...)` wrappers as the normalization
-  target for `astichi_funcargs(...)` until realization
-- emit runnable Python with no `astichi_funcargs(...)` or `_=` surface left
+- built payload contributors can be reused in later stages without losing
+  payload shape or directives
+
+### Step 5b. Descendant-ref addressing with payloads
+
+- deep descendant addressing works when the addressed target is a call-argument
+  site fed by payload-based contributions
+
+### Step 5c. Cross-stage import/export/pass
+
+- payload-local imports can be wired in later stages
+- payload-local exports survive stage boundaries as intended
+
+### Step 5d. Reuse isolation
+
+- reused built composables keep per-instance payload scope separation
+- reused staged payloads do not alias each other's exports, imports, or walrus
+  locals
 
 Exit rules:
 
-- materialize emits runnable Python
-- duplicate-key tests pass
-- no `_=` carrier or `astichi_funcargs(...)` survives emitted source
+- staged tests prove the surface survives `build()` boundaries
+- failures in this stage indicate real implementation bugs, not unspecified
+  semantics
 
 ## Step 6. Documentation alignment
 
@@ -307,54 +301,23 @@ Exit rules:
 - active docs do not disagree on the intended authored source surface
 - staged plans and active docs point at the same surface
 
-## Step 7. Staged build coverage
-
-Goal: prove the new payload surface survives build boundaries.
-
-### Step 7a. Stage-built payload reuse
-
-- built payload contributors can be reused in later stages without losing
-  payload shape or directives
-
-### Step 7b. Descendant-ref addressing with payloads
-
-- deep descendant addressing works when the addressed target is a call-argument
-  site fed by payload-based contributions
-
-### Step 7c. Cross-stage import/export/pass
-
-- payload-local imports can be wired in later stages
-- payload-local exports survive stage boundaries as intended
-
-### Step 7d. Reuse isolation
-
-- reused built composables keep per-instance payload scope separation
-- reused staged payloads do not alias each other's exports, imports, or walrus
-  locals
-
-Exit rules:
-
-- staged tests prove the surface survives `build()` boundaries
-- failures in this stage indicate real implementation bugs, not unspecified
-  semantics
-
-## Step 8. Legacy authored-surface removal
+## Step 7. Legacy authored-surface removal
 
 Goal: remove the old user-authored `astichi_insert(target, expr)` path for
 call-argument composition only after the new surface is implemented and covered.
 
-### Step 8a. Migrate remaining old-surface tests
+### Step 7a. Migrate remaining old-surface tests
 
 - convert old authored-expression tests to the new payload surface
 - keep only the coverage that still belongs to generated/internal
   `astichi_insert(...)` behavior
 
-### Step 8b. Reject the legacy authored surface
+### Step 7b. Reject the legacy authored surface
 
 - reject legacy user-authored `astichi_insert(target, expr)` for this surface
 - keep the rejection scoped to call-argument composition
 
-### Step 8c. Final removal/regression coverage
+### Step 7c. Final removal/regression coverage
 
 - keep only the minimum regression coverage needed to prove the authored form
   is no longer accepted here
@@ -369,7 +332,7 @@ Exit rules:
 
 ## Recommended rollout note
 
-The highest-risk part of the plan is Step 5b: plain call-position lowering for
+The highest-risk part of the plan is Step 4f: plain call-position lowering for
 mixed call bundles. Everything else can be staged around that core lowering
-contract. The authored old-surface removal in Step 8 should land only after the
+contract. The authored old-surface removal in Step 7 should land only after the
 new surface is implemented, migrated, and stage-covered.

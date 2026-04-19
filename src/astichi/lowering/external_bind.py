@@ -181,6 +181,19 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
             return node
         return value_to_ast(self.bindings[node.id])
 
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "astichi_bind_external"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in self.bindings
+            and node.args[0].id not in self._current_shadow()
+        ):
+            return value_to_ast(self.bindings[node.args[0].id])
+        return self.generic_visit(node)
+
     def _visit_statements(self, statements: list[ast.stmt]) -> list[ast.stmt]:
         visited: list[ast.stmt] = []
         for statement in statements:

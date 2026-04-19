@@ -125,6 +125,23 @@ def validate_call_argument_payload_surface(tree: ast.Module) -> None:
 
 
 def _validate_funcargs_call(call: ast.Call) -> None:
+    directive_names = {
+        directive.args[0].id
+        for directive in direct_funcargs_directive_calls(call)
+        if directive.args and isinstance(directive.args[0], ast.Name)
+    }
+    bind_external_names = {
+        child.args[0].id
+        for child in ast.walk(call)
+        if _call_name(child) == "astichi_bind_external"
+        and child.args
+        and isinstance(child.args[0], ast.Name)
+    }
+    for name in sorted(directive_names & bind_external_names):
+        raise ValueError(
+            "payload-local astichi_import/export and astichi_bind_external may "
+            f"not share the same name `{name}` inside astichi_funcargs(...)"
+        )
     for arg in call.args:
         if _contains_non_value_directive(arg):
             raise ValueError(

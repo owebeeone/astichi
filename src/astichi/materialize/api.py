@@ -14,7 +14,18 @@ from astichi.builder.graph import (
     InstanceRecord,
 )
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
-from astichi.lowering import recognize_markers
+from astichi.lowering import (
+    DirectiveFuncArgItem,
+    DoubleStarFuncArgItem,
+    KeywordFuncArgItem,
+    PositionalFuncArgItem,
+    RecognizedMarker,
+    StarredFuncArgItem,
+    direct_funcargs_directive_calls,
+    extract_funcargs_payload,
+    is_astichi_funcargs_call,
+    recognize_markers,
+)
 from astichi.lowering.markers import (
     ARG_IDENTIFIER,
     KEEP_IDENTIFIER,
@@ -46,6 +57,7 @@ from astichi.shell_refs import (
 @dataclass(frozen=True)
 class _ExpressionInsert:
     expr: ast.expr
+    payload: object | None
     edge_order: int
     inline_order: int
     edge_index: int
@@ -825,6 +837,23 @@ def _extract_expression_inserts(
     edge_index: int,
     source_instance: str,
 ) -> list[_ExpressionInsert]:
+    if (
+        len(tree.body) == 1
+        and isinstance(tree.body[0], ast.Expr)
+        and isinstance(tree.body[0].value, ast.Call)
+        and is_astichi_funcargs_call(tree.body[0].value)
+    ):
+        call = tree.body[0].value
+        return [
+            _ExpressionInsert(
+                expr=copy.deepcopy(call),
+                payload=extract_funcargs_payload(call),
+                edge_order=edge_order,
+                inline_order=0,
+                edge_index=edge_index,
+                statement_index=0,
+            )
+        ]
     inserts: list[_ExpressionInsert] = []
     for stmt_index, stmt in enumerate(tree.body):
         if not isinstance(stmt, ast.Expr):
@@ -844,6 +873,7 @@ def _extract_expression_inserts(
         inserts.append(
             _ExpressionInsert(
                 expr=copy.deepcopy(stmt.value.args[1]),
+                payload=None,
                 edge_order=edge_order,
                 inline_order=_extract_insert_order(stmt.value),
                 edge_index=edge_index,
@@ -859,6 +889,7 @@ def _extract_expression_inserts(
         return [
             _ExpressionInsert(
                 expr=copy.deepcopy(expr),
+                payload=None,
                 edge_order=edge_order,
                 inline_order=0,
                 edge_index=edge_index,
@@ -931,6 +962,73 @@ def _make_expression_insert_call(target_name: str, expr: ast.expr) -> ast.Call:
     )
 
 
+def _payload_explicit_keyword_names(insert: _ExpressionInsert) -> tuple[str, ...]:
+    if insert.payload is None:
+        return ()
+    return tuple(
+        item.name
+        for item in insert.payload.items
+        if isinstance(item, KeywordFuncArgItem)
+    )
+
+
+def _validate_star_region_inserts(
+    hole_name: str, inserts: list[_ExpressionInsert]
+) -> None:
+    for insert in inserts:
+        if insert.payload is None:
+            continue
+        for item in insert.payload.items:
+            if isinstance(item, (DirectiveFuncArgItem, PositionalFuncArgItem, StarredFuncArgItem)):
+                continue
+            raise ValueError(
+                f"starred target {hole_name} rejects keyword / **mapping payload items"
+            )
+
+
+def _validate_dstar_region_inserts(
+    hole_name: str,
+    inserts: list[_ExpressionInsert],
+    *,
+    seen_explicit_keywords: set[str],
+) -> None:
+    for insert in inserts:
+        if insert.payload is None:
+            if not isinstance(insert.expr, ast.Dict):
+                raise ValueError(
+                    f"named variadic target {hole_name} requires dict-display expression inserts"
+                )
+            continue
+        for item in insert.payload.items:
+            if isinstance(item, (DirectiveFuncArgItem, KeywordFuncArgItem, DoubleStarFuncArgItem)):
+                continue
+            raise ValueError(
+                f"double-starred target {hole_name} rejects positional / starred payload items"
+            )
+        for name in _payload_explicit_keyword_names(insert):
+            if name in seen_explicit_keywords:
+                raise ValueError(
+                    f"duplicate explicit keyword `{name}` in call-argument payloads"
+                )
+            seen_explicit_keywords.add(name)
+
+
+def _validate_plain_call_region_inserts(
+    inserts: list[_ExpressionInsert],
+    *,
+    seen_explicit_keywords: set[str],
+) -> None:
+    for insert in inserts:
+        if insert.payload is None:
+            continue
+        for name in _payload_explicit_keyword_names(insert):
+            if name in seen_explicit_keywords:
+                raise ValueError(
+                    f"duplicate explicit keyword `{name}` in call-argument payloads"
+                )
+            seen_explicit_keywords.add(name)
+
+
 class _HoleReplacementTransformer(ast.NodeTransformer):
     def __init__(
         self,
@@ -987,7 +1085,82 @@ class _HoleReplacementTransformer(ast.NodeTransformer):
                     f"scalar expression target {hole_name} accepts at most one insert"
                 )
             return _make_expression_insert_call(hole_name, inserts[0].expr)
-        return self.generic_visit(node)
+
+        node.func = self.visit(node.func)
+
+        authored_explicit_keywords = [
+            keyword.arg for keyword in node.keywords if keyword.arg is not None
+        ]
+        seen_explicit_keywords: set[str] = set()
+        for name in authored_explicit_keywords:
+            if name in seen_explicit_keywords:
+                raise ValueError(
+                    f"duplicate explicit keyword `{name}` in call-argument payloads"
+                )
+            seen_explicit_keywords.add(name)
+
+        new_args: list[ast.expr] = []
+        suffix_keywords: list[ast.keyword] = []
+        for arg in node.args:
+            hole_name = _extract_expr_hole_name(arg)
+            if hole_name is not None and hole_name in self.expr_replacements:
+                inserts = self.expr_replacements[hole_name]
+                _validate_plain_call_region_inserts(
+                    inserts, seen_explicit_keywords=seen_explicit_keywords
+                )
+                new_args.extend(
+                    _make_expression_insert_call(hole_name, insert.expr)
+                    for insert in inserts
+                )
+                continue
+            if (
+                isinstance(arg, ast.Starred)
+                and (hole_name := _extract_expr_hole_name(arg.value)) is not None
+                and hole_name in self.expr_replacements
+            ):
+                inserts = self.expr_replacements[hole_name]
+                _validate_star_region_inserts(hole_name, inserts)
+                new_args.extend(
+                    ast.Starred(
+                        value=_make_expression_insert_call(hole_name, insert.expr),
+                        ctx=arg.ctx,
+                    )
+                    for insert in inserts
+                )
+                continue
+            visited = self.visit(arg)
+            if isinstance(visited, list):
+                new_args.extend(visited)
+            else:
+                new_args.append(visited)
+
+        new_keywords: list[ast.keyword] = []
+        for keyword in node.keywords:
+            hole_name = _extract_expr_hole_name(keyword.value)
+            if keyword.arg is None and hole_name is not None and hole_name in self.expr_replacements:
+                inserts = self.expr_replacements[hole_name]
+                _validate_dstar_region_inserts(
+                    hole_name,
+                    inserts,
+                    seen_explicit_keywords=seen_explicit_keywords,
+                )
+                new_keywords.extend(
+                    ast.keyword(
+                        arg=None,
+                        value=_make_expression_insert_call(hole_name, insert.expr),
+                    )
+                    for insert in inserts
+                )
+                continue
+            visited = self.visit(keyword)
+            if isinstance(visited, list):
+                new_keywords.extend(visited)
+            else:
+                new_keywords.append(visited)
+
+        node.args = new_args
+        node.keywords = new_keywords
+        return node
 
     def visit_Starred(self, node: ast.Starred) -> ast.AST | list[ast.expr]:
         hole_name = _extract_expr_hole_name(node.value)
@@ -1071,8 +1244,124 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         if _is_expression_insert_call(node):
-            return self.visit(copy.deepcopy(node.args[1]))
-        return self.generic_visit(node)
+            payload_expr = node.args[1]
+            if is_astichi_funcargs_call(payload_expr):
+                raise ValueError(
+                    "astichi_funcargs payload wrapper must be realized in a call "
+                    "argument position"
+                )
+            return self.visit(copy.deepcopy(payload_expr))
+
+        node.func = self.visit(node.func)
+
+        new_args: list[ast.expr] = []
+        suffix_keywords: list[ast.keyword] = []
+        for arg in node.args:
+            if (
+                isinstance(arg, ast.Call)
+                and _is_expression_insert_call(arg)
+                and is_astichi_funcargs_call(arg.args[1])
+            ):
+                payload = extract_funcargs_payload(arg.args[1])
+                for item in payload.items:
+                    if isinstance(item, DirectiveFuncArgItem):
+                        continue
+                    if isinstance(item, PositionalFuncArgItem):
+                        new_args.append(self.visit(copy.deepcopy(item.expr)))
+                    elif isinstance(item, StarredFuncArgItem):
+                        new_args.append(
+                            ast.Starred(
+                                value=self.visit(copy.deepcopy(item.expr)),
+                                ctx=ast.Load(),
+                            )
+                        )
+                    elif isinstance(item, KeywordFuncArgItem):
+                        suffix_keywords.append(
+                            ast.keyword(
+                                arg=item.name,
+                                value=self.visit(copy.deepcopy(item.expr)),
+                            )
+                        )
+                    elif isinstance(item, DoubleStarFuncArgItem):
+                        suffix_keywords.append(
+                            ast.keyword(
+                                arg=None,
+                                value=self.visit(copy.deepcopy(item.expr)),
+                            )
+                        )
+                continue
+            if (
+                isinstance(arg, ast.Starred)
+                and isinstance(arg.value, ast.Call)
+                and _is_expression_insert_call(arg.value)
+                and is_astichi_funcargs_call(arg.value.args[1])
+            ):
+                payload = extract_funcargs_payload(arg.value.args[1])
+                for item in payload.items:
+                    if isinstance(item, DirectiveFuncArgItem):
+                        continue
+                    if isinstance(item, PositionalFuncArgItem):
+                        new_args.append(self.visit(copy.deepcopy(item.expr)))
+                    elif isinstance(item, StarredFuncArgItem):
+                        new_args.append(
+                            ast.Starred(
+                                value=self.visit(copy.deepcopy(item.expr)),
+                                ctx=ast.Load(),
+                            )
+                        )
+                    else:
+                        raise ValueError(
+                            "starred call-argument payload may not emit keyword "
+                            "or **mapping items"
+                        )
+                continue
+            visited = self.visit(arg)
+            if isinstance(visited, list):
+                new_args.extend(visited)
+            else:
+                new_args.append(visited)
+
+        new_keywords: list[ast.keyword] = []
+        for keyword in node.keywords:
+            if (
+                keyword.arg is None
+                and isinstance(keyword.value, ast.Call)
+                and _is_expression_insert_call(keyword.value)
+                and is_astichi_funcargs_call(keyword.value.args[1])
+            ):
+                payload = extract_funcargs_payload(keyword.value.args[1])
+                for item in payload.items:
+                    if isinstance(item, DirectiveFuncArgItem):
+                        continue
+                    if isinstance(item, KeywordFuncArgItem):
+                        new_keywords.append(
+                            ast.keyword(
+                                arg=item.name,
+                                value=self.visit(copy.deepcopy(item.expr)),
+                            )
+                        )
+                    elif isinstance(item, DoubleStarFuncArgItem):
+                        new_keywords.append(
+                            ast.keyword(
+                                arg=None,
+                                value=self.visit(copy.deepcopy(item.expr)),
+                            )
+                        )
+                    else:
+                        raise ValueError(
+                            "double-starred call-argument payload may not emit "
+                            "positional or starred items"
+                        )
+                continue
+            visited = self.visit(keyword)
+            if isinstance(visited, list):
+                new_keywords.extend(visited)
+            else:
+                new_keywords.append(visited)
+
+        node.args = new_args
+        node.keywords = new_keywords + suffix_keywords
+        return node
 
     def visit_Starred(self, node: ast.Starred) -> ast.AST | list[ast.expr]:
         if isinstance(node.value, ast.Call) and _is_expression_insert_call(node.value):
@@ -1132,6 +1421,15 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
         node.keys = new_keys
         node.values = new_values
         return node
+
+
+def _payload_local_directive_markers(tree: ast.Module) -> tuple[RecognizedMarker, ...]:
+    markers = recognize_markers(tree)
+    return tuple(
+        marker
+        for marker in markers
+        if marker.source_name in {"astichi_import", "astichi_export"}
+    )
 
 
 def materialize_composable(composable: BasicComposable) -> BasicComposable:
@@ -1258,10 +1556,11 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         trust_names=composable.keep_names,
     )
     rename_scope_collisions(analysis)
+    payload_directive_markers = _payload_local_directive_markers(tree)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
 
-    pre_strip_markers = recognize_markers(tree)
+    pre_strip_markers = payload_directive_markers + recognize_markers(tree)
     pre_strip_composable = BasicComposable(
         tree=tree,
         origin=composable.origin,
@@ -1787,6 +2086,25 @@ def _resolve_boundary_imports(
                 _rewrite_boundary_import_name(statement, local_map[info[0]])
                 continue
             _BoundaryImportRenamer(local_map).visit(statement)
+    for expr_insert in _find_expression_insert_payload_nodes(tree):
+        payload_call = expr_insert.args[1]
+        assert isinstance(payload_call, ast.Call)
+        declared_imports = {
+            directive.args[0].id
+            for directive in direct_funcargs_directive_calls(payload_call)
+            if isinstance(directive.func, ast.Name)
+            and directive.func.id == "astichi_import"
+            and directive.args
+            and isinstance(directive.args[0], ast.Name)
+        }
+        local_map = {
+            name: bindings[name]
+            for name in declared_imports
+            if name in bindings and bindings[name] != name
+        }
+        if not local_map:
+            continue
+        _BoundaryImportRenamer(local_map).visit(payload_call)
 
 
 def _find_astichi_shell_nodes(
@@ -1804,6 +2122,18 @@ def _find_astichi_shell_nodes(
                     shells.append(node)
                     break
     return shells
+
+
+def _find_expression_insert_payload_nodes(tree: ast.AST) -> list[ast.Call]:
+    nodes: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _is_expression_insert_call(node)
+            and is_astichi_funcargs_call(node.args[1])
+        ):
+            nodes.append(node)
+    return nodes
 
 
 def _declared_imports_at_shell_top(
