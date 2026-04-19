@@ -266,6 +266,25 @@ def collect_identifier_demands_in_body(body: list[ast.stmt]) -> frozenset[str]:
             break
         names.add(info[0])
 
+    # ``(x := astichi_pass(y))`` as a direct scope-body statement: inner ``y``
+    # is assign-wirable like ``astichi_import(y)`` (``builder.assign``).
+    for statement in body:
+        if not isinstance(statement, ast.Expr):
+            continue
+        if not isinstance(statement.value, ast.NamedExpr):
+            continue
+        ne = statement.value
+        inner = ne.value
+        if (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "astichi_pass"
+            and len(inner.args) == 1
+            and isinstance(inner.args[0], ast.Name)
+            and not inner.keywords
+        ):
+            names.add(inner.args[0].id)
+
     class _Collector(ast.NodeVisitor):
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             if is_astichi_insert_shell(node):

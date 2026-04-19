@@ -451,17 +451,25 @@ def build_merge(
                 source_port = _lookup_supply_port(
                     source_record.composable, raw_target_name
                 )
+                source_tree = trees[edge.source_instance]
+                implicit_expr_supply = (
+                    _implicit_expression_supply_after_boundary_prefix(source_tree.body)
+                    is not None
+                )
                 if target_port is not None and source_port is not None:
                     validate_port_pair(target_port, source_port)
                 if target_port is not None and target_port.placement == "expr":
-                    if source_port is None or source_port.placement != "expr":
+                    expr_source_ok = (
+                        source_port is not None and source_port.placement == "expr"
+                    ) or (source_port is None and implicit_expr_supply)
+                    if not expr_source_ok:
                         raise ValueError(
                             f"source instance {edge.source_instance} cannot satisfy "
                             f"expression target {inst_name}.{effective_target_name}"
                         )
                     inserts.extend(
                         _extract_expression_inserts(
-                            trees[edge.source_instance],
+                            source_tree,
                             raw_target_name,
                             edge_order=edge.order,
                             edge_index=_idx,
@@ -770,6 +778,45 @@ def _lookup_supply_port(
     return None
 
 
+_BOUNDARY_EXPR_PREFIX_NAMES: frozenset[str] = frozenset(
+    {"astichi_import", "astichi_pass", "astichi_export"}
+)
+
+
+def _implicit_expression_supply_after_boundary_prefix(
+    body: list[ast.stmt],
+) -> tuple[ast.expr, int] | None:
+    """If ``body`` is ``<boundary Expr(Call) prefix>* <one Expr (non-insert)``,
+    return the trailing expression and its statement index.
+
+    This lets contributors write plain user expressions (e.g. ``(x := y)``)
+    for expression targets without spelling ``astichi_insert(...)`` in source;
+    merge synthesizes the insert wrapper from the edge target name.
+    """
+    index = 0
+    while index < len(body):
+        stmt = body[index]
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            break
+        call = stmt.value
+        if not isinstance(call.func, ast.Name):
+            break
+        if call.func.id not in _BOUNDARY_EXPR_PREFIX_NAMES:
+            break
+        index += 1
+    rest = body[index:]
+    if len(rest) != 1:
+        return None
+    final = rest[0]
+    if not isinstance(final, ast.Expr):
+        return None
+    if isinstance(final.value, ast.Call) and _is_expression_insert_call(
+        final.value
+    ):
+        return None
+    return final.value, index
+
+
 def _extract_expression_inserts(
     tree: ast.Module,
     target_name: str,
@@ -803,12 +850,26 @@ def _extract_expression_inserts(
                 statement_index=stmt_index,
             )
         )
-    if not inserts:
-        raise ValueError(
-            f"source instance {source_instance} cannot satisfy expression target "
-            f"{target_name}: no matching astichi_insert(...) wrappers found"
-        )
-    return inserts
+    if inserts:
+        return inserts
+
+    implicit = _implicit_expression_supply_after_boundary_prefix(tree.body)
+    if implicit is not None:
+        expr, stmt_index = implicit
+        return [
+            _ExpressionInsert(
+                expr=copy.deepcopy(expr),
+                edge_order=edge_order,
+                inline_order=0,
+                edge_index=edge_index,
+                statement_index=stmt_index,
+            )
+        ]
+
+    raise ValueError(
+        f"source instance {source_instance} cannot satisfy expression target "
+        f"{target_name}: no matching astichi_insert(...) wrappers found"
+    )
 
 
 def _contains_top_level_expression_insert(stmt: ast.stmt) -> bool:
@@ -1472,9 +1533,10 @@ _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
 # and scope-identity classification by the time we run the residual
 # stripper. They carry no runtime value and must not appear in the
 # emitted source. Unlike `astichi_keep` / `astichi_export`, these
-# markers are statement-only (no expression-form wrapping), so we
-# strip the enclosing Expr and leave any embedded Call position
-# untouched.
+# markers are normally statement-only; ``astichi_pass`` may also appear
+# as the RHS of a top-level walrus and is lowered in ``visit_NamedExpr``.
+# We strip the enclosing ``Expr`` for statement-form import/pass and leave
+# other positions to the NamedExpr handler.
 _BOUNDARY_STATEMENT_MARKER_NAMES: frozenset[str] = frozenset(
     {"astichi_import", "astichi_pass"}
 )
@@ -1522,6 +1584,23 @@ def _strip_residual_markers(tree: ast.AST) -> None:
 
 
 class _ResidualMarkerStripper(ast.NodeTransformer):
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.AST:
+        inner = node.value
+        if (
+            isinstance(inner, ast.Call)
+            and _is_boundary_statement_marker(inner)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "astichi_pass"
+            and len(inner.args) == 1
+            and isinstance(inner.args[0], ast.Name)
+            and not inner.keywords
+        ):
+            return ast.NamedExpr(
+                target=node.target,
+                value=copy.deepcopy(inner.args[0]),
+            )
+        return self.generic_visit(node)
+
     def generic_visit(self, node: ast.AST) -> ast.AST:
         for field, value in ast.iter_fields(node):
             if isinstance(value, list):

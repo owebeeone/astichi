@@ -226,6 +226,16 @@ Current shape vocabulary in code:
 - `POSITIONAL_VARIADIC`
 - `NAMED_VARIADIC`
 
+**Future hole / clause shapes (non-normative):** the current vocabulary covers
+block suites, scalar/`*`/`**` expression sites, and identifier-shaped demands;
+composing **additional `except` / `elif` / `match` `case` clauses**, typed
+`with` items, decorators, parameters, import pieces, and similar **list-field**
+AST targets needs a broader shape inventory (whole-clause supplies, optional
+`stmt` / `stmt_block`, and finer targets only where justified). Design space and
+rationale — including “whole-unit” modeling vs splitting clause headers and bodies
+— live in `dev-docs/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only, not
+shipped).
+
 ## 5. What is already implemented and working
 
 ### 5.1 Core pipeline

@@ -189,6 +189,43 @@ result = astichi_import(bad_in_expr)
         )
 
 
+def test_placement_accepts_astichi_pass_as_module_level_walrus_rhs() -> None:
+    # ``astichi_pass`` may appear as the RHS of a top-level walrus so the
+    # walrus target and pass-through name are distinct bindings.
+    astichi.compile(
+        """
+astichi_export(out)
+(result := astichi_pass(inner))
+"""
+    )
+
+
+def test_placement_rejects_astichi_import_as_walrus_rhs() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_import\(\.\.\.\) at line \d+",
+    ):
+        astichi.compile(
+            """
+(x := astichi_import(y))
+"""
+        )
+
+
+def test_placement_rejects_astichi_pass_walrus_inside_compound_statement() -> None:
+    # Walrus + ``astichi_pass`` is only valid as a direct scope-body stmt.
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_pass\(\.\.\.\) at line \d+",
+    ):
+        astichi.compile(
+            """
+if True:
+    (x := astichi_pass(y))
+"""
+        )
+
+
 # ---------------------------------------------------------------------------
 # 6b: hygiene pinning + interaction matrix
 # ---------------------------------------------------------------------------

@@ -346,8 +346,9 @@ ARG_IDENTIFIER = _ArgIdentifierMarker()
 # Issue 006 §9.2: `astichi_import(name)` imports an outer-scope
 # identifier into the inner Astichi scope; `astichi_pass(name)` exposes
 # an inner-scope identifier to the outer scope. Both are boundary
-# declarations whose placement rule (top of inner scope, before real
-# statements) is enforced by the placement gate in `boundaries.py`.
+# declarations; placement (top of inner scope before real statements, or
+# `astichi_pass` as the RHS of a top-level walrus) is enforced in
+# `boundaries.py`.
 IMPORT = _SimpleMarker(
     "astichi_import",
     positional_args=1,

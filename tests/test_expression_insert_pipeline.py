@@ -151,3 +151,61 @@ outcome = astichi_keep(value)
     assert "outcome = value" in rendered
     assert "astichi_keep" not in rendered
     assert "value__astichi_scoped_" in rendered
+
+
+def test_if_condition_expression_insert_walrus_imports_outer_and_exports_binding() -> None:
+    """`if astichi_hole(expr):` is an expression site; supply a walrus that uses
+    ``(x := astichi_pass(y))`` so the inner ``x`` binding is distinct from the
+    pass-through name ``y``, and ``astichi_export(x)`` publishes the bound name.
+
+    Outer ``y`` is wired with ``builder.assign.Impl.y.to().Root.y`` (not
+    ``keep_names``). ``build_merge`` synthesizes ``astichi_insert(expr, ...)``
+    from the additive edge; contributors do not spell ``astichi_insert`` in
+    source.
+
+    The merged module must not mention ``print(x)`` — a second bare ``x`` in
+    the root fragment gets a distinct hygiene rename from the walrus ``x`` and
+    breaks at runtime. We run ``print(x)`` in the test after ``exec`` (same
+    namespace) to verify the walrus binding.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    root_src = """
+y = 10
+if astichi_hole(expr):
+    pass
+"""
+
+    impl_src = """
+astichi_export(x)
+(x := astichi_pass(y))
+"""
+
+    builder = astichi.build()
+    builder.add.Root(astichi.compile(root_src))
+    builder.add.Impl(astichi.compile(impl_src))
+    builder.assign.Impl.y.to().Root.y
+    builder.Root.expr.add.Impl()
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+
+    assert "astichi_hole" not in source
+    assert "astichi_insert" not in source
+    assert "astichi_import" not in source
+    assert "astichi_export" not in source
+    assert "if (x := y):" in source
+    assert "y = 10" in source
+
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<test>", "exec"), namespace)
+
+    assert namespace["x"] == 10
+    assert namespace["y"] == 10
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        exec("print(x)", namespace)
+
+    assert buf.getvalue().strip() == "10"
