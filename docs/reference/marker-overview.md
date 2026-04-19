@@ -31,8 +31,8 @@ Call-argument note:
 
 - `astichi_funcargs(...)` is the authored call-argument payload surface
 - decorator-form `@astichi_insert(...)` remains the public block-shell surface
-- user-authored `astichi_insert(target, expr)` may still exist as legacy
-  behavior, but it is not the intended authored call-argument API
+- user-authored `astichi_insert(target, expr)` is rejected for call-argument
+  targets and only remains as legacy behavior for non-call expression targets
 
 ## Identifier arguments
 

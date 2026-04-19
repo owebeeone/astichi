@@ -204,7 +204,7 @@ There is still a docs/code drift on this format; see §9.4.
 | `astichi_hole(name)` | implemented | Demand port. Shape inferred from AST position. |
 | `@astichi_insert(name, order=...)` | implemented | Block-form supply. Must match a hole. |
 | `astichi_funcargs(...)` | implemented | Authored call-argument payload surface. Lowered through generated internal placement wrappers. |
-| `astichi_insert(name, expr)` | legacy/internal | Legacy authored expression supply still exists in code/tests, but it is not the intended authored call-argument surface. Generated internal wrappers still use it. |
+| `astichi_insert(name, expr)` | legacy/internal | Rejected for call-argument targets. Still exists for non-call expression targets and as generated internal wrapper metadata. |
 | `astichi_keep(name)` | implemented | Pins lexical spelling; stripped during materialize. |
 | `astichi_export(name)` | implemented | Supply-side export; stripped during materialize. |
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
@@ -288,6 +288,8 @@ Current materialize behavior that is already in place:
 - unresolved `astichi_bind_external(...)` rejects
 - unmatched block-form `@astichi_insert(name)` rejects
 - unmatched bare statement `astichi_insert(name, expr)` rejects
+- user-authored `astichi_insert(name, expr)` rejects when used to satisfy a
+  call-argument target; `astichi_funcargs(...)` is required there
 - authored `astichi_funcargs(...)` lowers through generated internal
   `astichi_insert(...)` wrappers before realization
 - matched source-level inserts flatten into hole positions

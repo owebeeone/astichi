@@ -490,37 +490,32 @@ def test_v3_keep_matrix_reused_build_pin_stays_local_to_one_instance() -> None:
 
 
 @pytest.mark.parametrize(
-    ("root_source", "insert_source", "expected_fragment"),
+    ("root_source", "insert_sources", "expected_fragment"),
     [
         (
             "result = astichi_hole(value)\n",
-            "astichi_insert(value, 42)\n",
+            ("astichi_insert(value, 42)\n",),
             "result = 42",
         ),
         (
             "result = func(*astichi_hole(args))\n",
-            "astichi_insert(args, first_arg)\nastichi_insert(args, second_arg, order=10)\n",
+            ("astichi_funcargs(first_arg)\n", "astichi_funcargs(second_arg)\n"),
             "result = func(first_arg, second_arg)",
         ),
         (
             "result = func(**astichi_hole(kwargs))\n",
-            "astichi_insert(kwargs, {first: one})\nastichi_insert(kwargs, {second: two}, order=20)\n",
+            ("astichi_funcargs(first=one)\n", "astichi_funcargs(second=two)\n"),
             "result = func(first=one, second=two)",
         ),
     ],
 )
 def test_v3_expression_variadic_matrix_stage_built_sources(
     root_source: str,
-    insert_source: str,
+    insert_sources: tuple[str, ...],
     expected_fragment: str,
 ) -> None:
-    stage1 = astichi.build()
-    stage1.add.Impl(_piece(insert_source))
-    built = stage1.build()
-
     stage2 = astichi.build()
     stage2.add.Root(_piece(root_source))
-    stage2.add.Impl(built)
 
     target_name = "value"
     if "args" in root_source:
@@ -528,7 +523,13 @@ def test_v3_expression_variadic_matrix_stage_built_sources(
     if "kwargs" in root_source:
         target_name = "kwargs"
 
-    getattr(stage2.Root, target_name).add.Impl(order=0)
+    for index, insert_source in enumerate(insert_sources):
+        stage1 = astichi.build()
+        name = f"Impl{index}"
+        stage1.add.Impl(_piece(insert_source))
+        built = stage1.build()
+        getattr(stage2.add, name)(built)
+        getattr(getattr(stage2.Root, target_name).add, name)(order=index)
 
     source = stage2.build().materialize().emit(provenance=False)
     assert expected_fragment in source

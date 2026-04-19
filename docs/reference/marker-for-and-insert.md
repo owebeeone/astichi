@@ -64,8 +64,8 @@ astichi_funcargs(
 )
 ```
 
-- User-authored `astichi_insert(target, expr)` is not the intended authored
-  call-argument API. It remains legacy behavior only.
+- User-authored `astichi_insert(target, expr)` is rejected for call-argument
+  targets. It remains legacy behavior only for non-call expression targets.
 
 ## See also
 

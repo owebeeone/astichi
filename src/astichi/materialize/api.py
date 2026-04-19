@@ -447,6 +447,11 @@ def build_merge(
                 instance_name=inst_name,
                 role="target path",
             )
+            target_body = (
+                _effective_root_body(target_shell.body)
+                if not target_ref_path
+                else target_shell.body
+            )
             if (
                 target_ref_path
                 and effective_target_name
@@ -473,12 +478,23 @@ def build_merge(
                 )
                 source_tree = trees[edge.source_instance]
                 implicit_expr_supply = (
-                    _implicit_expression_supply_after_boundary_prefix(source_tree.body)
+                    _implicit_expression_supply_after_boundary_prefix(
+                        _effective_root_body(source_tree.body)
+                    )
                     is not None
                 )
                 if target_port is not None and source_port is not None:
                     validate_port_pair(target_port, source_port)
                 if target_port is not None and target_port.placement == "expr":
+                    if (
+                        _is_call_argument_target_body(target_body, effective_target_name)
+                        and _has_authored_expression_insert_source(source_tree, raw_target_name)
+                    ):
+                        raise ValueError(
+                            "legacy user-authored astichi_insert(target, expr) "
+                            "is not supported for call-argument targets; use "
+                            "astichi_funcargs(...)"
+                        )
                     expr_source_ok = (
                         source_port is not None and source_port.placement == "expr"
                     ) or (source_port is None and implicit_expr_supply)
@@ -992,6 +1008,61 @@ def _extract_expression_inserts(
         f"source instance {source_instance} cannot satisfy expression target "
         f"{target_name}: no matching astichi_insert(...) wrappers found"
     )
+
+
+def _has_authored_expression_insert_source(
+    tree: ast.Module, target_name: str
+) -> bool:
+    for stmt in _effective_root_body(tree.body):
+        if not isinstance(stmt, ast.Expr):
+            continue
+        if not isinstance(stmt.value, ast.Call):
+            continue
+        if not _is_expression_insert_call(stmt.value):
+            continue
+        if _insert_target_name(stmt.value) == target_name:
+            return True
+    return False
+
+
+def _is_call_argument_target_body(body: list[ast.stmt], hole_name: str) -> bool:
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.found = False
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            for arg in node.args:
+                target = arg.value if isinstance(arg, ast.Starred) else arg
+                if _extract_expr_hole_name(target) == hole_name:
+                    self.found = True
+                    return
+            for keyword in node.keywords:
+                if keyword.arg is None and _extract_expr_hole_name(keyword.value) == hole_name:
+                    self.found = True
+                    return
+            self.generic_visit(node)
+
+    visitor = _Visitor()
+    for statement in body:
+        visitor.visit(statement)
+        if visitor.found:
+            return True
+    return False
 
 
 def _contains_top_level_expression_insert(stmt: ast.stmt) -> bool:

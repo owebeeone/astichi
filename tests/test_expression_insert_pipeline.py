@@ -37,11 +37,11 @@ def test_build_scalar_expression_insert_rejects_multiple_inserts() -> None:
         builder.build()
 
 
-def test_build_positional_variadic_expression_insert_orders_elements() -> None:
+def test_build_positional_variadic_funcargs_orders_elements() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = func(*astichi_hole(args))\n"))
-    builder.add.First(astichi.compile("astichi_insert(args, first_arg)\n"))
-    builder.add.Second(astichi.compile("astichi_insert(args, second_arg)\n"))
+    builder.add.First(astichi.compile("astichi_funcargs(first_arg)\n"))
+    builder.add.Second(astichi.compile("astichi_funcargs(second_arg)\n"))
     builder.Root.args.add.First(order=20)
     builder.Root.args.add.Second(order=10)
 
@@ -51,18 +51,13 @@ def test_build_positional_variadic_expression_insert_orders_elements() -> None:
     assert "result = func(second_arg, first_arg)" in rendered
 
 
-def test_build_named_variadic_expression_insert_uses_inline_order() -> None:
+def test_build_named_variadic_funcargs_uses_edge_order() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = func(**astichi_hole(kwargs))\n"))
-    builder.add.Impl(
-        astichi.compile(
-            """
-astichi_insert(kwargs, {first: one})
-astichi_insert(kwargs, {second: two}, order=20)
-"""
-        )
-    )
-    builder.Root.kwargs.add.Impl()
+    builder.add.First(astichi.compile("astichi_funcargs(first=one)\n"))
+    builder.add.Second(astichi.compile("astichi_funcargs(second=two)\n"))
+    builder.Root.kwargs.add.First(order=10)
+    builder.Root.kwargs.add.Second(order=20)
 
     result = builder.build().materialize()
 
@@ -86,15 +81,31 @@ def test_build_dict_variadic_expression_insert_expands_entries() -> None:
     assert "result = {dynamic_key: computed_value, fixed: 1}" in rendered
 
 
-def test_build_named_variadic_expression_insert_rejects_non_dict_payload() -> None:
+def test_build_double_starred_funcargs_rejects_positional_payload() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = func(**astichi_hole(kwargs))\n"))
-    builder.add.Bad(astichi.compile("astichi_insert(kwargs, bad_value)\n"))
+    builder.add.Bad(astichi.compile("astichi_funcargs(bad_value)\n"))
     builder.Root.kwargs.add.Bad()
 
     with pytest.raises(
         ValueError,
-        match="named variadic target kwargs requires dict-display expression inserts",
+        match="double-starred target kwargs rejects positional / starred payload items",
+    ):
+        builder.build()
+
+
+def test_build_rejects_legacy_authored_call_argument_insert_surface() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("result = func(*astichi_hole(args))\n"))
+    builder.add.Legacy(astichi.compile("astichi_insert(args, first_arg)\n"))
+    builder.Root.args.add.Legacy()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"legacy user-authored astichi_insert\(target, expr\) is not "
+            r"supported for call-argument targets; use astichi_funcargs\(\.\.\.\)"
+        ),
     ):
         builder.build()
 

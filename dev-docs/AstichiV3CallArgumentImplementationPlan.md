@@ -299,38 +299,30 @@ Completed behavior:
 - the staged test plan now describes staged call-argument coverage in terms of
   `astichi_funcargs(...)`
 
-## Step 7. Legacy authored-surface removal
+## Completed in roll-build: Step 7. Legacy authored-surface removal
 
-Goal: remove the old user-authored `astichi_insert(target, expr)` path for
-call-argument composition only after the new surface is implemented and covered.
+The final call-argument shutdown is now complete.
 
-### Step 7a. Migrate remaining old-surface tests
+Completed behavior:
 
-- convert old authored-expression tests to the new payload surface
-- keep only the coverage that still belongs to generated/internal
-  `astichi_insert(...)` behavior
+- staged and pipeline tests that previously used user-authored
+  `astichi_insert(target, expr)` for call-argument composition now use
+  `astichi_funcargs(...)`
+- user-authored `astichi_insert(target, expr)` is now rejected when the target
+  hole is a call-argument region
+- the rejection remains scoped to call-argument composition only
+- generic non-call expression-target behavior and generated internal
+  `astichi_insert(...)` normalization remain covered
 
-### Step 7b. Reject the legacy authored surface
+Current proving tests:
 
-- reject legacy user-authored `astichi_insert(target, expr)` for this surface
-- keep the rejection scoped to call-argument composition
-
-### Step 7c. Final removal/regression coverage
-
-- keep only the minimum regression coverage needed to prove the authored form
-  is no longer accepted here
-- verify generated internal `astichi_insert(...)` normalization still works
-
-Exit rules:
-
-- no active call-argument tests rely on user-authored
-  `astichi_insert(target, expr)`
-- authored `astichi_insert(target, expr)` is rejected for this surface
-- generated internal `astichi_insert(...)` behavior remains covered
+- `tests/test_expression_insert_pipeline.py`
+- `tests/test_staged_build_refs_and_bindings.py`
+- `tests/test_call_argument_payload_materialize.py`
+- `tests/test_materialize.py`
 
 ## Recommended rollout note
 
 The highest-risk part of the plan is Step 4f: plain call-position lowering for
 mixed call bundles. Everything else can be staged around that core lowering
-contract. The authored old-surface removal in Step 7 should land only after the
-new surface is implemented, migrated, and stage-covered.
+contract. That removal is now complete for call-argument targets.
