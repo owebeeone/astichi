@@ -494,7 +494,7 @@ def test_v3_keep_matrix_reused_build_pin_stays_local_to_one_instance() -> None:
     [
         (
             "result = astichi_hole(value)\n",
-            ("astichi_insert(value, 42)\n",),
+            ("42\n",),
             "result = 42",
         ),
         (

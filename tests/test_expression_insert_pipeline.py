@@ -8,10 +8,10 @@ import astichi
 from astichi.model import BasicComposable
 
 
-def test_build_scalar_expression_insert_replaces_hole() -> None:
+def test_build_scalar_expression_source_replaces_hole() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = astichi_hole(value)\n"))
-    builder.add.Impl(astichi.compile("astichi_insert(value, 42)\n"))
+    builder.add.Impl(astichi.compile("42\n"))
     builder.Root.value.add.Impl()
 
     result = builder.build().materialize()
@@ -22,11 +22,11 @@ def test_build_scalar_expression_insert_replaces_hole() -> None:
     assert "astichi_hole" not in rendered
 
 
-def test_build_scalar_expression_insert_rejects_multiple_inserts() -> None:
+def test_build_scalar_expression_source_rejects_multiple_inserts() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = astichi_hole(value)\n"))
-    builder.add.Left(astichi.compile("astichi_insert(value, 1)\n"))
-    builder.add.Right(astichi.compile("astichi_insert(value, 2)\n"))
+    builder.add.Left(astichi.compile("1\n"))
+    builder.add.Right(astichi.compile("2\n"))
     builder.Root.value.add.Left(order=0)
     builder.Root.value.add.Right(order=1)
 
@@ -65,14 +65,12 @@ def test_build_named_variadic_funcargs_uses_edge_order() -> None:
     assert "result = func(first=one, second=two)" in rendered
 
 
-def test_build_dict_variadic_expression_insert_expands_entries() -> None:
+def test_build_dict_variadic_expression_source_expands_entries() -> None:
     builder = astichi.build()
     builder.add.Root(
         astichi.compile("result = {**astichi_hole(entries), fixed: 1}\n")
     )
-    builder.add.Impl(
-        astichi.compile("astichi_insert(entries, {dynamic_key: computed_value})\n")
-    )
+    builder.add.Impl(astichi.compile("{dynamic_key: computed_value}\n"))
     builder.Root.entries.add.Impl()
 
     result = builder.build().materialize()
@@ -141,7 +139,7 @@ def provide():
         builder.build()
 
 
-def test_materialize_applies_hygiene_to_inserted_expression_scope() -> None:
+def test_materialize_applies_hygiene_to_authored_expression_scope() -> None:
     builder = astichi.build()
     builder.add.Root(
         astichi.compile(
@@ -152,7 +150,7 @@ outcome = astichi_keep(value)
 """
         )
     )
-    builder.add.Impl(astichi.compile("astichi_insert(slot, (value := 2, value))\n"))
+    builder.add.Impl(astichi.compile("(value := 2, value)\n"))
     builder.Root.slot.add.Impl()
 
     materialized = builder.build().materialize()
@@ -220,3 +218,44 @@ astichi_export(x)
         exec("print(x)", namespace)
 
     assert buf.getvalue().strip() == "10"
+
+
+def test_if_condition_expression_insert_walrus_renamed_import_slot_exports_binding() -> None:
+    """Expression-site wiring should support a payload-local import name that
+    differs from the outer root binding name.
+
+    The walrus still binds and exports ``x``, but the pass-through slot is
+    declared as ``y_param`` and explicitly wired onto Root's ``y``.
+    """
+    root_src = """
+y = 10
+if astichi_hole(expr):
+    pass
+"""
+
+    impl_src = """
+astichi_export(x)
+(x := astichi_pass(y_param))
+"""
+
+    builder = astichi.build()
+    builder.add.Root(astichi.compile(root_src))
+    builder.add.Impl(astichi.compile(impl_src))
+    builder.assign.Impl.y_param.to().Root.y
+    builder.Root.expr.add.Impl()
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+
+    assert "astichi_hole" not in source
+    assert "astichi_insert" not in source
+    assert "astichi_import" not in source
+    assert "astichi_export" not in source
+    assert "y_param" not in source
+    assert "if (x := y):" in source
+
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<test>", "exec"), namespace)
+
+    assert namespace["x"] == 10
+    assert namespace["y"] == 10

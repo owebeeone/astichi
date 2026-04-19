@@ -527,13 +527,13 @@ def __second():
 # ---------------------------------------------------------------------------
 
 
-def test_materialize_variadic_positional_expression_insert() -> None:
-    """`*astichi_hole(items)` accepts multiple expression-insert sources
+def test_materialize_variadic_positional_expression_sources() -> None:
+    """`*astichi_hole(items)` accepts multiple authored expression sources
     and splices them into the containing list in declared order."""
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = [*astichi_hole(items)]\n"))
-    builder.add.A(astichi.compile("astichi_insert(items, 1)\n"))
-    builder.add.B(astichi.compile("astichi_insert(items, 2)\n"))
+    builder.add.A(astichi.compile("1\n"))
+    builder.add.B(astichi.compile("2\n"))
     builder.Root.items.add.A(order=0)
     builder.Root.items.add.B(order=1)
 
