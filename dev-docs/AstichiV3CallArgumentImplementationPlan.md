@@ -46,40 +46,107 @@ steps.
 - duplicate names knowable only through dynamic `**mapping` expansion are left
   to normal Python runtime behavior
 
-## Step 1. Current support inventory
+## Completed in roll-build: Step 1. Current support inventory
 
-Goal: pin down the exact current implementation before the new surface lands.
+This inventory pins the exact implementation state before the new surface
+lands.
 
 ### Step 1a. Source and generated surfaces
 
-- record the exact current authored/source surfaces that already work today for
-  expression/call-argument composition
-- record the exact current generated/internal surfaces used by build/merge
+Current authored/source surfaces that already work today for
+expression/call-argument composition:
+
+- legacy user-authored `astichi_insert(target, expr)` is still accepted and
+  recognized as a call-context insert marker in
+  `src/astichi/lowering/markers.py`
+- build/merge also accepts the current implicit expression source shape:
+  zero or more top-level `astichi_import(...)` / `astichi_pass(...)` /
+  `astichi_export(...)` expression statements followed by one trailing emitted
+  expression; see `_implicit_expression_supply_after_boundary_prefix(...)` in
+  `src/astichi/materialize/api.py`
+- `astichi_funcargs(...)` has no current recognition path in `src/`
+
+Current generated/internal surfaces used by build/merge:
+
+- block contributions normalize to decorator shells via
+  `_make_block_insert_shell(...)` in `src/astichi/materialize/api.py`
+- expression contributions normalize to generated
+  `astichi_insert(target, expr)` call wrappers via
+  `_make_expression_insert_call(...)` and `_HoleReplacementTransformer` in
+  `src/astichi/materialize/api.py`
+- those generated expression wrappers are then stripped/realized by
+  `_ExpressionInsertRealizer` / `_realize_expression_insert_wrappers(...)` in
+  `src/astichi/materialize/api.py`
+
+Current proving tests:
+
+- `tests/test_expression_insert_pipeline.py`
+- `tests/test_materialize.py`
+- `tests/test_lowering_shapes.py`
 
 ### Step 1b. Current call-hole and boundary behavior
 
-- record the exact current hole semantics in call context:
-  - plain call-position `astichi_hole(...)`
-  - `*astichi_hole(...)`
-  - `**astichi_hole(...)`
-- record the exact current boundary-marker behavior that affects payload work:
-  - where `astichi_import(...)` is accepted today
-  - where `astichi_pass(...)` is accepted today
-  - where `astichi_export(...)` is accepted today
-  - where `astichi_bind_external(...)` is accepted today
+Current hole semantics in call context:
+
+- `_infer_shape(...)` in `src/astichi/lowering/markers.py` currently classifies
+  plain call-position `astichi_hole(...)` as `SCALAR_EXPR`
+- `*astichi_hole(...)` currently classifies as `POSITIONAL_VARIADIC`
+- `**astichi_hole(...)` and `{**astichi_hole(...)}` currently classify as
+  `NAMED_VARIADIC`
+- current realization only understands those three cases:
+  - scalar replacement in `_HoleReplacementTransformer.visit_Call(...)`
+  - starred expansion in `_HoleReplacementTransformer.visit_Starred(...)`
+  - named-variadic keyword / dict expansion in
+    `_HoleReplacementTransformer.visit_keyword(...)`,
+    `_HoleReplacementTransformer.visit_Dict(...)`, and the corresponding paths
+    in `_ExpressionInsertRealizer`
+
+Current boundary-marker behavior that affects payload work:
+
+- `astichi_import(...)`, `astichi_pass(...)`, `astichi_export(...)`, and
+  `astichi_bind_external(...)` are all recognized from `ast.Call` sites by the
+  marker registry in `src/astichi/lowering/markers.py`
+- `src/astichi/lowering/boundaries.py` gives statement-prefix declaration
+  meaning to `astichi_import(...)` / `astichi_pass(...)` at module scope and
+  decorator-shell scope; expression-form `astichi_insert(...)` has no nested
+  body scope there
+- `astichi_export(...)` currently contributes a supply port and is stripped
+  during materialize
+- `astichi_bind_external(...)` currently contributes a scalar-expression demand
+  port and is consumed by `BasicComposable.bind(...)` plus
+  `src/astichi/lowering/external_bind.py`
+
+Current proving tests:
+
+- `tests/test_lowering_shapes.py`
+- `tests/test_boundaries.py`
+- `tests/test_materialize.py`
+- `tests/test_bind_external.py`
 
 ### Step 1c. Current binding and wiring surfaces
 
-- record the exact current binding/wiring surfaces that interact with the new
-  payload work:
-  - `arg_names=`
-  - `builder.assign`
+Current binding/wiring surfaces that interact with payload work:
 
-Exit rules:
+- compile-time and add-time `arg_names=` flow through
+  `src/astichi/frontend/api.py`, `src/astichi/builder/handles.py`, and
+  `BasicComposable.bind_identifier(...)` in `src/astichi/model/basic.py`
+- those surfaces already resolve both identifier-suffix demands and
+  `astichi_import(...)` identifier demands
+- `builder.assign` demand discovery uses
+  `collect_identifier_demands_in_body(...)` in `src/astichi/path_resolution.py`
+  and already sees `astichi_import(...)` / `astichi_pass(...)` in expression
+  positions
+- actual assign rewriting is performed by `_apply_assign_bindings(...)` in
+  `src/astichi/materialize/api.py`
+- import renaming for explicit identifier bindings currently happens in
+  `_apply_arg_name_bindings(...)` in `src/astichi/materialize/api.py`, but it
+  is centered on top-of-shell import declarations rather than payload-local
+  directive carriers
 
-- the inventory is descriptive and concrete, not a restatement of intent
-- the inventory names the current code paths and tests that prove current
-  behavior
+Current proving tests:
+
+- `tests/test_builder_handles.py`
+- `tests/test_boundaries.py`
 
 ## Step 2. Recognition
 
