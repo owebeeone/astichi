@@ -13,7 +13,7 @@ strengthen confidence in:
 - keep/arg resolution and leak prevention
 
 This plan assumes the current implemented surface in `src/` and the green test
-suite as of `2026-04-18`.
+suite as of `2026-04-19`.
 
 **Related design:** `AstichiSingleSourceSummary.md` §3.2 (build surface, ref-path
 `assign`, deferred **aliases**). Optional detail: `BuilderIdentityAndAliasesDesign.md`.
@@ -56,6 +56,25 @@ This yields better coverage than either:
 
 - one mega-test that tries to prove everything
 - a giant unstructured pile of tiny tests with no model behind them
+
+### 2.1 Test-writing constraints for V3
+
+The V3 staged-composition suite should follow these rules.
+
+- do not use `keep_names=` during the build process in new staged tests
+- do not use `arg_names=` as the primary happy-path variable-binding mechanism
+  in new staged tests
+- variable-binding scenarios in staged tests should be expressed through the
+  marker surface:
+  - consumers use `astichi_import(...)`
+  - cross-boundary threaded suppliers use `astichi_pass(...)`
+  - outward publication uses `astichi_export(...)`
+- keep behavior, when tested here, should use marker keep surfaces rather than
+  build-time `keep_names=...`
+
+Lower-level suites may continue to cover `arg_names=` and `keep_names=` as API
+surfaces. The V3 plan is intentionally focused on staged composition via the
+snippet/marker model.
 
 ## 3. Notation
 
@@ -173,7 +192,7 @@ The suite should cover these axes.
 | Ordering mode | increasing order, decreasing order, equal-order stable tie |
 | Ref-path shape | root-only, one-hop descendant, multi-hop descendant, descendant + index |
 | Ref-path surface | additive target path, assign source path, assign target path, emitted `ref=` shell metadata |
-| Registration timing | target/source already registered, forward-declared root, forward-declared deep target |
+| Registration timing | target/source already registered, forward-declared root, forward-declared deep target reject |
 | Unroll timing | literal domain now, bind-fed domain later, auto-unroll, forced unroll |
 | Failure phase | build-time reject, materialize-time reject, runtime contract |
 
@@ -199,6 +218,25 @@ Important current coverage already exists.
   `tests/test_builder_handles.py`
 
 V3 should build on those tests, not replace them.
+
+## 6.1 Ref-path resolution contract to lock before staged spines
+
+The recent descendant-path work tightened the contract that V3 tests must
+assume.
+
+- non-root descendant paths must resolve to exactly one preserved shell
+- unknown non-root descendant paths reject
+- ambiguous repeated-use descendant paths reject
+- duplicate preserved non-root full `ref=` paths on a reused built composable
+  reject at registration time
+- eager validation is intentionally strongest for non-empty descendant paths
+- root-only path behavior remains slightly looser because of the preserved
+  root-wrap shell; do not assume root-path validation fires at exactly the same
+  phase as descendant-path validation
+
+This means V3 should not spend its staged spines re-proving every basic
+path-rejection case. Lock those semantics in a small focused matrix first, then
+use the staged tests for stage-boundary behavior only.
 
 ## 7. High-priority gaps
 
@@ -247,6 +285,14 @@ Both matter. The semantic tests catch incorrect merge/materialize behavior; the
 metadata tests catch drift between the public source form and the runtime's
 internal decomposed representation.
 
+Also add one small focused rejection matrix before the staged spines:
+
+- unknown deep additive target path rejects
+- unknown deep assign source/target path rejects
+- ambiguous repeated descendant path rejects
+- duplicate non-root preserved `ref=` path rejects on reuse
+- invalid trailing index rejects
+
 ### 7.5 Export as a staged supplier
 
 `pass/import` is better covered than `export` as a later-stage supplier. We need
@@ -260,10 +306,11 @@ already being registered so descendant hops are knowable from its shell refs.
 The plan should cover both:
 
 - supported case: deep target path on an already-registered target instance
-- current limitation: deep target path on a forward-declared target instance
+- current rejection case: deep target path on a forward-declared target instance
 
-If the limitation remains intentional for now, the test should assert the
-current failure clearly rather than silently assuming support.
+This is not a vague future-support bucket. The current deep target-side
+forward-declared case should be written as an explicit rejection test unless the
+implementation changes.
 
 ### 7.7 Expression and variadic surfaces under staging
 
@@ -334,22 +381,25 @@ Variant:
 Purpose:
 
 - prove that a stage-built composable can retain an unresolved identifier demand
-  (`I(name)` or `A(name)`) and receive the binding only in a later stage
+  (`I(name)`) and receive the binding only in a later stage
 
 Shape:
 
 - `C1` contains `astichi_import(counter)` and updates `counter`
 - `S1` builds `B1` with the demand unresolved
-- `S2` inserts `B1` into a root that owns the outer counter
-- bind later via either:
-  - edge-time `arg_names={"counter": "counter"}`
-  - `builder.assign.B1.counter.to().Root.counter`
+- `S2` inserts `B1` into a root that owns or passes the outer counter
+- bind later via marker-driven variable binding, for example:
+  - `astichi_pass(counter)` surviving the stage boundary and consumed by
+    `astichi_import(counter)`
+  - or `builder.assign.B1.counter.to().Root.counter` where the source/target
+    sides are still expressed through import/pass/export-capable snippets
 
 Assertions:
 
 - later-stage binding resolves the demand
 - runtime output reflects the outer binding, not a shell-local leak
-- same test should be written once for `arg_names=` and once for `assign`
+- do not use `arg_names=` in this staged spine; keep the focus on
+  import/pass/export plus `assign`
 
 ### 8.4 `test_v3_spine_descendant_ref_paths_survive_stage_boundary`
 
@@ -400,10 +450,12 @@ Purpose:
 
 Shape:
 
-- `S1` builds `B1` from a piece with `A(step)` or `I(counter)`
+- `S1` builds `B1` from a piece with `astichi_import(counter)` and, where
+  needed, `astichi_pass(counter)` or `astichi_export(result)`
 - `S2` adds `B1` twice as separate instances
 - one instance gets identity binding, the other non-identity binding
-- optionally also vary `keep_names=...`
+- keep any keep-related variation on marker keep surfaces only; do not use
+  `keep_names=...`
 
 Assertions:
 
@@ -463,19 +515,29 @@ Assertions:
 
 Purpose:
 
-- cover all current identifier-demand binding surfaces
+- cover the staged identifier-binding surfaces we want to exercise in V3
 
 Demand source:
 
-- `A(name)` (`__astichi_arg__`)
 - `I(name)` (`astichi_import`)
 
 Binding surface:
 
-- `compile(..., arg_names=...)`
-- `builder.add.<Name>(..., arg_names=...)`
-- `target.add.<Name>(..., arg_names=...)`
 - `builder.assign.<Src>.<inner>.to().<Dst>.<outer>`
+
+Binding model in V3 staged coverage:
+
+- demand side is expressed with `astichi_import(...)`
+- cross-stage supplier publication uses `astichi_pass(...)` and
+  `astichi_export(...)`
+- `builder.assign` is the builder-level wiring surface under test
+
+The older `arg_names=` surfaces already have lower-level coverage and should not
+be the main mechanism in the new staged matrix.
+
+Likewise, the older `A(name)` / `__astichi_arg__` demand form is not the focus
+of the new staged matrix; keep the V3 identifier stories on
+`import` / `pass` / `export`.
 
 Rename mode:
 
@@ -497,7 +559,7 @@ Add a registration-order dimension:
 
 - target already registered
 - forward-declared root target
-- forward-declared deep target (current limitation or future support)
+- forward-declared deep target (current rejection case)
 
 ### 9.3 Keep-resolution matrix
 
@@ -509,7 +571,6 @@ Keep surface:
 
 - `astichi_keep(name)`
 - `name__astichi_keep__`
-- `keep_names=...`
 
 Collision site:
 
@@ -611,6 +672,7 @@ Recommended helpers:
 - `make_trace_shell(prefix: str, suffix: str) -> BasicComposable`
 - `make_accumulator_root(counter_name: str = "total")`
 - `make_import_step(name: str, delta: int)`
+- `make_pass_through(name: str)`
 - `make_pass_producer(name: str, value: int)`
 - `make_export_piece(name: str, expr: str)`
 - `assert_shell_refs(piece, expected_refs: list[str])`
@@ -651,22 +713,25 @@ Do not contort the tests to hide an API gap if the API is the real problem.
 
 Write tests in this order.
 
-1. `test_v3_spine_multistage_deep_order_trace`
-2. `test_v3_spine_late_bind_external_then_unroll_in_later_stage`
-3. `test_v3_spine_stage_built_import_demand_bound_later`
-4. `test_v3_spine_reuse_same_built_composable_with_distinct_bindings`
-5. ordering matrix
-6. identifier wiring matrix
-7. keep-resolution matrix
-8. expression/variadic staged matrix
-9. export-survival staged test
-10. future soundness tests only when their owning behavior lands
+1. focused ref-path rejection matrix
+2. `test_v3_spine_multistage_deep_order_trace`
+3. `test_v3_spine_late_bind_external_then_unroll_in_later_stage`
+4. `test_v3_spine_stage_built_import_demand_bound_later`
+5. `test_v3_spine_reuse_same_built_composable_with_distinct_bindings`
+6. ordering matrix
+7. identifier wiring matrix
+8. keep-resolution matrix
+9. expression/variadic staged matrix
+10. export-survival staged test
+11. future soundness tests only when their owning behavior lands
 
 ## 14. Exit criteria
 
 This plan is complete when:
 
 - deep nested order is covered by at least one exact-trace staged test
+- the ref-path rejection matrix locks unknown/ambiguous/duplicate descendant
+  resolution behavior directly
 - late `bind(...)` on a stage-built composable is covered directly
 - late identifier binding on a stage-built composable is covered directly
 - stage-built composable reuse with distinct bindings is covered directly
