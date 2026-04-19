@@ -7,7 +7,7 @@ import copy
 from contextlib import contextmanager
 from typing import Iterator
 
-from astichi.lowering.markers import recognize_markers
+from astichi.lowering.markers import BIND_EXTERNAL, is_call_to_marker, recognize_markers
 from astichi.model.external_values import value_to_ast
 
 
@@ -183,8 +183,7 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "astichi_bind_external"
+            is_call_to_marker(node, BIND_EXTERNAL)
             and len(node.args) == 1
             and not node.keywords
             and isinstance(node.args[0], ast.Name)
@@ -244,7 +243,7 @@ def _reject_marker_argument_conflicts(tree: ast.Module, bindings: dict[str, obje
     for marker in recognize_markers(tree):
         if marker.name_id is None or marker.name_id not in bindings:
             continue
-        if marker.source_name == "astichi_bind_external":
+        if marker.spec is BIND_EXTERNAL:
             continue
         line = getattr(marker.node, "lineno", "?")
         raise ValueError(

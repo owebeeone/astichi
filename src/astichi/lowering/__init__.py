@@ -1,6 +1,7 @@
 """Marker recognition and lowering bridge for Astichi."""
 
 from astichi.lowering.call_argument_payloads import (
+    PayloadLocalDirective,
     DirectiveFuncArgItem,
     DoubleStarFuncArgItem,
     FuncArgPayload,
@@ -8,6 +9,7 @@ from astichi.lowering.call_argument_payloads import (
     KeywordFuncArgItem,
     PositionalFuncArgItem,
     StarredFuncArgItem,
+    collect_payload_local_directives,
     direct_funcargs_directive_calls,
     extract_funcargs_payload,
     is_astichi_funcargs_call,
@@ -35,11 +37,13 @@ __all__ = [
     "FuncArgPayloadItem",
     "KeywordFuncArgItem",
     "MarkerSpec",
+    "PayloadLocalDirective",
     "PortTemplate",
     "PositionalFuncArgItem",
     "RecognizedMarker",
     "StarredFuncArgItem",
     "apply_external_bindings",
+    "collect_payload_local_directives",
     "direct_funcargs_directive_calls",
     "extract_funcargs_payload",
     "group_markers_by_astichi_scope",

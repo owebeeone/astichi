@@ -57,6 +57,19 @@ class MarkerSpec(ABC):
         scope are idempotent and do not create N-way conflicts."""
         return False
 
+    def is_boundary_declaration_directive(self) -> bool:
+        """True for non-emitting import/export-style boundary directives."""
+        return False
+
+    def is_expression_prefix_directive(self) -> bool:
+        """True for statement-prefix directives allowed before an authored
+        expression payload."""
+        return False
+
+    def is_payload_carrier(self) -> bool:
+        """True for authored payload carriers such as `astichi_funcargs(...)`."""
+        return False
+
     def is_permitted_in_unroll_body(self) -> bool:
         """True if N copies of this marker inside an `astichi_for` body are
         safe — either because each copy is renamed per iteration, or because
@@ -122,6 +135,8 @@ class _SimpleMarker(MarkerSpec):
         name_bearing: bool = False,
         decorator_only: bool = False,
         hygiene_directive: bool = False,
+        boundary_declaration_directive: bool = False,
+        expression_prefix_directive: bool = False,
         renamed_per_iteration: bool = False,
         iter_rename_arg_index: int = 0,
         demand_template: PortTemplate | None = None,
@@ -132,6 +147,8 @@ class _SimpleMarker(MarkerSpec):
         self._name_bearing = name_bearing
         self._decorator_only = decorator_only
         self._hygiene_directive = hygiene_directive
+        self._boundary_declaration_directive = boundary_declaration_directive
+        self._expression_prefix_directive = expression_prefix_directive
         self._renamed_per_iteration = renamed_per_iteration
         self._iter_rename_arg_index = iter_rename_arg_index
         self._demand_template = demand_template
@@ -145,6 +162,12 @@ class _SimpleMarker(MarkerSpec):
 
     def is_hygiene_directive(self) -> bool:
         return self._hygiene_directive
+
+    def is_boundary_declaration_directive(self) -> bool:
+        return self._boundary_declaration_directive
+
+    def is_expression_prefix_directive(self) -> bool:
+        return self._expression_prefix_directive
 
     def is_renamed_per_iteration(self) -> bool:
         return self._renamed_per_iteration
@@ -320,6 +343,9 @@ class _FuncArgsMarker(MarkerSpec):
 
     source_name = "astichi_funcargs"
 
+    def is_payload_carrier(self) -> bool:
+        return True
+
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
             raise TypeError("astichi_funcargs must be recognized from an ast.Call")
@@ -339,12 +365,18 @@ BIND_EXTERNAL = _SimpleMarker(
     ),
 )
 KEEP = _SimpleMarker(
-    "astichi_keep", positional_args=1, name_bearing=True, hygiene_directive=True
+    "astichi_keep",
+    positional_args=1,
+    name_bearing=True,
+    hygiene_directive=True,
+    expression_prefix_directive=True,
 )
 EXPORT = _SimpleMarker(
     "astichi_export",
     positional_args=1,
     name_bearing=True,
+    boundary_declaration_directive=True,
+    expression_prefix_directive=True,
     supply_template=PortTemplate(
         shape=SCALAR_EXPR, mutability="const", source_tag="export"
     ),
@@ -363,6 +395,8 @@ IMPORT = _SimpleMarker(
     "astichi_import",
     positional_args=1,
     name_bearing=True,
+    boundary_declaration_directive=True,
+    expression_prefix_directive=True,
     demand_template=PortTemplate(
         shape=IDENTIFIER, mutability="const", source_tag="import"
     ),
@@ -371,6 +405,7 @@ PASS = _SimpleMarker(
     "astichi_pass",
     positional_args=1,
     name_bearing=True,
+    expression_prefix_directive=True,
     supply_template=PortTemplate(
         shape=IDENTIFIER, mutability="const", source_tag="pass"
     ),
@@ -511,9 +546,22 @@ class RecognizedMarker:
 
 
 def _marker_from_call(node: ast.Call) -> MarkerSpec | None:
+    marker_name = call_name(node)
+    if marker_name is None:
+        return None
+    return MARKERS_BY_NAME.get(marker_name)
+
+
+def call_name(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call):
+        return None
     if not isinstance(node.func, ast.Name):
         return None
-    return MARKERS_BY_NAME.get(node.func.id)
+    return node.func.id
+
+
+def is_call_to_marker(node: ast.AST, marker: MarkerSpec) -> bool:
+    return call_name(node) == marker.source_name
 
 
 class _MarkerVisitor(ast.NodeVisitor):

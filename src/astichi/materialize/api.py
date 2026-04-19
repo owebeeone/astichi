@@ -18,23 +18,39 @@ from astichi.lowering import (
     DirectiveFuncArgItem,
     DoubleStarFuncArgItem,
     KeywordFuncArgItem,
+    PayloadLocalDirective,
     PositionalFuncArgItem,
     RecognizedMarker,
     StarredFuncArgItem,
+    collect_payload_local_directives,
     direct_funcargs_directive_calls,
     extract_funcargs_payload,
     is_astichi_funcargs_call,
     recognize_markers,
 )
 from astichi.lowering.markers import (
+    ALL_MARKERS,
     ARG_IDENTIFIER,
+    EXPORT,
+    FUNCARGS,
+    IMPORT,
+    KEEP,
+    PASS,
+    call_name,
+    is_call_to_marker,
     KEEP_IDENTIFIER,
     strip_identifier_suffix,
 )
 from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
-from astichi.model.ports import DemandPort, SupplyPort, extract_demand_ports, extract_supply_ports, validate_port_pair
+from astichi.model.ports import (
+    DemandPort,
+    SupplyPort,
+    extract_demand_ports,
+    extract_supply_ports,
+    validate_port_pair,
+)
 from astichi.path_resolution import (
     ShellIndex,
     boundary_import_statement,
@@ -83,6 +99,7 @@ class _BlockContribution:
 
 
 _IDENTIFIER_SANITIZER = re.compile(r"[^0-9A-Za-z_]")
+_ROOT_SCOPE_HOLE_PREFIX = "__astichi_root__"
 
 
 def _sanitize_for_identifier(raw: str) -> str:
@@ -750,7 +767,7 @@ def _root_scope_anchor(instance_name: str) -> str:
     anchor both unique across sibling roots and persistable through
     an `emit()` + re-compile round trip.
     """
-    return f"__astichi_root__{_sanitize_for_identifier(instance_name)}__"
+    return f"{_ROOT_SCOPE_HOLE_PREFIX}{_sanitize_for_identifier(instance_name)}__"
 
 
 def _wrap_in_root_scope(
@@ -821,7 +838,9 @@ def _lookup_supply_port(
 
 
 _BOUNDARY_EXPR_PREFIX_NAMES: frozenset[str] = frozenset(
-    {"astichi_import", "astichi_pass", "astichi_export", "astichi_keep"}
+    marker.source_name
+    for marker in ALL_MARKERS
+    if marker.is_expression_prefix_directive()
 )
 
 
@@ -841,9 +860,8 @@ def _implicit_expression_supply_after_boundary_prefix(
         if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
             break
         call = stmt.value
-        if not isinstance(call.func, ast.Name):
-            break
-        if call.func.id not in _BOUNDARY_EXPR_PREFIX_NAMES:
+        call_marker_name = call_name(call)
+        if call_marker_name not in _BOUNDARY_EXPR_PREFIX_NAMES:
             break
         index += 1
     rest = body[index:]
@@ -865,7 +883,7 @@ def _synthetic_root_scope_shell(
     if len(body) != 2:
         return None
     hole_name = _extract_hole_name(body[0])
-    if hole_name is None or not hole_name.startswith("__astichi_root__"):
+    if hole_name is None or not hole_name.startswith(_ROOT_SCOPE_HOLE_PREFIX):
         return None
     shell = body[1]
     if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -886,7 +904,7 @@ def _effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
 def _make_keep_statement(name: str) -> ast.Expr:
     return ast.Expr(
         value=ast.Call(
-            func=ast.Name(id="astichi_keep", ctx=ast.Load()),
+            func=ast.Name(id=KEEP.source_name, ctx=ast.Load()),
             args=[ast.Name(id=name, ctx=ast.Load())],
             keywords=[],
         )
@@ -905,14 +923,7 @@ def _inject_scoped_keep_markers(
         if not isinstance(stmt, ast.Expr):
             continue
         call = stmt.value
-        if (
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "astichi_keep"
-            and len(call.args) == 1
-            and not call.keywords
-            and isinstance(call.args[0], ast.Name)
-        ):
+        if is_call_to_marker(call, KEEP) and len(call.args) == 1 and not call.keywords and isinstance(call.args[0], ast.Name):
             existing.add(call.args[0].id)
     additions = [
         _make_keep_statement(name)
@@ -1595,12 +1606,20 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
         return node
 
 
-def _payload_local_directive_markers(tree: ast.Module) -> tuple[RecognizedMarker, ...]:
-    markers = recognize_markers(tree)
+def _payload_local_directive_markers(
+    directives: tuple[PayloadLocalDirective, ...],
+) -> tuple[RecognizedMarker, ...]:
     return tuple(
-        marker
-        for marker in markers
-        if marker.source_name in {"astichi_import", "astichi_export"}
+        RecognizedMarker(
+            spec=directive.spec,
+            node=ast.Call(
+                func=ast.Name(id=directive.spec.source_name, ctx=ast.Load()),
+                args=[ast.Name(id=directive.name, ctx=ast.Load())],
+                keywords=[],
+            ),
+            context="call",
+        )
+        for directive in directives
     )
 
 
@@ -1710,7 +1729,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     marker_keep_names = frozenset(
         marker.name_id
         for marker in markers
-        if marker.source_name == "astichi_keep" and marker.name_id is not None
+        if marker.spec is KEEP and marker.name_id is not None
     )
     explicit_keep_names = composable.keep_names - marker_keep_names
     effective_keep_names = explicit_keep_names | pinned_targets
@@ -1734,11 +1753,14 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         trust_names=explicit_keep_names,
     )
     rename_scope_collisions(analysis)
-    payload_directive_markers = _payload_local_directive_markers(tree)
+    payload_local_directives = collect_payload_local_directives(tree)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
 
-    pre_strip_markers = payload_directive_markers + recognize_markers(tree)
+    pre_strip_markers = (
+        recognize_markers(tree)
+        + _payload_local_directive_markers(payload_local_directives)
+    )
     pre_strip_composable = BasicComposable(
         tree=tree,
         origin=composable.origin,
@@ -2270,8 +2292,7 @@ def _resolve_boundary_imports(
         declared_imports = {
             directive.args[0].id
             for directive in direct_funcargs_directive_calls(payload_call)
-            if isinstance(directive.func, ast.Name)
-            and directive.func.id == "astichi_import"
+            if call_name(directive) == IMPORT.source_name
             and directive.args
             and isinstance(directive.args[0], ast.Name)
         }

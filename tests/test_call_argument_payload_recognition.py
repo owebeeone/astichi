@@ -103,3 +103,31 @@ def test_compile_allows_ordinary_underscore_keyword_argument() -> None:
 
     assert {port.name for port in compiled.demand_ports} == {"value"}
     assert {port.name for port in compiled.supply_ports} == set()
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        (
+            "astichi_funcargs(_=astichi_import())\n",
+            r"astichi_import expects 1 positional arguments",
+        ),
+        (
+            "astichi_funcargs(_=astichi_export(source.attr))\n",
+            r"astichi_export requires a bare identifier-like first argument",
+        ),
+        (
+            "astichi_funcargs(astichi_bind_external())\n",
+            r"astichi_bind_external expects 1 positional arguments",
+        ),
+        (
+            "astichi_funcargs(astichi_bind_external(source.attr))\n",
+            r"astichi_bind_external requires a bare identifier-like first argument",
+        ),
+    ],
+)
+def test_compile_rejects_malformed_payload_marker_shapes(
+    source: str, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        astichi.compile(source)

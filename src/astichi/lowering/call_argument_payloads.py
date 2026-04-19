@@ -6,9 +6,18 @@ import ast
 import copy
 from dataclasses import dataclass
 
+from astichi.lowering.markers import (
+    BIND_EXTERNAL,
+    EXPORT,
+    FUNCARGS,
+    IMPORT,
+    MarkerSpec,
+    PASS,
+    call_name,
+    is_call_to_marker,
+)
 
-_FUNCARGS_NAME = "astichi_funcargs"
-_DIRECTIVE_NAMES: frozenset[str] = frozenset({"astichi_import", "astichi_export"})
+_DIRECTIVE_SPECS: tuple[MarkerSpec, ...] = (IMPORT, EXPORT)
 
 
 @dataclass(frozen=True)
@@ -49,13 +58,15 @@ class FuncArgPayload:
     items: tuple[FuncArgPayloadItem, ...]
 
 
+@dataclass(frozen=True)
+class PayloadLocalDirective:
+    spec: MarkerSpec
+    name: str
+
+
 def is_astichi_funcargs_call(node: ast.AST) -> bool:
     """Whether ``node`` is an ``astichi_funcargs(...)`` call."""
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == _FUNCARGS_NAME
-    )
+    return is_call_to_marker(node, FUNCARGS)
 
 
 def direct_funcargs_directive_calls(call: ast.Call) -> tuple[ast.Call, ...]:
@@ -64,8 +75,27 @@ def direct_funcargs_directive_calls(call: ast.Call) -> tuple[ast.Call, ...]:
     for keyword in call.keywords:
         if keyword.arg != "_" or not isinstance(keyword.value, ast.Call):
             continue
-        if _call_name(keyword.value) in _DIRECTIVE_NAMES:
+        spec = _directive_spec(keyword.value)
+        if spec is not None:
             directives.append(keyword.value)
+    return tuple(directives)
+
+
+def collect_payload_local_directives(
+    tree: ast.Module,
+) -> tuple[PayloadLocalDirective, ...]:
+    directives: list[PayloadLocalDirective] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not is_astichi_funcargs_call(node):
+            continue
+        for directive in direct_funcargs_directive_calls(node):
+            spec = _require_directive_spec(directive)
+            directives.append(
+                PayloadLocalDirective(
+                    spec=spec,
+                    name=_validated_name_arg(directive, spec),
+                )
+            )
     return tuple(directives)
 
 
@@ -80,16 +110,16 @@ def extract_funcargs_payload(call: ast.Call) -> FuncArgPayload:
             continue
         items.append(PositionalFuncArgItem(expr=copy.deepcopy(arg)))
     for keyword in call.keywords:
-        if keyword.arg == "_" and _is_direct_directive_call(keyword.value):
+        if keyword.arg == "_":
+            directive_spec = _directive_spec(keyword.value)
+        else:
+            directive_spec = None
+        if directive_spec is not None:
             assert isinstance(keyword.value, ast.Call)
-            directive_name = _call_name(keyword.value)
-            first_arg = keyword.value.args[0]
-            assert directive_name is not None
-            assert isinstance(first_arg, ast.Name)
             items.append(
                 DirectiveFuncArgItem(
-                    directive_name=directive_name,
-                    name=first_arg.id,
+                    directive_name=directive_spec.source_name,
+                    name=_validated_name_arg(keyword.value, directive_spec),
                     call=copy.deepcopy(keyword.value),
                 )
             )
@@ -126,16 +156,13 @@ def validate_call_argument_payload_surface(tree: ast.Module) -> None:
 
 def _validate_funcargs_call(call: ast.Call) -> None:
     directive_names = {
-        directive.args[0].id
+        _validated_name_arg(directive, _require_directive_spec(directive))
         for directive in direct_funcargs_directive_calls(call)
-        if directive.args and isinstance(directive.args[0], ast.Name)
     }
     bind_external_names = {
-        child.args[0].id
+        _validated_name_arg(child, BIND_EXTERNAL)
         for child in ast.walk(call)
-        if _call_name(child) == "astichi_bind_external"
-        and child.args
-        and isinstance(child.args[0], ast.Name)
+        if isinstance(child, ast.Call) and is_call_to_marker(child, BIND_EXTERNAL)
     }
     for name in sorted(directive_names & bind_external_names):
         raise ValueError(
@@ -153,7 +180,7 @@ def _validate_funcargs_call(call: ast.Call) -> None:
         if keyword.arg == "_":
             if _is_direct_directive_call(value):
                 continue
-            if _call_name(value) == "astichi_pass":
+            if call_name(value) == PASS.source_name:
                 raise ValueError(
                     "astichi_pass(...) is not valid in _= inside "
                     "astichi_funcargs(...); use it in a real argument "
@@ -175,18 +202,37 @@ def _validate_funcargs_call(call: ast.Call) -> None:
 
 def _contains_non_value_directive(node: ast.AST) -> bool:
     for child in ast.walk(node):
-        if isinstance(child, ast.Call) and _call_name(child) in _DIRECTIVE_NAMES:
+        if isinstance(child, ast.Call) and _directive_spec(child) is not None:
             return True
     return False
 
 
 def _is_direct_directive_call(node: ast.AST) -> bool:
-    return isinstance(node, ast.Call) and _call_name(node) in _DIRECTIVE_NAMES
+    return _directive_spec(node) is not None
 
 
-def _call_name(node: ast.AST) -> str | None:
-    if not isinstance(node, ast.Call):
+def _directive_spec(node: ast.AST) -> MarkerSpec | None:
+    marker_name = call_name(node)
+    if marker_name is None:
         return None
-    if not isinstance(node.func, ast.Name):
-        return None
-    return node.func.id
+    for spec in _DIRECTIVE_SPECS:
+        if marker_name == spec.source_name:
+            return spec
+    return None
+
+
+def _require_directive_spec(node: ast.AST) -> MarkerSpec:
+    spec = _directive_spec(node)
+    if spec is None:
+        raise TypeError("expected a direct astichi_import/export directive call")
+    return spec
+
+
+def _validated_name_arg(call: ast.Call, spec: MarkerSpec) -> str:
+    spec.validate_node(call)
+    first_arg = call.args[0]
+    if not isinstance(first_arg, ast.Name):
+        raise TypeError(
+            f"{spec.source_name} requires a bare identifier-like first argument"
+        )
+    return first_arg.id
