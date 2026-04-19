@@ -8,15 +8,14 @@ boundary markers:
 - ``astichi_pass(name)``: exposes an inner-scope identifier to the
   immediately enclosing outer Astichi scope.
 
-Both are **declarations**, not executable calls. The author of a piece
-must place them as the contiguous top-of-body prefix of their Astichi
-scope (the module, or an ``@astichi_insert``-decorated class/def body),
-**except** that ``astichi_pass(name)`` may also appear as the sole
-right-hand side of a module- (or shell-) level walrus
-``(target := astichi_pass(name))``, which is the supported form for
-pass-through with a distinct binding for ``target`` (issue 006 §9.2).
-The placement rule is enforced at ``compile()`` time so users see the
-error eagerly.
+Both are **declarations**, not executable calls. **Statement-form**
+``astichi_import(...)`` / ``astichi_pass(...)`` (a bare expression
+statement) must appear as the contiguous top-of-body prefix of their
+Astichi scope (the module, or an ``@astichi_insert``-decorated
+class/def body). The same markers may also appear in **expression**
+positions (e.g. walrus RHS, assignment RHS); those sites are **not**
+subject to this prefix rule—only the statement-prefix rule applies to
+leading boundary statements.
 
 The interaction-matrix validator (issue 006 6b) groups recognized
 markers by their enclosing Astichi scope and rejects the forbidden
@@ -36,19 +35,16 @@ _BOUNDARY_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import", "astichi_p
 
 
 def validate_boundary_marker_placement(tree: ast.Module) -> None:
-    """Reject misplaced ``astichi_import`` / ``astichi_pass`` markers.
+    """Enforce the **statement-prefix** rule for boundary markers.
 
     Placement rule (issue 006 §9.2):
 
-    - A boundary marker must appear as a bare expression-statement in
-      the immediately enclosing Astichi scope body.
-    - All boundary markers in a scope must form the contiguous top
-      prefix of that body (no real statement may precede any of them).
-    - Boundary markers may not be nested inside non-Astichi compound
-      structures (``if``, ``for``, ``try``, non-shell ``def``/``class``,
-      expressions, decorators, ...), **except** ``astichi_pass`` as the
-      value of a top-level ``NamedExpr`` (walrus) as described above.
-      Those positions otherwise do not correspond to an Astichi scope.
+    - **Statement-form** markers (a bare ``Expr`` whose value is a
+      boundary ``Call``) must be contiguous at the top of each Astichi
+      scope body—no other statement may precede them in that prefix.
+    - The same calls may additionally appear in expression positions; this
+      validator does **not** reject those (static semantics apply to the
+      whole fragment).
 
     An Astichi scope body is either the module body or the body of an
     ``@astichi_insert``-decorated ``FunctionDef`` / ``AsyncFunctionDef``
@@ -81,30 +77,17 @@ def _validate_scope_body(
             # recursing into (its call arg is a bare `ast.Name`).
             continue
         past_prefix = True
-        if _scope_body_stmt_is_walrus_astichi_pass(stmt):
-            # ``(x := astichi_pass(y))`` as a direct scope-body statement:
-            # validate nested boundary markers under the walrus target and
-            # pass argument, but do not treat ``astichi_pass`` itself as a
-            # misplaced nested boundary (issue 006 §9.2).
-            ne = stmt.value
-            assert isinstance(ne, ast.NamedExpr)
-            _flag_nested_boundaries(ne.target, scope_label, errors)
-            inner = ne.value
-            assert isinstance(inner, ast.Call) and inner.args
-            _flag_nested_boundaries(inner.args[0], scope_label, errors)
-            continue
         _validate_nested(stmt, scope_label, errors)
 
 
 def _validate_nested(
     node: ast.AST, scope_label: str, errors: list[str]
 ) -> None:
-    """Walk a non-top-prefix statement, flagging any nested boundary call.
+    """Walk a non-top-prefix statement for nested Astichi scopes.
 
     When we encounter an ``@astichi_insert`` shell we descend into its
     body as a fresh Astichi scope (its body has its own top-prefix
-    rule). Decorators / arguments / bases of the shell still belong to
-    the outer ``scope_label``; any boundary call there is misplaced.
+    rule). Expression-position boundary markers are ignored here.
     """
     if _is_insert_shell(node):
         assert isinstance(
@@ -126,41 +109,14 @@ def _validate_nested(
     _flag_nested_boundaries(node, scope_label, errors)
 
 
-def _scope_body_stmt_is_walrus_astichi_pass(stmt: ast.stmt) -> bool:
-    """True if ``stmt`` is ``(t := astichi_pass(name))`` at scope-body level."""
-    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.NamedExpr):
-        return False
-    ne = stmt.value
-    inner = ne.value
-    if not isinstance(inner, ast.Call):
-        return False
-    if _boundary_call_name(inner) != "astichi_pass":
-        return False
-    return (
-        len(inner.args) == 1
-        and isinstance(inner.args[0], ast.Name)
-        and not inner.keywords
-    )
-
-
 def _flag_nested_boundaries(
     node: ast.AST,
     scope_label: str,
     errors: list[str],
 ) -> None:
-    """Flag every boundary call inside ``node``, descending into shells as scopes."""
-    if isinstance(node, ast.Call):
-        kind = _boundary_call_name(node)
-        if kind is not None:
-            lineno = getattr(node, "lineno", 0) or 0
-            errors.append(
-                f"{kind}(...) at line {lineno}: must appear at the top of "
-                f"the immediately enclosing Astichi scope body "
-                f"({scope_label}); nested or non-statement positions are "
-                f"rejected"
-            )
-            # Fall through and still recurse into args in case of
-            # degenerate nesting like `astichi_import(astichi_pass(x))`.
+    """Descend into ``node`` for nested insert shells; boundary calls in
+    arbitrary expression positions are allowed and are not flagged here.
+    """
     if _is_insert_shell(node):
         # Enter the shell as a fresh Astichi scope instead of treating
         # its contents as still inside `scope_label`.

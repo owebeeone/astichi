@@ -107,36 +107,25 @@ astichi_import(late)
         )
 
 
-def test_placement_rejects_boundary_nested_in_if_block() -> None:
-    # Issue 006 6a: boundary markers inside a compound statement are
-    # not at the top of any Astichi scope body.
-    with pytest.raises(
-        ValueError,
-        match=r"astichi_pass\(\.\.\.\) at line \d+: must appear at the top of",
-    ):
-        astichi.compile(
-            """
+def test_placement_accepts_boundary_nested_in_if_block() -> None:
+    # Expression-position boundary markers are allowed (prefix rule applies
+    # only to statement-form markers at scope-body top).
+    astichi.compile(
+        """
 if True:
     astichi_pass(stray)
 """
-        )
+    )
 
 
-def test_placement_rejects_boundary_inside_non_shell_def() -> None:
-    # Issue 006 6a: a plain (non-`@astichi_insert`) def does not open
-    # an Astichi scope; markers inside it belong to the surrounding
-    # Astichi scope and are therefore misplaced.
-    with pytest.raises(
-        ValueError,
-        match=r"astichi_import\(\.\.\.\) at line \d+: must appear at the top of",
-    ):
-        astichi.compile(
-            """
+def test_placement_accepts_boundary_inside_non_shell_def() -> None:
+    astichi.compile(
+        """
 def helper():
     astichi_import(leaked)
     return leaked
 """
-        )
+    )
 
 
 def test_placement_accepts_boundary_as_top_prefix_in_shell_but_rejects_after() -> None:
@@ -174,19 +163,12 @@ d = b
     )
 
 
-def test_placement_rejects_boundary_marker_as_decorator_or_nested_call() -> None:
-    # Issue 006 6a: boundary calls must be statements; embedded in an
-    # expression or as a decorator they are not declarations and are
-    # rejected.
-    with pytest.raises(
-        ValueError,
-        match=r"astichi_import\(\.\.\.\) at line \d+",
-    ):
-        astichi.compile(
-            """
-result = astichi_import(bad_in_expr)
+def test_placement_accepts_boundary_marker_in_assignment_rhs() -> None:
+    astichi.compile(
+        """
+result = astichi_import(bound_name)
 """
-        )
+    )
 
 
 def test_placement_accepts_astichi_pass_as_module_level_walrus_rhs() -> None:
@@ -200,30 +182,21 @@ astichi_export(out)
     )
 
 
-def test_placement_rejects_astichi_import_as_walrus_rhs() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"astichi_import\(\.\.\.\) at line \d+",
-    ):
-        astichi.compile(
-            """
+def test_placement_accepts_astichi_import_as_walrus_rhs() -> None:
+    astichi.compile(
+        """
 (x := astichi_import(y))
 """
-        )
+    )
 
 
-def test_placement_rejects_astichi_pass_walrus_inside_compound_statement() -> None:
-    # Walrus + ``astichi_pass`` is only valid as a direct scope-body stmt.
-    with pytest.raises(
-        ValueError,
-        match=r"astichi_pass\(\.\.\.\) at line \d+",
-    ):
-        astichi.compile(
-            """
+def test_placement_accepts_astichi_pass_walrus_inside_compound_statement() -> None:
+    astichi.compile(
+        """
 if True:
     (x := astichi_pass(y))
 """
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

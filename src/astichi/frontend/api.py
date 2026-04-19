@@ -89,8 +89,8 @@ def compile(
             ),
             filename=origin.file_name,
         )
-    # Issue 006 6a: reject misplaced astichi_import / astichi_pass
-    # declarations before any downstream pipeline step observes them.
+    # Issue 006 6a: enforce statement-prefix placement for boundary markers
+    # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
     markers = recognize_markers(tree)
     # Issue 006 6b: reject forbidden per-scope marker combinations

@@ -1533,10 +1533,9 @@ _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
 # and scope-identity classification by the time we run the residual
 # stripper. They carry no runtime value and must not appear in the
 # emitted source. Unlike `astichi_keep` / `astichi_export`, these
-# markers are normally statement-only; ``astichi_pass`` may also appear
-# as the RHS of a top-level walrus and is lowered in ``visit_NamedExpr``.
-# We strip the enclosing ``Expr`` for statement-form import/pass and leave
-# other positions to the NamedExpr handler.
+# markers may appear in expression positions; ``visit_Call`` / ``visit_NamedExpr``
+# lower them to the wrapped identifier. We strip the enclosing ``Expr`` for
+# statement-form import/pass (no runtime statement remains).
 _BOUNDARY_STATEMENT_MARKER_NAMES: frozenset[str] = frozenset(
     {"astichi_import", "astichi_pass"}
 )
@@ -1589,8 +1588,6 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         if (
             isinstance(inner, ast.Call)
             and _is_boundary_statement_marker(inner)
-            and isinstance(inner.func, ast.Name)
-            and inner.func.id == "astichi_pass"
             and len(inner.args) == 1
             and isinstance(inner.args[0], ast.Name)
             and not inner.keywords
@@ -1639,6 +1636,13 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         inner = _residual_marker_inner(node)
         if inner is not None:
             return self.visit(copy.deepcopy(inner))
+        if (
+            _is_boundary_statement_marker(node)
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and not node.keywords
+        ):
+            return self.visit(copy.deepcopy(node.args[0]))
         return self.generic_visit(node)
 
 

@@ -266,24 +266,25 @@ def collect_identifier_demands_in_body(body: list[ast.stmt]) -> frozenset[str]:
             break
         names.add(info[0])
 
-    # ``(x := astichi_pass(y))`` as a direct scope-body statement: inner ``y``
-    # is assign-wirable like ``astichi_import(y)`` (``builder.assign``).
+    # Any ``astichi_import(name)`` / ``astichi_pass(name)`` call in the body
+    # (including expression positions) exposes ``name`` for ``builder.assign``.
     for statement in body:
-        if not isinstance(statement, ast.Expr):
-            continue
-        if not isinstance(statement.value, ast.NamedExpr):
-            continue
-        ne = statement.value
-        inner = ne.value
-        if (
-            isinstance(inner, ast.Call)
-            and isinstance(inner.func, ast.Name)
-            and inner.func.id == "astichi_pass"
-            and len(inner.args) == 1
-            and isinstance(inner.args[0], ast.Name)
-            and not inner.keywords
-        ):
-            names.add(inner.args[0].id)
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            fid = node.func.id
+            if fid == "astichi_import" and (
+                len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and not node.keywords
+            ):
+                names.add(node.args[0].id)
+            elif fid == "astichi_pass" and (
+                len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and not node.keywords
+            ):
+                names.add(node.args[0].id)
 
     class _Collector(ast.NodeVisitor):
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
