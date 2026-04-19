@@ -184,8 +184,8 @@ The suite should cover these axes.
 |------|------------------------|
 | Stage depth | `S1` only, `S1 -> S2`, `S1 -> S2 -> S3` |
 | Structural depth | flat, parent/child, grandchild nesting |
-| Demand kind | block hole, expression insert, variadic insert, external literal, identifier import/arg |
-| Supply kind | plain inserted piece, `astichi_pass`, `astichi_export`, outer local binding |
+| Demand kind | block hole, plain call hole, `*` call hole, `**` call hole, external literal, identifier import/arg |
+| Supply kind | plain inserted piece, `astichi_funcargs(...)`, `astichi_pass`, `astichi_export`, outer local binding |
 | Wiring surface | compile-time `arg_names`, add-time `arg_names`, edge-time `arg_names`, `builder.assign` |
 | Rename mode | identity (`x -> x`), non-identity (`x -> y`) |
 | Keep surface | marker keep, suffix keep, `keep_names=` |
@@ -316,7 +316,7 @@ implementation changes.
 
 Most staged discussion defaults to block holes. V3 should explicitly cover:
 
-- expression insert
+- `astichi_funcargs(...)` into plain call holes
 - `*astichi_hole(...)`
 - `**astichi_hole(...)`
 

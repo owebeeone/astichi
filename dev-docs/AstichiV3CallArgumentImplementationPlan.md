@@ -274,27 +274,30 @@ Current proving tests:
 - `tests/test_boundaries.py`
 - `tests/test_builder_handles.py`
 
-## Step 6. Documentation alignment
+## Completed in roll-build: Step 6. Documentation alignment
 
-Goal: make the active docs and test plans describe the new surface accurately
-while the old authored surface still exists during migration.
+The active docs now describe the implemented V3 authored surface consistently.
 
-### Step 6a. Public reference cleanup
+Completed updates:
 
-- update active marker docs
-- update the single-source summary
-- update any user docs that still fail to describe `astichi_funcargs(...)` as
-  the intended call-argument surface
+- `docs/reference/marker-overview.md`
+- `docs/reference/marker-for-and-insert.md`
+- `dev-docs/AstichiSingleSourceSummary.md`
+- `dev-docs/AstichiV3TestPlan.md`
 
-### Step 6b. Test-plan alignment
+Completed behavior:
 
-- update the V3 staged test plan so staged coverage is written against the
-  chosen authored surface
-
-Exit rules:
-
-- active docs do not disagree on the intended authored source surface
-- staged plans and active docs point at the same surface
+- active marker docs now describe `astichi_funcargs(...)` as the authored
+  call-argument payload surface
+- decorator-form `@astichi_insert(...)` remains documented as the public
+  block-shell surface
+- legacy user-authored `astichi_insert(target, expr)` is still acknowledged as
+  existing behavior, but no active doc presents it as the intended
+  call-argument API
+- the single-source summary now matches the implemented surface split between
+  authored payloads and generated internal placement wrappers
+- the staged test plan now describes staged call-argument coverage in terms of
+  `astichi_funcargs(...)`
 
 ## Step 7. Legacy authored-surface removal
 

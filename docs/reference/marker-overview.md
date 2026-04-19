@@ -23,8 +23,16 @@ astichi_bind_external(name)
 astichi_keep(name)
 astichi_export(name)
 astichi_for(domain)
+astichi_funcargs(...)
 @astichi_insert(target, order=…, ref=…)
 ```
+
+Call-argument note:
+
+- `astichi_funcargs(...)` is the authored call-argument payload surface
+- decorator-form `@astichi_insert(...)` remains the public block-shell surface
+- user-authored `astichi_insert(target, expr)` may still exist as legacy
+  behavior, but it is not the intended authored call-argument API
 
 ## Identifier arguments
 

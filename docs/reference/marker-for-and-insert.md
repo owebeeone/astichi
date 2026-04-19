@@ -1,4 +1,4 @@
-# Markers: `astichi_for` and `@astichi_insert`
+# Markers: `astichi_for`, `astichi_funcargs`, and `@astichi_insert`
 
 ## `astichi_for(domain)`
 
@@ -42,6 +42,30 @@ def normalize_shell():
   `astichi_insert(target, expr)` does **not** take `ref=`.
 - Builder-generated shells emit `ref=` automatically so later build stages can
   address descendants with the same fluent path language.
+
+## `astichi_funcargs(...)`
+
+- Authored call-argument payload surface for:
+  - plain call-position holes: `func(astichi_hole(args))`
+  - starred call holes: `func(*astichi_hole(args))`
+  - double-starred call holes: `func(**astichi_hole(kwargs))`
+- Build/merge normalizes payload contributions through generated internal
+  `astichi_insert(...)` wrappers until realization.
+- `_=` is special only when its direct value is:
+  - `astichi_import(name)`
+  - `astichi_export(name)`
+- `astichi_pass(name)` is the value-form participant and belongs in an emitted
+  argument expression, not in `_=`:
+
+```python
+astichi_funcargs(
+    (out := astichi_pass(seed)),
+    _=astichi_export(out),
+)
+```
+
+- User-authored `astichi_insert(target, expr)` is not the intended authored
+  call-argument API. It remains legacy behavior only.
 
 ## See also
 
