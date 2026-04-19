@@ -315,6 +315,16 @@ class _InsertMarker(MarkerSpec):
                 parse_ref_path_literal(keyword.value)
 
 
+class _FuncArgsMarker(MarkerSpec):
+    """Authored call-argument payload surface."""
+
+    source_name = "astichi_funcargs"
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError("astichi_funcargs must be recognized from an ast.Call")
+
+
 HOLE = _HoleMarker()
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(
@@ -340,6 +350,7 @@ EXPORT = _SimpleMarker(
     ),
 )
 FOR = _SimpleMarker("astichi_for", positional_args=1)
+FUNCARGS = _FuncArgsMarker()
 INSERT = _InsertMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
@@ -378,6 +389,7 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     KEEP,
     EXPORT,
     FOR,
+    FUNCARGS,
     INSERT,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,

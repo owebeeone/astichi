@@ -148,33 +148,32 @@ Current proving tests:
 - `tests/test_builder_handles.py`
 - `tests/test_boundaries.py`
 
-## Step 2. Recognition
+## Completed in roll-build: Step 2. Recognition
 
-Goal: teach compile/lowering to recognize the new authored payload surface.
+Recognition now lives in:
 
-### Step 2a. Recognize `astichi_funcargs(...)`
+- `src/astichi/lowering/call_argument_payloads.py`
+- `src/astichi/frontend/api.py`
+- `src/astichi/lowering/markers.py`
 
-- add marker/surface recognition for `astichi_funcargs(...)`
-- reject unsupported placements early if the surface is call-site-only
+Completed behavior:
 
-### Step 2b. Recognize `_=` directive carriers
+- `astichi_funcargs(...)` is now a recognized authored payload surface
+- compile rejects non-payload placement early: the current authored form must be
+  the only top-level expression statement in the snippet
+- direct `_=astichi_import(name)` / `_=astichi_export(name)` carriers are
+  recognized in authored order
+- `_=` with any other value remains an ordinary emitted keyword argument
+- `_=astichi_pass(name)` rejects directly
+- `astichi_import(...)` / `astichi_export(...)` outside direct `_=` carriers
+  reject directly
+- wrapped directive-carrier forms reject directly
 
-- detect `_=` entries inside `astichi_funcargs(...)`
-- preserve authored order of repeated `_=` entries
-- validate the allowed marker forms in `_=` values
+Current proving tests:
 
-### Step 2c. Reject malformed payloads
-
-- reject `astichi_pass(name)` inside `_=`
-- reject unsupported marker calls inside `_=`
-- reject obviously invalid `astichi_funcargs(...)` payload shapes with direct
-  diagnostics
-
-Exit rules:
-
-- focused compile-time tests prove `astichi_funcargs(...)` and `_=` are
-  recognized
-- malformed payloads fail during compile/lowering, not later during materialize
+- `tests/test_call_argument_payload_recognition.py`
+- `tests/test_lowering_shapes.py`
+- `tests/test_expression_insert_pipeline.py`
 
 ## Step 3. Internal payload model
 

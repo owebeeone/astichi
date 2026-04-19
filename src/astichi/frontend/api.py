@@ -8,6 +8,7 @@ from collections.abc import Iterable, Mapping
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
 from astichi.lowering import (
+    validate_call_argument_payload_surface,
     recognize_markers,
     validate_boundary_interaction_matrix,
     validate_boundary_marker_placement,
@@ -92,6 +93,7 @@ def compile(
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
+    validate_call_argument_payload_surface(tree)
     markers = recognize_markers(tree)
     # Issue 006 6b: reject forbidden per-scope marker combinations
     # (e.g. `import + pass` on the same name) before continuing.
