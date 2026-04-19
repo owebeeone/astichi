@@ -248,36 +248,31 @@ Current proving tests:
 - `tests/test_boundaries.py`
 - `tests/test_materialize.py`
 
-## Step 5. Staged build coverage
+## Completed in roll-build: Step 5. Staged build coverage
 
-Goal: prove the new payload surface survives build boundaries.
+The staged-build coverage now lives primarily in:
 
-### Step 5a. Stage-built payload reuse
+- `tests/test_staged_build_refs_and_bindings.py`
 
-- built payload contributors can be reused in later stages without losing
-  payload shape or directives
+Completed behavior:
 
-### Step 5b. Descendant-ref addressing with payloads
+- stage-built payload contributors survive reuse across `build()` boundaries
+- staged expression and variadic contributors stored behind synthetic root
+  wrappers are now discovered correctly
+- root-path assign rewrites now penetrate single-instance synthetic root wraps
+  on reused built composables
+- deep descendant addressing continues to work when the addressed target is a
+  call-argument site fed by payload-based contributions
+- payload-local imports and exports survive stage boundaries as intended
+- reused built composables now keep per-instance payload scope separation
+- per-instance `keep_names` pins no longer leak across sibling reused instances
+- root-wrapper target replacement no longer duplicates nested contributions
 
-- deep descendant addressing works when the addressed target is a call-argument
-  site fed by payload-based contributions
+Current proving tests:
 
-### Step 5c. Cross-stage import/export/pass
-
-- payload-local imports can be wired in later stages
-- payload-local exports survive stage boundaries as intended
-
-### Step 5d. Reuse isolation
-
-- reused built composables keep per-instance payload scope separation
-- reused staged payloads do not alias each other's exports, imports, or walrus
-  locals
-
-Exit rules:
-
-- staged tests prove the surface survives `build()` boundaries
-- failures in this stage indicate real implementation bugs, not unspecified
-  semantics
+- `tests/test_staged_build_refs_and_bindings.py`
+- `tests/test_boundaries.py`
+- `tests/test_builder_handles.py`
 
 ## Step 6. Documentation alignment
 

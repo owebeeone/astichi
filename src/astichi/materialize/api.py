@@ -196,10 +196,13 @@ def _apply_assign_bindings(
             instance_name=binding.target_instance,
             role="assign target path",
         )
+        target_body = (
+            _effective_root_body(target_shell.body)
+            if not target_ref_path
+            else target_shell.body
+        )
         if (
-            target_ref_path
-            and binding.outer_name
-            not in collect_identifier_suppliers_in_body(target_shell.body)
+            binding.outer_name not in collect_identifier_suppliers_in_body(target_body)
         ):
             raise ValueError(
                 "no readable supplier named "
@@ -215,7 +218,7 @@ def _apply_assign_bindings(
             resolved_outer_name = _assign_target_alias_name(binding)
             if alias_key not in published_target_aliases:
                 _publish_assign_target_alias(
-                    target_shell.body,
+                    target_body,
                     source_name=binding.outer_name,
                     alias_name=resolved_outer_name,
                 )
@@ -235,7 +238,12 @@ def _apply_assign_bindings(
             instance_name=binding.source_instance,
             role="assign source path",
         )
-        local_demands = collect_identifier_demands_in_body(source_shell.body)
+        source_body = (
+            _effective_root_body(source_shell.body)
+            if not source_ref_path
+            else source_shell.body
+        )
+        local_demands = collect_identifier_demands_in_body(source_body)
         if binding.inner_name not in local_demands:
             raise ValueError(
                 f"no __astichi_arg__ / astichi_import slot named "
@@ -243,7 +251,7 @@ def _apply_assign_bindings(
                 f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`"
             )
         _rewrite_identifier_demands_in_body(
-            source_shell.body,
+            source_body,
             {binding.inner_name: resolved_outer_name},
         )
         piece = _refresh_composable(piece, source_tree)
@@ -502,6 +510,9 @@ def build_merge(
                     + edge.target.path
                 )
                 contrib_body = copy.deepcopy(trees[edge.source_instance].body)
+                _inject_scoped_keep_markers(
+                    contrib_body, source_record.composable.keep_names
+                )
                 _prefix_shell_refs_in_body(contrib_body, inserted_ref_path)
                 contributions.append(
                     _BlockContribution(
@@ -550,6 +561,9 @@ def build_merge(
     # consumes the pair back into flat module body after hygiene.
     merged_body: list[ast.stmt] = []
     for name in root_names:
+        _inject_scoped_keep_markers(
+            trees[name].body, instance_records[name].composable.keep_names
+        )
         merged_body.extend(_wrap_in_root_scope(trees[name].body, name))
 
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
@@ -791,7 +805,7 @@ def _lookup_supply_port(
 
 
 _BOUNDARY_EXPR_PREFIX_NAMES: frozenset[str] = frozenset(
-    {"astichi_import", "astichi_pass", "astichi_export"}
+    {"astichi_import", "astichi_pass", "astichi_export", "astichi_keep"}
 )
 
 
@@ -829,6 +843,70 @@ def _implicit_expression_supply_after_boundary_prefix(
     return final.value, index
 
 
+def _synthetic_root_scope_shell(
+    body: list[ast.stmt],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    if len(body) != 2:
+        return None
+    hole_name = _extract_hole_name(body[0])
+    if hole_name is None or not hole_name.startswith("__astichi_root__"):
+        return None
+    shell = body[1]
+    if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    info = extract_block_insert_shell(shell)
+    if info is None or info.target_name != hole_name:
+        return None
+    return shell
+
+
+def _effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
+    shell = _synthetic_root_scope_shell(body)
+    if shell is None:
+        return body
+    return shell.body
+
+
+def _make_keep_statement(name: str) -> ast.Expr:
+    return ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id="astichi_keep", ctx=ast.Load()),
+            args=[ast.Name(id=name, ctx=ast.Load())],
+            keywords=[],
+        )
+    )
+
+
+def _inject_scoped_keep_markers(
+    body: list[ast.stmt],
+    keep_names: frozenset[str],
+) -> None:
+    if not keep_names:
+        return
+    target_body = _effective_root_body(body)
+    existing: set[str] = set()
+    for stmt in target_body:
+        if not isinstance(stmt, ast.Expr):
+            continue
+        call = stmt.value
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "astichi_keep"
+            and len(call.args) == 1
+            and not call.keywords
+            and isinstance(call.args[0], ast.Name)
+        ):
+            existing.add(call.args[0].id)
+    additions = [
+        _make_keep_statement(name)
+        for name in sorted(keep_names)
+        if name not in existing
+    ]
+    if additions:
+        target_body[:0] = additions
+
+
 def _extract_expression_inserts(
     tree: ast.Module,
     target_name: str,
@@ -837,13 +915,28 @@ def _extract_expression_inserts(
     edge_index: int,
     source_instance: str,
 ) -> list[_ExpressionInsert]:
+    effective_body = _effective_root_body(tree.body)
+    implicit = _implicit_expression_supply_after_boundary_prefix(effective_body)
+    if implicit is not None:
+        expr, stmt_index = implicit
+        if isinstance(expr, ast.Call) and is_astichi_funcargs_call(expr):
+            return [
+                _ExpressionInsert(
+                    expr=copy.deepcopy(expr),
+                    payload=extract_funcargs_payload(expr),
+                    edge_order=edge_order,
+                    inline_order=0,
+                    edge_index=edge_index,
+                    statement_index=stmt_index,
+                )
+            ]
     if (
-        len(tree.body) == 1
-        and isinstance(tree.body[0], ast.Expr)
-        and isinstance(tree.body[0].value, ast.Call)
-        and is_astichi_funcargs_call(tree.body[0].value)
+        len(effective_body) == 1
+        and isinstance(effective_body[0], ast.Expr)
+        and isinstance(effective_body[0].value, ast.Call)
+        and is_astichi_funcargs_call(effective_body[0].value)
     ):
-        call = tree.body[0].value
+        call = effective_body[0].value
         return [
             _ExpressionInsert(
                 expr=copy.deepcopy(call),
@@ -855,7 +948,7 @@ def _extract_expression_inserts(
             )
         ]
     inserts: list[_ExpressionInsert] = []
-    for stmt_index, stmt in enumerate(tree.body):
+    for stmt_index, stmt in enumerate(effective_body):
         if not isinstance(stmt, ast.Expr):
             if _contains_top_level_expression_insert(stmt):
                 raise ValueError(
@@ -882,8 +975,6 @@ def _extract_expression_inserts(
         )
     if inserts:
         return inserts
-
-    implicit = _implicit_expression_supply_after_boundary_prefix(tree.body)
     if implicit is not None:
         expr, stmt_index = implicit
         return [
@@ -1058,6 +1149,16 @@ class _HoleReplacementTransformer(ast.NodeTransformer):
                 new_node = self.visit(old_value)
                 setattr(node, field, new_node)
         return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        if is_astichi_insert_shell(node):
+            return node
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        if is_astichi_insert_shell(node):
+            return node
+        return self.generic_visit(node)
 
     def visit_Expr(self, node: ast.Expr) -> ast.AST | list[ast.stmt]:
         hole_name = _extract_hole_name(node)
@@ -1535,7 +1636,13 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         _resolve_boundary_imports(tree, arg_bindings)
     markers = recognize_markers(tree)
     pinned_targets = frozenset(arg_bindings.values())
-    effective_keep_names = composable.keep_names | pinned_targets
+    marker_keep_names = frozenset(
+        marker.name_id
+        for marker in markers
+        if marker.source_name == "astichi_keep" and marker.name_id is not None
+    )
+    explicit_keep_names = composable.keep_names - marker_keep_names
+    effective_keep_names = explicit_keep_names | pinned_targets
     provisional = BasicComposable(
         tree=tree,
         origin=composable.origin,
@@ -1553,7 +1660,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     analysis = assign_scope_identity(
         provisional,
         preserved_names=effective_keep_names,
-        trust_names=composable.keep_names,
+        trust_names=explicit_keep_names,
     )
     rename_scope_collisions(analysis)
     payload_directive_markers = _payload_local_directive_markers(tree)

@@ -889,4 +889,4 @@ def test_6c_assign_surface_deep_target_path_selects_nested_supplier() -> None:
     values = [
         value for key, value in namespace.items() if key.startswith("step_result")
     ]
-    assert values == [21, 21]
+    assert values == [21]
