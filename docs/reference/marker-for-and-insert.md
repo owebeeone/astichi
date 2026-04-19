@@ -50,10 +50,16 @@ def normalize_shell():
   - starred call holes: `func(*astichi_hole(args))`
   - double-starred call holes: `func(**astichi_hole(kwargs))`
 - Build/merge normalizes payload contributions through generated internal
-  `astichi_insert(...)` wrappers until realization.
+  placement wrappers until realization.
+- Author one `astichi_funcargs(...)` payload per contributing snippet; the
+  target hole and edge order determine where that payload lands.
+- If exact ordering boundaries matter, expose multiple holes in the target
+  call surface and rely on authored hole order first, then contribution order
+  within each hole.
 - `_=` is special only when its direct value is:
   - `astichi_import(name)`
   - `astichi_export(name)`
+- Any other `_=` entry is just an ordinary emitted keyword argument named `_`.
 - `astichi_pass(name)` is the value-form participant and belongs in an emitted
   argument expression, not in `_=`:
 
@@ -64,8 +70,16 @@ astichi_funcargs(
 )
 ```
 
-- User-authored `astichi_insert(target, expr)` is rejected for call-argument
-  targets. It remains legacy behavior only for non-call expression targets.
+- Duplicate explicit emitted keyword names reject at build time.
+- For non-call expression holes, the authored surface is a plain expression:
+
+```python
+42
+```
+
+- Do not author expression-form `astichi_insert(target, expr)` in source.
+  Astichi may emit equivalent internal placement metadata in built state, but
+  that form is not part of the public authored API.
 
 ## See also
 
