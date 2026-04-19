@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import copy
 from dataclasses import dataclass
+from typing import Callable, Literal
 
 from astichi.lowering.markers import (
     BIND_EXTERNAL,
@@ -62,6 +63,9 @@ class FuncArgPayload:
 class PayloadLocalDirective:
     spec: MarkerSpec
     name: str
+
+
+FuncArgRegion = Literal["plain", "starred", "dstar"]
 
 
 def is_astichi_funcargs_call(node: ast.AST) -> bool:
@@ -236,3 +240,85 @@ def _validated_name_arg(call: ast.Call, spec: MarkerSpec) -> str:
             f"{spec.source_name} requires a bare identifier-like first argument"
         )
     return first_arg.id
+
+
+def payload_explicit_keyword_names(payload: FuncArgPayload) -> tuple[str, ...]:
+    return tuple(
+        item.name for item in payload.items if isinstance(item, KeywordFuncArgItem)
+    )
+
+
+def register_explicit_keyword(name: str, seen: set[str]) -> None:
+    if name in seen:
+        raise ValueError(
+            f"duplicate explicit keyword `{name}` in call-argument payloads"
+        )
+    seen.add(name)
+
+
+def validate_payload_for_region(
+    payload: FuncArgPayload,
+    *,
+    region: FuncArgRegion,
+    hole_name: str,
+    seen_explicit_keywords: set[str] | None = None,
+) -> None:
+    for item in payload.items:
+        if isinstance(item, DirectiveFuncArgItem):
+            continue
+        if region == "plain":
+            continue
+        if region == "starred" and isinstance(
+            item, (PositionalFuncArgItem, StarredFuncArgItem)
+        ):
+            continue
+        if region == "dstar" and isinstance(
+            item, (KeywordFuncArgItem, DoubleStarFuncArgItem)
+        ):
+            continue
+        if region == "starred":
+            raise ValueError(
+                f"starred target {hole_name} rejects keyword / **mapping payload items"
+            )
+        raise ValueError(
+            f"double-starred target {hole_name} rejects positional / starred payload items"
+        )
+
+    if seen_explicit_keywords is None:
+        return
+    for name in payload_explicit_keyword_names(payload):
+        register_explicit_keyword(name, seen_explicit_keywords)
+
+
+def lower_payload_for_region(
+    payload: FuncArgPayload,
+    *,
+    region: FuncArgRegion,
+    hole_name: str,
+    transform_expr: Callable[[ast.expr], ast.expr],
+) -> tuple[list[ast.expr], list[ast.keyword]]:
+    validate_payload_for_region(payload, region=region, hole_name=hole_name)
+
+    positional: list[ast.expr] = []
+    keywords: list[ast.keyword] = []
+    for item in payload.items:
+        if isinstance(item, DirectiveFuncArgItem):
+            continue
+        if isinstance(item, PositionalFuncArgItem):
+            positional.append(transform_expr(item.expr))
+            continue
+        if isinstance(item, StarredFuncArgItem):
+            positional.append(
+                ast.Starred(value=transform_expr(item.expr), ctx=ast.Load())
+            )
+            continue
+        if isinstance(item, KeywordFuncArgItem):
+            keywords.append(
+                ast.keyword(arg=item.name, value=transform_expr(item.expr))
+            )
+            continue
+        if isinstance(item, DoubleStarFuncArgItem):
+            keywords.append(ast.keyword(arg=None, value=transform_expr(item.expr)))
+            continue
+        raise TypeError(f"unhandled funcarg payload item: {type(item).__name__}")
+    return positional, keywords
