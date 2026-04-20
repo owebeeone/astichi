@@ -716,6 +716,45 @@ result = total
     assert namespace["result"] == 14
 
 
+def test_6c_assign_surface_disambiguates_same_public_supplier_name_across_instances() -> None:
+    root_src = """
+source_a = 10
+source_b = 20
+astichi_hole(body)
+out_a = astichi_pass(out_a)
+out_b = astichi_pass(out_b)
+result = (out_a, out_b)
+"""
+    child_src = """
+astichi_import(seed)
+out = seed
+astichi_export(out)
+"""
+
+    builder = astichi.build()
+    builder.add.Root(astichi.compile(root_src))
+    builder.add.A(astichi.compile(child_src))
+    builder.add.B(astichi.compile(child_src))
+    builder.Root.body.add.A(order=0)
+    builder.Root.body.add.B(order=1)
+    builder.assign.A.seed.to().Root.source_a
+    builder.assign.B.seed.to().Root.source_b
+    builder.assign.Root.out_a.to().A.out
+    builder.assign.Root.out_b.to().B.out
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+    namespace = _exec_emitted(materialized)
+
+    assert "__astichi_assign__inst__A__name__out" in source
+    assert "__astichi_assign__inst__B__name__out" in source
+    assert "out_a = __astichi_assign__inst__A__name__out" in source
+    assert "out_b = __astichi_assign__inst__B__name__out" in source
+    assert "__astichi_assign__inst__A__name__out__astichi_scoped_" not in source
+    assert "__astichi_assign__inst__B__name__out__astichi_scoped_" not in source
+    assert namespace["result"] == (10, 20)
+
+
 def test_6c_assign_surface_is_idempotent_for_exact_duplicate_declarations() -> None:
     # Issue 006 6c: restating the exact same assignment is a no-op —
     # the guard in `BuilderGraph.add_assign` ignores an identical

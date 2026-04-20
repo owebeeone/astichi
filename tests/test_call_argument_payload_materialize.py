@@ -227,6 +227,70 @@ astichi_funcargs(
     assert namespace["result"] == 10
 
 
+def test_build_funcargs_assign_disambiguates_same_export_name_across_expression_sources() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def func_plain(*args):
+    return args
+
+def func_kw(**kwds):
+    return kwds
+
+source_plain = 10
+source_kw = 20
+result_plain = func_plain(astichi_hole(plain_args))
+result_kw = func_kw(**astichi_hole(kw_args))
+out_plain = astichi_pass(out_plain)
+out_kw = astichi_pass(out_kw)
+result = (result_plain, result_kw["msg"], out_plain, out_kw)
+"""
+        )
+    )
+    builder.add.PlainScoped(
+        astichi.compile(
+            """
+astichi_funcargs(
+    (out := seed),
+    _=astichi_import(seed),
+    _=astichi_export(out),
+)
+"""
+        )
+    )
+    builder.add.KwScoped(
+        astichi.compile(
+            """
+astichi_funcargs(
+    msg=(out := seed),
+    _=astichi_import(seed),
+    _=astichi_export(out),
+)
+"""
+        )
+    )
+    builder.Root.plain_args.add.PlainScoped(order=0)
+    builder.Root.kw_args.add.KwScoped(order=0)
+    builder.assign.PlainScoped.seed.to().Root.source_plain
+    builder.assign.KwScoped.seed.to().Root.source_kw
+    builder.assign.Root.out_plain.to().PlainScoped.out
+    builder.assign.Root.out_kw.to().KwScoped.out
+
+    materialized = builder.build().materialize()
+    source = materialized.emit(provenance=False)
+
+    assert "__astichi_assign__inst__PlainScoped__name__out" in source
+    assert "__astichi_assign__inst__KwScoped__name__out" in source
+    assert "out_plain = __astichi_assign__inst__PlainScoped__name__out" in source
+    assert "out_kw = __astichi_assign__inst__KwScoped__name__out" in source
+    assert "__astichi_assign__inst__PlainScoped__name__out__astichi_scoped_" not in source
+    assert "__astichi_assign__inst__KwScoped__name__out__astichi_scoped_" not in source
+
+    namespace = _exec_emitted(materialized)
+    assert namespace["result"] == ((10,), 20, 10, 20)
+
+
 def test_build_funcargs_bind_external_emits_value_argument() -> None:
     builder = astichi.build()
     builder.add.Root(

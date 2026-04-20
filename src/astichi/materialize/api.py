@@ -225,6 +225,22 @@ def _apply_assign_bindings(
     shell_indexes: dict[str, ShellIndex],
 ) -> None:
     """Apply ``builder.assign`` wirings to local tree copies shell-locally."""
+    target_keys_by_source_scope_name: dict[
+        tuple[str, RefPath, str], set[tuple[str, RefPath, str]]
+    ] = {}
+    for binding in assigns:
+        source_ref_path = normalize_ref_path(binding.source_ref_path)
+        target_ref_path = normalize_ref_path(binding.target_ref_path)
+        target_keys_by_source_scope_name.setdefault(
+            (binding.source_instance, source_ref_path, binding.outer_name), set()
+        ).add(
+            (binding.target_instance, target_ref_path, binding.outer_name)
+        )
+    ambiguous_source_scope_names = frozenset(
+        source_scope_key
+        for source_scope_key, keys in target_keys_by_source_scope_name.items()
+        if len(keys) > 1
+    )
     published_target_aliases: set[tuple[str, RefPath, str]] = set()
     for binding in assigns:
         source_ref_path = normalize_ref_path(binding.source_ref_path)
@@ -281,7 +297,11 @@ def _apply_assign_bindings(
                     hint="publish the name with `astichi_export` or an assignable value at that path",
                 )
             )
-        if target_ref_path:
+        if target_ref_path or (
+            binding.source_instance,
+            source_ref_path,
+            binding.outer_name,
+        ) in ambiguous_source_scope_names:
             alias_key = (
                 binding.target_instance,
                 target_ref_path,
@@ -342,18 +362,43 @@ def _rewrite_identifier_demands_in_body(
     body: list[ast.stmt],
     bindings: dict[str, str],
 ) -> None:
+    import_bindings = {
+        name: bindings[name]
+        for name in _declared_import_like_names_in_body(body)
+        if name in bindings
+    }
     arg_resolver = _ShellArgIdentifierResolver(bindings)
-    import_resolver = _BoundaryImportRenamer(bindings)
+    import_resolver = _BoundaryImportRenamer(import_bindings)
     pass_resolver = _BoundaryPassRenamer(bindings)
     for index, statement in enumerate(body):
         info = boundary_import_statement(statement)
-        if info is not None and info[0] in bindings:
-            _rewrite_boundary_import_name(statement, bindings[info[0]])
+        if info is not None and info[0] in import_bindings:
+            _rewrite_boundary_import_name(statement, import_bindings[info[0]])
         rewritten = arg_resolver.visit(statement)
         if rewritten is None:
             continue
         assert isinstance(rewritten, ast.stmt)
         body[index] = pass_resolver.visit(import_resolver.visit(rewritten))
+
+
+def _declared_import_like_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
+    names: set[str] = set()
+    for statement in body:
+        info = boundary_import_statement(statement)
+        if info is not None:
+            names.add(info[0])
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call) or not is_astichi_funcargs_call(node):
+                continue
+            for directive in direct_funcargs_directive_calls(node):
+                if (
+                    call_name(directive) == IMPORT.source_name
+                    and directive.args
+                    and isinstance(directive.args[0], ast.Name)
+                ):
+                    names.add(directive.args[0].id)
+    return frozenset(names)
 
 
 def _assign_target_alias_name(binding: AssignBinding) -> str:
@@ -380,13 +425,7 @@ def _publish_assign_target_alias(
     location_donor: ast.AST | None = None,
 ) -> None:
     donor = location_donor or (body[0] if body else None)
-    keep_stmt = ast.Expr(
-        value=ast.Call(
-            func=ast.Name(id="astichi_keep", ctx=ast.Load()),
-            args=[ast.Name(id=alias_name, ctx=ast.Load())],
-            keywords=[],
-        )
-    )
+    keep_stmt = _make_keep_statement(alias_name, location_donor=donor)
     export_stmt = ast.Expr(
         value=ast.Call(
             func=ast.Name(id="astichi_export", ctx=ast.Load()),
@@ -398,9 +437,88 @@ def _publish_assign_target_alias(
         targets=[ast.Name(id=alias_name, ctx=ast.Store())],
         value=ast.Name(id=source_name, ctx=ast.Load()),
     )
-    for stmt in (keep_stmt, export_stmt, assign_stmt):
-        propagate_ast_source_locations(stmt, donor)
+    propagate_ast_source_locations(export_stmt, donor)
+    propagate_ast_source_locations(assign_stmt, donor)
+
+    implicit_expr = _implicit_expression_supply_after_boundary_prefix(body)
+    if implicit_expr is not None:
+        expr, stmt_index = implicit_expr
+        final_stmt = body[stmt_index]
+        assert isinstance(final_stmt, ast.Expr)
+        rewritten_expr, captured_inline = _inline_expression_alias_capture(
+            expr,
+            source_name=source_name,
+            alias_name=alias_name,
+        )
+        if not captured_inline:
+            rewritten_expr = _wrap_expression_with_alias_capture(
+                expr,
+                source_name=source_name,
+                alias_name=alias_name,
+                location_donor=expr,
+            )
+        final_stmt.value = rewritten_expr
+        body[stmt_index:stmt_index] = (keep_stmt, export_stmt)
+        return
+
     body.extend((keep_stmt, export_stmt, assign_stmt))
+
+
+def _wrap_expression_with_alias_capture(
+    expr: ast.expr,
+    *,
+    source_name: str,
+    alias_name: str,
+    location_donor: ast.AST | None = None,
+) -> ast.expr:
+    wrapped = ast.Subscript(
+        value=ast.Tuple(
+            elts=[
+                expr,
+                ast.NamedExpr(
+                    target=ast.Name(id=alias_name, ctx=ast.Store()),
+                    value=ast.Name(id=source_name, ctx=ast.Load()),
+                ),
+            ],
+            ctx=ast.Load(),
+        ),
+        slice=ast.Constant(value=0),
+        ctx=ast.Load(),
+    )
+    propagate_ast_source_locations(wrapped, location_donor)
+    return wrapped
+
+
+def _inline_expression_alias_capture(
+    expr: ast.expr,
+    *,
+    source_name: str,
+    alias_name: str,
+) -> tuple[ast.expr, bool]:
+    class _Transformer(ast.NodeTransformer):
+        def __init__(self) -> None:
+            self.captured = False
+
+        def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.AST:
+            node = self.generic_visit(node)
+            assert isinstance(node, ast.NamedExpr)
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == source_name
+            ):
+                self.captured = True
+                return _wrap_expression_with_alias_capture(
+                    node,
+                    source_name=source_name,
+                    alias_name=alias_name,
+                    location_donor=node,
+                )
+            return node
+
+    transformer = _Transformer()
+    rewritten = transformer.visit(expr)
+    assert isinstance(rewritten, ast.expr)
+    return rewritten, transformer.captured
 
 
 class _ShellArgIdentifierResolver(ast.NodeTransformer):

@@ -12,7 +12,8 @@ This recipe is one module with **several** call sites:
   star case, with ``builder.assign`` from composable handles to names on ``Root``.
 - **``result_multi_scope``** — **one** function call with ``astichi_hole(head)``,
   ``astichi_hole(varargs)``, and ``astichi_hole(kwargs)``; each payload is its own Astichi scope
-  (hygiene may rename ``out`` across scopes, e.g. ``out__astichi_scoped_*``).
+  (hygiene may rename ``out`` across scopes, e.g. ``out__astichi_scoped_*``; ``builder.assign``
+  threads each Root-side pass slot onto the correct exported ``out``).
 """
 
 def run() -> str:
@@ -221,9 +222,9 @@ def run() -> str:
     builder.Root.kwargs_ms.add.KwFlagMulti(order=2)
     builder.assign.HeadMulti.seed.to().Root.head_supply
     builder.assign.VarMulti.seed.to().Root.seed_star
-    builder.assign.StarScoped.out.to().Root.out_multi_scope
-    builder.assign.HeadMulti.out.to().Root.out_kw_scoped
-    builder.assign.HeadMulti.out.to().Root.out_star_scoped
-    builder.assign.HeadMulti.out.to().Root.out_plain_scoped
+    builder.assign.Root.out_multi_scope.to().HeadMulti.out
+    builder.assign.Root.out_kw_scoped.to().KwScoped.out
+    builder.assign.Root.out_star_scoped.to().StarScoped.out
+    builder.assign.Root.out_plain_scoped.to().PlainScoped.out
     composable = builder.build()
     return ast.unparse(composable.bind(seed={"seed": 101}).materialize().tree)
