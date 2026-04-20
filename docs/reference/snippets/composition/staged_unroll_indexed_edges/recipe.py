@@ -2,7 +2,7 @@
 
 The root shell holds ``events = []`` and a ``body`` hole; the loop fragment carries
 ``astichi_for`` and a per-iteration ``step`` hole. Stage 2 registers ``Step0`` …
-``Step2`` and wires each to **indexed** targets ``Pipeline.Loop.step[i]``. Those
+``Step2`` and wires each to **indexed** targets ``Pipeline.Root.Loop.step[i]``. Those
 paths exist only after ``astichi_for`` is expanded. The default ``build()`` uses
 ``unroll="auto"``, which unrolls whenever any edge targets an indexed path—so
 explicit ``unroll=True`` is not required here (it would only force unroll even if
@@ -13,7 +13,7 @@ the loop body declares ``astichi_hole(step)`` once, and unrolling the ``(1, 2, 3
 domain produces one target per iteration—``step[0]``, ``step[1]``, ``step[2]``—so
 each append insert wires to the matching iteration’s body.
 
-Stage-2 inserts live **under** ``Pipeline`` / unrolled ``Loop`` bodies; ``events`` is
+Stage-2 inserts live **under** ``Pipeline.Root`` / unrolled ``Loop`` bodies; ``events`` is
 defined on the outer ``Root`` fragment. The explicit threading story is:
 
 - ``Loop`` imports ``events`` from ``Root``
@@ -74,14 +74,14 @@ def run() -> str:
     builder2.add.Step0(
         piece(
             """
-            # Explicit builder.assign below binds this import to Pipeline.events.
+            # Explicit builder.assign below binds this import to Pipeline.Root.events.
             astichi_import(events)
             events.append("first")
             """
         )
     )
     # Loop iteration 0: hole `step` → `step[0]` after astichi_for unroll (see docstring).
-    builder2.Pipeline.Loop.step[0].add.Step0(order=0)
+    builder2.Pipeline.Root.Loop.step[0].add.Step0(order=0)
 
     builder2.add.Step1(
         piece(
@@ -93,7 +93,7 @@ def run() -> str:
         )
     )
     # step[1]: second unrolled iteration.
-    builder2.Pipeline.Loop.step[1].add.Step1(order=1)
+    builder2.Pipeline.Root.Loop.step[1].add.Step1(order=1)
 
     builder2.add.Step2(
         piece(
@@ -105,10 +105,10 @@ def run() -> str:
         )
     )
     # step[2]: third unrolled iteration.
-    builder2.Pipeline.Loop.step[2].add.Step2(order=2)
+    builder2.Pipeline.Root.Loop.step[2].add.Step2(order=2)
 
-    # Step0 uses bare import; wire its demand to Pipeline’s `events` supply.
-    builder2.assign.Step0.events.to().Pipeline.events
+    # Step0 uses bare import; wire its demand to Pipeline.Root’s `events` supply.
+    builder2.assign.Step0.events.to().Pipeline.Root.events
 
     composable2 = builder2.build()  # Indexed edges → default unroll="auto" runs unroll.
     return ast.unparse(composable2.materialize().tree)

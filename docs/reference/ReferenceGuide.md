@@ -39,6 +39,6 @@ JSON lists in `bind` are normalized to tuples where needed.
 **Recipe bundle** (`recipe.py` only, no `snippet.json`):
 
 - Defines **`def run() -> str:`** returning **`ast.unparse(...materialize().tree)`**.
-- Use when the example needs **multiple `build()` calls**, **`assign` chains**, or **indexed `Pipeline.Loop.step[i]`** wiring that is awkward to encode as JSON.
+- Use when the example needs **multiple `build()` calls**, **`assign` chains**, or **indexed `Pipeline.Root.Loop.step[i]`** wiring that is awkward to encode as JSON.
 
 Long-form narrative docs: [marker-overview.md](marker-overview.md), [using-the-api.md](../guide/using-the-api.md), [addressing.md](addressing.md) (paths + indexed edges).

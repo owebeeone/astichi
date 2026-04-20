@@ -29,11 +29,11 @@ error.
   The public/source form uses the same fluent syntax as builder addressing:
 
 ```python
-@astichi_insert(body, ref=Pipeline.Parse)
+@astichi_insert(body, ref=Pipeline.Root.Parse)
 def parse_shell():
     ...
 
-@astichi_insert(body, ref=Pipeline.Parse[1, 2].Normalize)
+@astichi_insert(body, ref=Pipeline.Root.Parse[1, 2].Normalize)
 def normalize_shell():
     ...
 ```

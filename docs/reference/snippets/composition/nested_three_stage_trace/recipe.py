@@ -92,5 +92,5 @@ def run() -> str:
     builder3.add.Pipeline(composable2)
     builder3.Root.body.add.Pipeline(order=0)
     # wires Pipeline instance to Root.body
-    builder3.assign.Pipeline.trace.to().Root.trace
+    builder3.assign.Pipeline.Middle.trace.to().Root.trace
     return ast.unparse(builder3.build().materialize().tree)

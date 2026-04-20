@@ -298,8 +298,6 @@ def _validate_registered_target_site(
     graph: BuilderGraph,
     target: TargetRef,
 ) -> None:
-    if not target.ref_path:
-        return
     shell_index = _registered_shell_index(graph, target.root_instance)
     if shell_index is None:
         return
@@ -353,8 +351,6 @@ def _validate_registered_identifier_supplier(
     ref_path: RefPath,
     outer_name: str,
 ) -> None:
-    if not ref_path:
-        return
     shell_index = _registered_shell_index(graph, instance_name)
     if shell_index is None:
         return

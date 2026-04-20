@@ -192,14 +192,14 @@ def test_descendant_target_handles_accumulate_ref_path_across_build_stages() -> 
     stage2 = astichi.build()
     stage2.add.Pipeline(built)
 
-    target = stage2.Pipeline.Inner.slot
+    target = stage2.Pipeline.Root.Inner.slot
 
     assert target == TargetHandle(
         graph=stage2.graph,
         target=TargetRef(
             root_instance="Pipeline",
             target_name="slot",
-            ref_path=("Inner",),
+            ref_path=("Root", "Inner"),
         ),
     )
 
@@ -232,9 +232,9 @@ def test_deep_target_add_rejects_unknown_leaf_in_registered_shell() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"build: unknown target site `Pipeline\.Inner\.missing`",
+        match=r"build: unknown target site `Pipeline\.Root\.Inner\.missing`",
     ):
-        stage2.Pipeline.Inner.missing.add.Step()
+        stage2.Pipeline.Root.Inner.missing.add.Step()
 
 
 def test_builder_add_rejects_duplicate_descendant_refs_in_reused_build() -> None:
@@ -263,7 +263,7 @@ def test_assign_descendant_target_records_full_ref_path() -> None:
     stage2.add.Pipeline(built)
     stage2.add.Step(astichi.compile("astichi_import(total)\nvalue = total + 1\n"))
 
-    stage2.assign.Step.total.to().Pipeline.Inner.total
+    stage2.assign.Step.total.to().Pipeline.Root.Inner.total
 
     assert stage2.graph.assigns == (
         AssignBinding(
@@ -271,7 +271,7 @@ def test_assign_descendant_target_records_full_ref_path() -> None:
             inner_name="total",
             target_instance="Pipeline",
             outer_name="total",
-            target_ref_path=("Inner",),
+            target_ref_path=("Root", "Inner"),
         ),
     )
 
@@ -288,8 +288,7 @@ def test_assign_descendant_target_rejects_unknown_registered_path_cleanly() -> N
     with pytest.raises(
         ValueError,
         match=(
-            r"assign target path cannot continue after final outer name "
-            r"`Pipeline\.Missing`"
+            r"no readable supplier named `Missing` at `Pipeline\.Missing`"
         ),
     ):
         stage2.assign.Step.total.to().Pipeline.Missing.total

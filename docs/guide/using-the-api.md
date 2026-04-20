@@ -87,12 +87,12 @@ those indexed edges.
 If a later stage reuses a built composable, descendant paths stay fluent:
 
 ```python
-builder.Pipeline.Parse.body.add.Step(order=0)
-builder.assign.Step.total.to().Pipeline.Right.total
+builder.Pipeline.Root.Parse.body.add.Step(order=0)
+builder.assign.Step.total.to().Pipeline.Root.Right.total
 ```
 
 The same fluent descendant syntax appears in emitted block-shell metadata as
-`@astichi_insert(..., ref=Pipeline.Parse)`.
+`@astichi_insert(..., ref=Pipeline.Root.Parse)`.
 
 `build()` on the graph returns a **new** `Composable`. Boundary **holes** may
 still be open if you chose not to wire every demand.

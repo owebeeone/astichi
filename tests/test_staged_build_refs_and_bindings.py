@@ -110,7 +110,7 @@ def _ordered_trace(stage_depth: int, first_order: int, second_order: int) -> lis
         stage2.add.Root(_trace_root_piece())
         stage2.add.Nested(built)
         stage2.Root.body.add.Nested(order=0)
-        stage2.assign.Nested.trace.to().Root.trace
+        stage2.assign.Nested.Root.trace.to().Root.trace
         materialized = stage2.build().materialize()
         return _exec_emitted(materialized)["result"]
 
@@ -124,7 +124,7 @@ def _ordered_trace(stage_depth: int, first_order: int, second_order: int) -> lis
     stage3.add.Root(_trace_root_piece())
     stage3.add.Pipeline(mid_built)
     stage3.Root.body.add.Pipeline(order=0)
-    stage3.assign.Pipeline.trace.to().Root.trace
+    stage3.assign.Pipeline.Middle.trace.to().Root.trace
     materialized = stage3.build().materialize()
     return _exec_emitted(materialized)["result"]
 
@@ -151,7 +151,7 @@ def test_v3_spine_multistage_deep_order_trace() -> None:
     stage2.Root.body.add.Before(order=2)
     stage2.assign.After.trace.to().Root.trace
     stage2.assign.Before.trace.to().Root.trace
-    stage2.assign.Nested.trace.to().Root.trace
+    stage2.assign.Nested.Root.trace.to().Root.trace
 
     materialized = stage2.build().materialize()
     source = materialized.emit(provenance=False)
@@ -203,13 +203,13 @@ def test_v3_late_bind_and_delayed_unroll_matrix(
             astichi_pass(events, outer_bind=True).append({label!r})
             """
         ))
-        getattr(stage2.Pipeline.Loop.step[index].add, step_name)(order=index)
+        getattr(stage2.Pipeline.Root.Loop.step[index].add, step_name)(order=index)
 
     merged = stage2.build(unroll=unroll_mode)
     refs = _collect_insert_refs(merged)
-    assert "Loop" in refs
+    assert "Pipeline.Root.Loop" in refs
     for index in range(len(expected_labels)):
-        assert f"Loop.Step{index}[{index}]" in refs
+        assert f"Pipeline.Root.Loop.Step{index}[{index}]" in refs
 
     materialized = merged.materialize()
     source = materialized.emit(provenance=False)
@@ -246,7 +246,7 @@ def test_v3_import_chain_threads_through_intermediate_unrolled_scope() -> None:
                 """
             )
         )
-        getattr(stage2.Pipeline.Loop.step[index].add, step_name)(order=index)
+        getattr(stage2.Pipeline.Root.Loop.step[index].add, step_name)(order=index)
 
     materialized = stage2.build(unroll="auto").materialize()
     source = materialized.emit(provenance=False)
@@ -284,7 +284,7 @@ def test_v3_spine_stage_built_import_demand_bound_later() -> None:
     )
     stage2.add.StageBuilt(built)
     stage2.Root.body.add.StageBuilt(order=0)
-    stage2.assign.StageBuilt.counter.to().Root.counter
+    stage2.assign.StageBuilt.Step.counter.to().Root.counter
 
     namespace = _exec_emitted(stage2.build().materialize())
     assert namespace["counter"] == 12
@@ -307,9 +307,11 @@ def test_v3_spine_descendant_ref_paths_survive_stage_boundary() -> None:
     merged = stage2.build()
 
     assert _collect_insert_refs(merged) == [
-        "Pipeline",
-        "Pipeline.Parse",
-        "Pipeline.Parse.Normalize",
+        "Outer",
+        "Outer.Pipeline",
+        "Outer.Pipeline.Root",
+        "Outer.Pipeline.Root.Parse",
+        "Outer.Pipeline.Root.Parse.Normalize",
     ]
 
 
@@ -349,14 +351,14 @@ def test_v3_spine_descendant_add_and_assign_match_same_shell_path() -> None:
             """
         )
     )
-    stage2.Pipeline.Parse.body.add.Step(order=0)
-    stage2.assign.Step.total.to().Pipeline.Right.total
+    stage2.Pipeline.Root.Parse.body.add.Step(order=0)
+    stage2.assign.Step.total.to().Pipeline.Root.Right.total
 
     merged = stage2.build()
     refs = _collect_insert_refs(merged)
-    assert "Parse.Step" in refs
-    assert all(not ref.startswith("Left.Step") for ref in refs)
-    assert all(not ref.startswith("Right.Step") for ref in refs)
+    assert "Pipeline.Root.Parse.Step" in refs
+    assert all(not ref.startswith("Pipeline.Root.Left.Step") for ref in refs)
+    assert all(not ref.startswith("Pipeline.Root.Right.Step") for ref in refs)
 
     namespace = _exec_emitted(merged.materialize())
     assert _prefixed_values(namespace, "step_result") == [21]
@@ -468,7 +470,7 @@ def test_v3_identifier_matrix_descendant_source_path_across_stage_boundary() -> 
         )
     )
     stage2.add.Pipeline(built)
-    stage2.assign.Pipeline.Inner.counter.to().Init.counter
+    stage2.assign.Pipeline.Root.Inner.counter.to().Init.counter
 
     namespace = _exec_emitted(stage2.build().materialize())
     assert _prefixed_values(namespace, "result") == [11]
@@ -500,9 +502,9 @@ def test_v3_identifier_matrix_forward_declared_deep_target_rejects() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"assign target path cannot continue after final outer name `Pipeline\.Right`",
+        match=r"assign target path cannot continue after final outer name `Pipeline\.Root`",
     ):
-        builder.assign.Step.total.to().Pipeline.Right.total
+        builder.assign.Step.total.to().Pipeline.Root.Right.total
 
     builder.add.Pipeline(built)
 

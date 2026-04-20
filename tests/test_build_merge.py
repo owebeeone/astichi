@@ -23,7 +23,7 @@ def test_build_simple_block_hole_replacement() -> None:
     assert "value = 1" in rendered
     assert "astichi_hole(body)" in rendered
     assert "@astichi_insert(body" in rendered
-    assert "ref=B" in rendered
+    assert "ref=A.B" in rendered
     assert [p.name for p in result.demand_ports] == []
 
     materialized = result.materialize()
@@ -47,7 +47,7 @@ def test_build_preserves_surrounding_code() -> None:
     assert "y = 2" in rendered
     assert "astichi_hole(body)" in rendered
     assert "@astichi_insert(body" in rendered
-    assert "ref=B" in rendered
+    assert "ref=A.B" in rendered
 
     materialized_src = ast.unparse(result.materialize().tree)
     assert "x = 1" in materialized_src
@@ -120,8 +120,8 @@ def test_build_chain_resolution() -> None:
     assert "astichi_hole(inner)" in rendered
     assert "@astichi_insert(outer" in rendered
     assert "@astichi_insert(inner" in rendered
-    assert "ref=B" in rendered
-    assert "ref=B.C" in rendered
+    assert "ref=A.B" in rendered
+    assert "ref=A.B.C" in rendered
     assert [p.name for p in result.demand_ports] == []
 
     materialized_src = ast.unparse(result.materialize().tree)
@@ -238,8 +238,8 @@ def test_indexed_edge_autounrolls_and_routes_per_index() -> None:
     assert "astichi_for" not in rendered
     assert "@astichi_insert(slot__iter_0" in rendered
     assert "@astichi_insert(slot__iter_1" in rendered
-    assert "ref=B0[0]" in rendered
-    assert "ref=B1[1]" in rendered
+    assert "ref=A.B0[0]" in rendered
+    assert "ref=A.B1[1]" in rendered
     assert "zero = 0" in rendered
     assert "one = 1" in rendered
     assert [p.name for p in result.demand_ports] == []

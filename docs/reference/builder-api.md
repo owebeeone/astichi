@@ -31,13 +31,15 @@ result = builder.build()
 Descendant addressing uses the same fluent path shape:
 
 ```python
-builder.Pipeline.Parse.body.add.Step(order=0)
-builder.Pipeline.Parse.rows[1, 2].Normalize.body.add.Step(order=10)
-builder.assign.Step.total.to().Pipeline.Right.total
+builder.Pipeline.Root.Parse.body.add.Step(order=0)
+builder.Pipeline.Root.Parse.rows[1, 2].Normalize.body.add.Step(order=10)
+builder.assign.Step.total.to().Pipeline.Root.Right.total
 ```
 
 Named descendant hops come from shells preserved across earlier `build()`
-stages; index segments attach to the immediately preceding descendant/leaf.
+stages. A stage-built composable exposes its preserved build root name as the
+first descendant segment; index segments attach to the immediately preceding
+descendant/leaf.
 
 For registered instances, the fluent surface validates descendant refs eagerly:
 

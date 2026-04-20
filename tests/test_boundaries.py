@@ -908,8 +908,8 @@ result = counter * 2
     # Connect the Reader's dangling import demand in stage 2 to the
     # Producer's exported supply from stage 1. The producer
     # composable does not have to be re-inspected by the user: the
-    # fully-qualified assign names the supplier by (instance, name).
-    stage2.assign.Reader.counter.to().Producer.counter
+    # fully-qualified assign names the supplier by (instance, root, name).
+    stage2.assign.Reader.counter.to().Producer.Producer.counter
 
     namespace = _exec_emitted(stage2.build().materialize())
     assert namespace["counter"] == 42
@@ -931,7 +931,7 @@ result = total + 1
     stage2 = astichi.build()
     stage2.add.Init(astichi.compile("total = 10\nastichi_keep(total)\n"))
     stage2.add.Pipeline(built)
-    stage2.assign.Pipeline.Inner.total.to().Init.total
+    stage2.assign.Pipeline.Root.Inner.total.to().Init.total
 
     namespace = _exec_emitted(stage2.build().materialize())
     assert namespace["total"] == 10
@@ -955,8 +955,8 @@ def test_6c_assign_surface_deep_target_path_selects_nested_supplier() -> None:
             keep_names=["step_result"],
         )
     )
-    stage2.Pipeline.body.add.Step(order=2)
-    stage2.assign.Step.total.to().Pipeline.Right.total
+    stage2.Pipeline.Root.body.add.Step(order=2)
+    stage2.assign.Step.total.to().Pipeline.Root.Right.total
 
     namespace = _exec_emitted(stage2.build().materialize())
     values = [

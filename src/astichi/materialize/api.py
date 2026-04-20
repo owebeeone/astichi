@@ -886,6 +886,8 @@ def _wrap_in_root_scope(
     identity through the hygiene pass.
     """
     anchor = _root_scope_anchor(instance_name)
+    root_ref = normalize_ref_path((instance_name,))
+    _prefix_shell_refs_in_body(body, root_ref)
     hole = ast.Expr(
         value=ast.Call(
             func=ast.Name(id="astichi_hole", ctx=ast.Load()),
@@ -900,6 +902,7 @@ def _wrap_in_root_scope(
         order=0,
         shell_name=anchor,
         body=body,
+        ref_path=root_ref,
         location_donor=donor,
     )
     return [hole, shell]

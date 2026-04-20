@@ -31,23 +31,26 @@ earlier `build()` stages. The fluent shape is:
 Examples:
 
 ```text
-Pipeline.Parse.body
-Pipeline.Parse.rows[1, 2].Normalize.body
-Pipeline.Right.total
+Pipeline.Root.Parse.body
+Pipeline.Root.Parse.rows[1, 2].Normalize.body
+Pipeline.Root.Right.total
 ```
 
 This applies to:
 
-- additive targets such as `builder.Pipeline.Parse.body.add.Step(order=0)`
+- additive targets such as `builder.Pipeline.Root.Parse.body.add.Step(order=0)`
 - identifier wiring such as
-  `builder.assign.Step.total.to().Pipeline.Right.total`
+  `builder.assign.Step.total.to().Pipeline.Root.Right.total`
 - emitted shell refs such as
-  `@astichi_insert(body, ref=Pipeline.Parse[1, 2].Normalize)`
+  `@astichi_insert(body, ref=Pipeline.Root.Parse[1, 2].Normalize)`
 
 Rules:
 
 - A descendant path must resolve to **exactly one** preserved shell on the
   addressed instance.
+- Stage-built composables expose their preserved build root name as the first
+  descendant segment. Use the full path (`Pipeline.Root...`), not a
+  root-elided shortcut (`Pipeline...`).
 - **Unknown** descendant refs reject.
 - **Ambiguous repeated-use** descendant refs reject; reused built composables
   must carry unique full `ref=` paths.

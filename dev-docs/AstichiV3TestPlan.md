@@ -107,12 +107,12 @@ Use the following notation in this plan and in future discussion.
 - `assign S.inner => T.outer`: builder-level identifier wiring
 - descendant/ref paths stay in the same fluent form as the public builder API:
   - `T` may be just a root instance (`Root`)
-  - or a descendant path (`Pipeline.Parse`, `Pipeline.Parse.rows[1,2].Normalize`)
+  - or a descendant path (`Pipeline.Root.Parse`, `Pipeline.Root.Parse.rows[1,2].Normalize`)
   - examples:
-    - `wire Pipeline.Parse.body <- Step @o=0`
-    - `assign Step.total => Pipeline.Right.total`
+    - `wire Pipeline.Root.Parse.body <- Step @o=0`
+    - `assign Step.total => Pipeline.Root.Right.total`
 - emitted shell metadata for the same addressed descendant uses
-  `@astichi_insert(..., ref=Pipeline.Parse[1, 2].Normalize)`
+  `@astichi_insert(..., ref=Pipeline.Root.Parse[1, 2].Normalize)`
 - `bind X {name=value}`: apply `.bind(...)` to a composable
 - `arg X {inner->outer}`: apply identifier binding (`arg_names=` /
   `.bind_identifier(...)`)
@@ -430,8 +430,8 @@ Purpose:
 
 Shape:
 
-- `S1` builds `B1` with nested descendants such as `Pipeline.Parse` and
-  `Pipeline.Right`
+- `S1` builds `B1` with nested descendants such as `Pipeline.Root.Parse` and
+  `Pipeline.Root.Right`
 - `S2` uses one descendant path on the add side and another on the assign side
   against the same reused `B1`
 
