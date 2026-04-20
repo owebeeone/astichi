@@ -7,6 +7,7 @@ import copy
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+from astichi.ast_provenance import propagate_ast_source_locations
 from astichi.lowering.markers import (
     BIND_EXTERNAL,
     EXPORT,
@@ -308,17 +309,22 @@ def lower_payload_for_region(
             positional.append(transform_expr(item.expr))
             continue
         if isinstance(item, StarredFuncArgItem):
-            positional.append(
-                ast.Starred(value=transform_expr(item.expr), ctx=ast.Load())
-            )
+            inner = transform_expr(item.expr)
+            starred = ast.Starred(value=inner, ctx=ast.Load())
+            propagate_ast_source_locations(starred, item.expr)
+            positional.append(starred)
             continue
         if isinstance(item, KeywordFuncArgItem):
-            keywords.append(
-                ast.keyword(arg=item.name, value=transform_expr(item.expr))
-            )
+            value = transform_expr(item.expr)
+            kw = ast.keyword(arg=item.name, value=value)
+            propagate_ast_source_locations(kw, item.expr)
+            keywords.append(kw)
             continue
         if isinstance(item, DoubleStarFuncArgItem):
-            keywords.append(ast.keyword(arg=None, value=transform_expr(item.expr)))
+            value = transform_expr(item.expr)
+            kw = ast.keyword(arg=None, value=value)
+            propagate_ast_source_locations(kw, item.expr)
+            keywords.append(kw)
             continue
         raise TypeError(f"unhandled funcarg payload item: {type(item).__name__}")
     return positional, keywords

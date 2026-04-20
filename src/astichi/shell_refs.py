@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from typing import TypeAlias
 
+from astichi.ast_provenance import propagate_ast_source_locations
+
 RefSegment: TypeAlias = str | int
 RefPath: TypeAlias = tuple[RefSegment, ...]
 
@@ -56,8 +58,15 @@ def normalize_ref_path(path: RefPath) -> RefPath:
     return (first_name,) + path[:split] + path[split + 1 :]
 
 
-def ref_path_to_ast(path: RefPath) -> ast.expr:
-    """Encode a canonical ref path as fluent Python AST."""
+def ref_path_to_ast(
+    path: RefPath, *, location_donor: ast.AST | None = None
+) -> ast.expr:
+    """Encode a canonical ref path as fluent Python AST.
+
+    When ``location_donor`` is provided (typically the existing ``ref=`` value
+    or the enclosing ``astichi_insert`` call), line/column metadata is copied
+    onto the synthesized fluent expression.
+    """
     path = normalize_ref_path(path)
     if not path:
         raise ValueError("astichi_insert ref path may not be empty")
@@ -71,13 +80,14 @@ def ref_path_to_ast(path: RefPath) -> ast.expr:
             expr = ast.Name(id=segment, ctx=ast.Load())
         else:
             if index_run:
-                expr = _apply_index_run(expr, tuple(index_run))
+                expr = _apply_index_run(expr, tuple(index_run), location_donor=expr)
                 index_run.clear()
             expr = ast.Attribute(value=expr, attr=segment, ctx=ast.Load())
     if expr is None:
         raise ValueError("astichi_insert ref path must contain a name segment")
     if index_run:
-        expr = _apply_index_run(expr, tuple(index_run))
+        expr = _apply_index_run(expr, tuple(index_run), location_donor=expr)
+    propagate_ast_source_locations(expr, location_donor)
     return expr
 
 
@@ -109,7 +119,14 @@ def extract_insert_ref(call: ast.Call) -> RefPath | None:
 
 def set_insert_ref(call: ast.Call, path: RefPath) -> None:
     """Set or replace the structured ``ref=...`` keyword on an insert call."""
-    new_keyword = ast.keyword(arg="ref", value=ref_path_to_ast(path))
+    ref_donor: ast.AST = call
+    for keyword in call.keywords:
+        if keyword.arg == "ref":
+            ref_donor = keyword.value
+            break
+    new_keyword = ast.keyword(
+        arg="ref", value=ref_path_to_ast(path, location_donor=ref_donor)
+    )
     for index, keyword in enumerate(call.keywords):
         if keyword.arg == "ref":
             call.keywords[index] = new_keyword
@@ -179,7 +196,12 @@ def _parse_ref_segment(node: ast.AST) -> RefSegment:
     )
 
 
-def _apply_index_run(expr: ast.expr, indices: tuple[int, ...]) -> ast.expr:
+def _apply_index_run(
+    expr: ast.expr,
+    indices: tuple[int, ...],
+    *,
+    location_donor: ast.AST | None,
+) -> ast.expr:
     if len(indices) == 1:
         slice_node: ast.expr = ast.Constant(value=indices[0])
     else:
@@ -187,7 +209,9 @@ def _apply_index_run(expr: ast.expr, indices: tuple[int, ...]) -> ast.expr:
             elts=[ast.Constant(value=index) for index in indices],
             ctx=ast.Load(),
         )
-    return ast.Subscript(value=expr, slice=slice_node, ctx=ast.Load())
+    sub = ast.Subscript(value=expr, slice=slice_node, ctx=ast.Load())
+    propagate_ast_source_locations(sub, location_donor or expr)
+    return sub
 
 
 def _parse_ref_components(node: ast.AST) -> list[tuple[str, tuple[int, ...]]]:

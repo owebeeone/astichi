@@ -7,6 +7,7 @@ import copy
 import re
 from dataclasses import dataclass
 
+from astichi.ast_provenance import propagate_ast_source_locations
 from astichi.builder.graph import (
     AdditiveEdge,
     AssignBinding,
@@ -271,6 +272,7 @@ def _apply_assign_bindings(
                     target_body,
                     source_name=binding.outer_name,
                     alias_name=resolved_outer_name,
+                    location_donor=target_body[0] if target_body else None,
                 )
                 published_target_aliases.add(alias_key)
                 target_piece = _refresh_composable(dst.composable, target_tree)
@@ -349,22 +351,23 @@ def _publish_assign_target_alias(
     *,
     source_name: str,
     alias_name: str,
+    location_donor: ast.AST | None = None,
 ) -> None:
-    body.extend(
-        (
-            ast.Expr(
-                value=ast.Call(
-                    func=ast.Name(id="astichi_pass", ctx=ast.Load()),
-                    args=[ast.Name(id=alias_name, ctx=ast.Load())],
-                    keywords=[],
-                )
-            ),
-            ast.Assign(
-                targets=[ast.Name(id=alias_name, ctx=ast.Store())],
-                value=ast.Name(id=source_name, ctx=ast.Load()),
-            ),
+    donor = location_donor or (body[0] if body else None)
+    pass_stmt = ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id="astichi_pass", ctx=ast.Load()),
+            args=[ast.Name(id=alias_name, ctx=ast.Load())],
+            keywords=[],
         )
     )
+    assign_stmt = ast.Assign(
+        targets=[ast.Name(id=alias_name, ctx=ast.Store())],
+        value=ast.Name(id=source_name, ctx=ast.Load()),
+    )
+    for stmt in (pass_stmt, assign_stmt):
+        propagate_ast_source_locations(stmt, donor)
+    body.extend((pass_stmt, assign_stmt))
 
 
 class _ShellArgIdentifierResolver(ast.NodeTransformer):
@@ -749,6 +752,7 @@ def _make_block_insert_shell(
     shell_name: str,
     body: list[ast.stmt],
     ref_path: RefPath | None = None,
+    location_donor: ast.AST | None = None,
 ) -> ast.FunctionDef:
     """Build an `astichi_insert`-decorated shell for a block contribution.
 
@@ -770,7 +774,7 @@ def _make_block_insert_shell(
     )
     if ref_path is not None:
         set_insert_ref(decorator, ref_path)
-    return ast.FunctionDef(
+    shell = ast.FunctionDef(
         name=shell_name,
         args=ast.arguments(
             posonlyargs=[],
@@ -787,6 +791,9 @@ def _make_block_insert_shell(
         type_comment=None,
         type_params=[],
     )
+    donor = location_donor or (shell_body[0] if shell_body else None)
+    propagate_ast_source_locations(shell, donor)
+    return shell
 
 
 def _root_scope_anchor(instance_name: str) -> str:
@@ -822,11 +829,14 @@ def _wrap_in_root_scope(
             keywords=[],
         )
     )
+    donor = body[0] if body else None
+    propagate_ast_source_locations(hole, donor)
     shell = _make_block_insert_shell(
         target_name=anchor,
         order=0,
         shell_name=anchor,
         body=body,
+        location_donor=donor,
     )
     return [hole, shell]
 
@@ -934,14 +944,18 @@ def _effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
     return shell.body
 
 
-def _make_keep_statement(name: str) -> ast.Expr:
-    return ast.Expr(
+def _make_keep_statement(
+    name: str, *, location_donor: ast.AST | None = None
+) -> ast.Expr:
+    expr = ast.Expr(
         value=ast.Call(
             func=ast.Name(id=KEEP.source_name, ctx=ast.Load()),
             args=[ast.Name(id=name, ctx=ast.Load())],
             keywords=[],
         )
     )
+    propagate_ast_source_locations(expr, location_donor)
+    return expr
 
 
 def _inject_scoped_keep_markers(
@@ -958,8 +972,9 @@ def _inject_scoped_keep_markers(
         call = stmt.value
         if is_call_to_marker(call, KEEP) and len(call.args) == 1 and not call.keywords and isinstance(call.args[0], ast.Name):
             existing.add(call.args[0].id)
+    donor = target_body[0] if target_body else None
     additions = [
-        _make_keep_statement(name)
+        _make_keep_statement(name, location_donor=donor)
         for name in sorted(keep_names)
         if name not in existing
     ]
@@ -1142,8 +1157,14 @@ def _extract_expr_hole_name(node: ast.AST) -> str | None:
     return None
 
 
-def _make_expression_insert_call(target_name: str, expr: ast.expr) -> ast.Call:
-    return ast.Call(
+def _make_expression_insert_call(
+    target_name: str,
+    expr: ast.expr,
+    *,
+    location_donor: ast.AST | None = None,
+) -> ast.Call:
+    donor = location_donor if location_donor is not None else expr
+    call = ast.Call(
         func=ast.Name(id="astichi_insert", ctx=ast.Load()),
         args=[
             ast.Name(id=target_name, ctx=ast.Load()),
@@ -1151,6 +1172,8 @@ def _make_expression_insert_call(target_name: str, expr: ast.expr) -> ast.Call:
         ],
         keywords=[],
     )
+    propagate_ast_source_locations(call, donor)
+    return call
 
 
 def _validate_star_region_inserts(
@@ -1247,6 +1270,7 @@ class _HoleReplacementTransformer(
                     shell_name=contrib.shell_name,
                     body=contrib.body,
                     ref_path=contrib.ref_path,
+                    location_donor=node,
                 )
                 result.append(shell)
             return result
@@ -1260,7 +1284,9 @@ class _HoleReplacementTransformer(
                 raise ValueError(
                     f"scalar expression target {hole_name} accepts at most one insert"
                 )
-            return _make_expression_insert_call(hole_name, inserts[0].expr)
+            return _make_expression_insert_call(
+                hole_name, inserts[0].expr, location_donor=node
+            )
 
         node.func = self.visit(node.func)
 
@@ -1280,7 +1306,9 @@ class _HoleReplacementTransformer(
                     inserts, seen_explicit_keywords=seen_explicit_keywords
                 )
                 new_args.extend(
-                    _make_expression_insert_call(hole_name, insert.expr)
+                    _make_expression_insert_call(
+                        hole_name, insert.expr, location_donor=arg
+                    )
                     for insert in inserts
                 )
                 continue
@@ -1293,7 +1321,9 @@ class _HoleReplacementTransformer(
                 _validate_star_region_inserts(hole_name, inserts)
                 new_args.extend(
                     ast.Starred(
-                        value=_make_expression_insert_call(hole_name, insert.expr),
+                        value=_make_expression_insert_call(
+                            hole_name, insert.expr, location_donor=arg
+                        ),
                         ctx=arg.ctx,
                     )
                     for insert in inserts
@@ -1318,7 +1348,9 @@ class _HoleReplacementTransformer(
                 new_keywords.extend(
                     ast.keyword(
                         arg=None,
-                        value=_make_expression_insert_call(hole_name, insert.expr),
+                        value=_make_expression_insert_call(
+                            hole_name, insert.expr, location_donor=keyword
+                        ),
                     )
                     for insert in inserts
                 )
@@ -1338,7 +1370,9 @@ class _HoleReplacementTransformer(
         if hole_name is not None and hole_name in self.expr_replacements:
             return [
                 ast.Starred(
-                    value=_make_expression_insert_call(hole_name, insert.expr),
+                    value=_make_expression_insert_call(
+                        hole_name, insert.expr, location_donor=node
+                    ),
                     ctx=node.ctx,
                 )
                 for insert in self.expr_replacements[hole_name]
@@ -1357,7 +1391,9 @@ class _HoleReplacementTransformer(
                 expanded.append(
                     ast.keyword(
                         arg=None,
-                        value=_make_expression_insert_call(hole_name, insert.expr),
+                        value=_make_expression_insert_call(
+                            hole_name, insert.expr, location_donor=node
+                        ),
                     )
                 )
             return expanded
@@ -1376,7 +1412,9 @@ class _HoleReplacementTransformer(
                         )
                     new_keys.append(None)
                     new_values.append(
-                        _make_expression_insert_call(hole_name, insert.expr)
+                        _make_expression_insert_call(
+                            hole_name, insert.expr, location_donor=value
+                        )
                     )
                 continue
             new_keys.append(self.visit(key) if key is not None else None)
@@ -1556,18 +1594,18 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 def _payload_local_directive_markers(
     directives: tuple[PayloadLocalDirective, ...],
 ) -> tuple[RecognizedMarker, ...]:
-    return tuple(
-        RecognizedMarker(
-            spec=directive.spec,
-            node=ast.Call(
-                func=ast.Name(id=directive.spec.source_name, ctx=ast.Load()),
-                args=[ast.Name(id=directive.name, ctx=ast.Load())],
-                keywords=[],
-            ),
-            context="call",
+    markers: list[RecognizedMarker] = []
+    for directive in directives:
+        call = ast.Call(
+            func=ast.Name(id=directive.spec.source_name, ctx=ast.Load()),
+            args=[ast.Name(id=directive.name, ctx=ast.Load())],
+            keywords=[],
         )
-        for directive in directives
-    )
+        propagate_ast_source_locations(call, None)
+        markers.append(
+            RecognizedMarker(spec=directive.spec, node=call, context="call")
+        )
+    return tuple(markers)
 
 
 def materialize_composable(composable: BasicComposable) -> BasicComposable:
