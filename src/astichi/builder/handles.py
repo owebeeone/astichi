@@ -190,15 +190,15 @@ class _NamedTargetAdder:
     ) -> AdditiveEdge:
         """Wire ``self.source_instance`` into ``self.target`` additively.
 
-        Issue 006 6c: when the source instance declares an
-        ``astichi_import(name)`` boundary (equivalently an
-        ``name__astichi_arg__`` suffix slot), ``arg_names`` names the
-        outer-scope identifier the import should resolve to. Identity
-        mappings (``{"total": "total"}``) are the common case — the
-        user states which scope provides the name, while the value
-        matches the inner declaration. Non-identity mappings
+        Issue 006: when the source instance declares an identifier
+        demand via ``astichi_import(name)``, ``astichi_pass(name)``, or
+        an equivalent ``name__astichi_arg__`` suffix slot, ``arg_names``
+        names the outer-scope identifier that demand should resolve to.
+        Identity mappings (``{"total": "total"}``) are the common case
+        — the user states which scope provides the name, while the
+        value matches the inner declaration. Non-identity mappings
         (``{"total": "accumulator"}``) additionally rename the inner
-        references to the outer name before hygiene runs.
+        reference surface to the outer name before hygiene runs.
 
         ``keep_names`` is the same surface as
         ``builder.add.<Name>(piece, keep_names=...)`` but scoped to
@@ -338,7 +338,7 @@ def _validate_registered_identifier_demand(
     raise ValueError(
         format_astichi_error(
             "build",
-            "no __astichi_arg__ / astichi_import slot named "
+            "no __astichi_arg__ / astichi_import / astichi_pass slot named "
             f"`{inner_name}` at "
             f"`{format_instance_leaf(instance_name, ref_path, inner_name)}`",
             hint="declare the slot in the source snippet or fix the descendant path",

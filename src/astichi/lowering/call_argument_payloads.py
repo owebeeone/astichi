@@ -18,6 +18,7 @@ from astichi.lowering.markers import (
     call_name,
     is_call_to_marker,
 )
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 _DIRECTIVE_SPECS: tuple[MarkerSpec, ...] = (IMPORT, EXPORT)
 
@@ -185,7 +186,7 @@ def _validate_funcargs_call(call: ast.Call) -> None:
         if keyword.arg == "_":
             if _is_direct_directive_call(value):
                 continue
-            if call_name(value) == PASS.source_name:
+            if _is_direct_or_sentinel_pass_surface(value):
                 raise ValueError(
                     "astichi_pass(...) is not valid in _= inside "
                     "astichi_funcargs(...); use it in a real argument "
@@ -231,6 +232,18 @@ def _require_directive_spec(node: ast.AST) -> MarkerSpec:
     if spec is None:
         raise TypeError("expected a direct astichi_import/export directive call")
     return spec
+
+
+def _is_direct_or_sentinel_pass_surface(node: ast.AST) -> bool:
+    if call_name(node) == PASS.source_name:
+        return True
+    return (
+        match_transparent_sentinel(
+            node,
+            is_marker_call=lambda call: is_call_to_marker(call, PASS),
+        )
+        is not None
+    )
 
 
 def _validated_name_arg(call: ast.Call, spec: MarkerSpec) -> str:

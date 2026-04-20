@@ -47,7 +47,6 @@ def _prefixed_values(
 def _trace_root_piece():
     return _piece(
         """
-        astichi_pass(trace)
         trace = []
         astichi_hole(body)
         result = trace
@@ -58,8 +57,7 @@ def _trace_root_piece():
 def _trace_leaf_piece(label: str):
     return _piece(
         f"""
-        astichi_import(trace)
-        trace.append({label!r})
+        astichi_pass(trace).append({label!r})
         """
     )
 
@@ -67,7 +65,6 @@ def _trace_leaf_piece(label: str):
 def _events_root_piece():
     return _piece(
         """
-        astichi_pass(events)
         events = []
         astichi_hole(body)
         result = events
@@ -203,8 +200,7 @@ def test_v3_late_bind_and_delayed_unroll_matrix(
         step_name = f"Step{index}"
         getattr(stage2.add, step_name)(_piece(
             f"""
-            astichi_import(events)
-            events.append({label!r})
+            astichi_pass(events, outer_bind=True).append({label!r})
             """
         ))
         getattr(stage2.Pipeline.Loop.step[index].add, step_name)(order=index)
@@ -242,7 +238,7 @@ def test_v3_spine_stage_built_import_demand_bound_later() -> None:
     stage2.add.Root(
         _piece(
             """
-            astichi_pass(counter)
+            astichi_keep(counter)
             counter = 10
             astichi_hole(body)
             result = counter
@@ -286,7 +282,7 @@ def test_v3_spine_descendant_add_and_assign_match_same_shell_path() -> None:
     stage1.add.Right(
         _piece(
             """
-            astichi_pass(total)
+            astichi_keep(total)
             total = 20
             """
         )
@@ -294,7 +290,7 @@ def test_v3_spine_descendant_add_and_assign_match_same_shell_path() -> None:
     stage1.add.Left(
         _piece(
             """
-            astichi_pass(total)
+            astichi_keep(total)
             total = 10
             """
         )
@@ -346,7 +342,7 @@ def test_v3_spine_reuse_same_built_composable_with_distinct_bindings() -> None:
     stage2.add.AInit(
         _piece(
             """
-            astichi_pass(left_counter)
+            astichi_keep(left_counter)
             left_counter = 10
             """
         )
@@ -354,7 +350,7 @@ def test_v3_spine_reuse_same_built_composable_with_distinct_bindings() -> None:
     stage2.add.BInit(
         _piece(
             """
-            astichi_pass(right_counter)
+            astichi_keep(right_counter)
             right_counter = 20
             """
         )
@@ -429,7 +425,7 @@ def test_v3_identifier_matrix_descendant_source_path_across_stage_boundary() -> 
     stage2.add.Init(
         _piece(
             """
-            astichi_pass(counter)
+            astichi_keep(counter)
             counter = 10
             """
         )
@@ -447,7 +443,7 @@ def test_v3_identifier_matrix_forward_declared_deep_target_rejects() -> None:
     stage1.add.Right(
         _piece(
             """
-            astichi_pass(total)
+            astichi_keep(total)
             total = 20
             """
         )

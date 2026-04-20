@@ -1,0 +1,5 @@
+{
+  "instances": { "A": "loop.py" },
+  "wires": [],
+  "unroll": true
+}

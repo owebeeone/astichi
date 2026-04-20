@@ -1,0 +1,8 @@
+{
+  "instances": { "Root": "root.py", "First": "first.py", "Second": "second.py" },
+  "wires": [
+    "builder.Root.args.add.First(order=20)",
+    "builder.Root.args.add.Second(order=10)"
+  ],
+  "unroll": false
+}

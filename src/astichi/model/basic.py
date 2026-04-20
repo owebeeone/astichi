@@ -158,25 +158,27 @@ class BasicComposable(Composable):
         /,
         **names: str,
     ) -> "BasicComposable":
-        """Resolve `__astichi_arg__` slots to target identifiers.
+        """Resolve identifier-demand slots to target identifiers.
 
         Issue 005 §6 / 5d. Keys must be IDENTIFIER-shape demand-port
         names on this composable; values must be valid Python
-        identifiers. The resolution is recorded on the returned
-        composable and applied by materialize via the arg-resolver
-        pass; the source tree is not rewritten here.
+        identifiers. `__astichi_arg__` resolutions remain recorded for
+        materialize-time substitution; `astichi_import(...)` /
+        `astichi_pass(...)` bindings are also rewritten into the source
+        tree so explicit boundary wiring survives `emit()` -> `compile()`.
         """
         resolved = _resolve_identifier_bindings(mapping, names)
         if not resolved:
             return self
 
-        # Issue 006 6c: accept IDENTIFIER demand ports sourced from
-        # either `__astichi_arg__` suffix slots or `astichi_import`
-        # declarations — they share the same wiring surface.
+        # Issue 006: accept IDENTIFIER demand ports sourced from
+        # `__astichi_arg__` suffix slots, `astichi_import`
+        # declarations, or value-form `astichi_pass(...)` sites — they
+        # share the same identifier-binding surface.
         arg_demand_names = {
             port.name
             for port in self.demand_ports
-            if "arg" in port.sources or "import" in port.sources
+            if "arg" in port.sources or "import" in port.sources or "pass" in port.sources
         }
         existing = dict(self.arg_bindings)
         for key, value in resolved.items():
@@ -185,11 +187,12 @@ class BasicComposable(Composable):
                 raise ValueError(
                     format_astichi_error(
                         "materialize",
-                        f"no __astichi_arg__ / astichi_import slot named "
+                        f"no __astichi_arg__ / astichi_import / astichi_pass slot named "
                         f"`{key}`; known identifier demands on this "
                         f"composable: {known!r}",
                         hint="use `bind_identifier` only for declared slot names; "
-                        "declare slots with `__astichi_arg__` or `astichi_import`",
+                        "declare identifier demands with `__astichi_arg__`, "
+                        "`astichi_import(...)`, or `astichi_pass(...)`",
                     )
                 )
             if key in existing and existing[key] != value:
@@ -204,8 +207,16 @@ class BasicComposable(Composable):
             existing[key] = value
 
         merged = tuple(sorted(existing.items()))
+        rebound_tree = copy.deepcopy(self.tree)
+        from astichi.materialize.api import (
+            _resolve_boundary_imports,
+            _resolve_boundary_passes,
+        )
+
+        _resolve_boundary_imports(rebound_tree, resolved)
+        _resolve_boundary_passes(rebound_tree, resolved)
         return _rebuild_composable(
-            tree=copy.deepcopy(self.tree),
+            tree=rebound_tree,
             origin=self.origin,
             bound_externals=self.bound_externals,
             arg_bindings=merged,

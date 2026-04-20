@@ -1,0 +1,1 @@
+astichi_hole(body)

@@ -21,6 +21,8 @@ astichi_bind_once(name, expr)
 astichi_bind_shared(name, expr)
 astichi_bind_external(name)
 astichi_keep(name)
+astichi_import(name)
+astichi_pass(name)
 astichi_export(name)
 astichi_for(domain)
 astichi_funcargs(...)
@@ -48,6 +50,22 @@ Reference-path note:
   as a normal demand port
 - `astichi_ref(...).astichi_v` (or the `._` shorthand) wraps the value form so
   it is grammatically legal as an `Assign` / `AugAssign` / `Delete` target
+  and is otherwise a transparent one-shot segment that strips during
+  materialize
+
+Cross-scope note:
+
+- `astichi_import(name)` is the declaration-form identifier-threading surface
+  for a whole Astichi scope
+- `astichi_pass(name)` is the value-form surface and belongs in a real
+  expression (`x = astichi_pass(y)`, `call(astichi_pass(y))`,
+  `astichi_pass(obj)._.field = 1`)
+- `outer_bind=True` is the explicit convenience form for “bind this marker to
+  the same-named identifier in the immediately enclosing Astichi scope”
+- explicit builder / `arg_names=` / `.bind_identifier(...)` wiring now
+  round-trips in source as `bound=True` on the rewritten marker call
+- bare statement-form `astichi_pass(name)` is rejected; if you need
+  declaration-style scope threading, use `astichi_import(name)`
 
 ## Identifier arguments
 

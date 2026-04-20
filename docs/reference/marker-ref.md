@@ -24,9 +24,11 @@ astichi_ref(external=name)
   surfaces a normal demand port, so `compose.bind(name=...)` and the
   `materialize` gate validate it like any other external bind.
 
-The marker is **expression-only** in its bare form. To use it as the target of
+The marker is **expression-only** in its bare form. Bare statement-form
+`astichi_ref(...)` is rejected at `compile()` time. To use it as the target of
 an `Assign`, `AugAssign`, or `Delete`, wrap it in the §3a sentinel attribute
-described below.
+described below. That same sentinel is also valid in ordinary expression
+positions and is stripped exactly once at materialize time.
 
 ## Accepted values
 
@@ -96,9 +98,10 @@ del astichi_ref(path).astichi_v          # Delete:   lowers to del <path>
 `._` is accepted as a shorthand synonym of `.astichi_v`, mirroring the `_=`
 carrier in `astichi_funcargs(...)`.
 
-The wrapping `Attribute` is stripped at lowering time and its `ctx` (`Load`,
-`Store`, `Del`) is propagated onto the rightmost node of the lowered chain.
-The sentinel attribute name is **never** observed at runtime.
+The first immediate sentinel segment after `astichi_ref(...)` is stripped at
+lowering time and its `ctx` (`Load`, `Store`, `Del`) is propagated onto the
+rightmost node of the lowered chain. The sentinel attribute name is **never**
+observed at runtime.
 
 Examples after lowering with `bind(path="self.f0")`:
 
@@ -109,11 +112,14 @@ astichi_ref(path).astichi_v ^= 1         #  ->  self.f0 ^= 1
 del astichi_ref(path).astichi_v          #  ->  del self.f0
 ```
 
-Any **non-sentinel** attribute is preserved literally and treated as a real
-attribute lookup on the lowered reference:
+The strip is **one-shot**. Any further postfix syntax is preserved literally
+and applies to the lowered reference:
 
 ```python
 astichi_ref("pkg.mod").other             #  ->  pkg.mod.other
+astichi_ref("pkg.mod")._.other           #  ->  pkg.mod.other
+astichi_ref("factory").astichi_v()       #  ->  factory()
+astichi_ref("obj")._._                   #  ->  obj._
 ```
 
 ## Loop / unroll example
@@ -148,11 +154,9 @@ Value-form rejections:
 - `astichi_ref(f"{obj.attr}")` — attribute read in formatted part
 - `astichi_ref(f"{make_name()}")` — call in formatted part
 
-Sentinel-wrapper rejections (per §3a):
-
-- `astichi_ref(path).astichi_v.x` — chained attribute access after the sentinel
-- `astichi_ref(path).astichi_v(...)` — calling the sentinel wrapper
-- `astichi_ref(path)._.other = v` — chaining via the `_` shorthand
+There are no extra chained-sentinel rejection rules. The first immediate
+`.astichi_v` / `._` segment is simply removed, once, and any later postfix
+syntax is treated as ordinary Python on the lowered reference.
 
 ## Pipeline ordering
 

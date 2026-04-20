@@ -7,7 +7,7 @@ Covers the full lowered surface:
   subscript over loop-var / externally-bound containers
 - §3 lowering: bare names, dotted attributes
 - §3a sentinel wrapper: Store / AugStore / Del context propagation,
-  natural extension via non-sentinel attribute
+  transparent single-strip continuation in postfix syntax
 - §7 examples (loop + read-and-write)
 - §8 rejection cases
 """
@@ -230,6 +230,41 @@ def test_ref_non_sentinel_attribute_extends_lowered_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# §3a transparent sentinel continuation
+# ---------------------------------------------------------------------------
+
+
+def test_ref_sentinel_attribute_chain_is_transparent_once() -> None:
+    rendered = _materialized("value = astichi_ref('pkg.mod')._.other\n")
+    assert rendered.strip() == "value = pkg.mod.other"
+
+
+def test_ref_sentinel_call_is_transparent_once() -> None:
+    rendered = _materialized("value = astichi_ref('factory').astichi_v()\n")
+    assert rendered.strip() == "value = factory()"
+
+
+def test_ref_sentinel_store_chain_is_transparent_once() -> None:
+    rendered = _materialized("astichi_ref('self.f0')._.value = 1\n")
+    assert rendered.strip() == "self.f0.value = 1"
+
+
+def test_ref_sentinel_strips_once_so_real_underscore_field_remains() -> None:
+    rendered = _materialized("value = astichi_ref('obj')._._\n")
+    assert rendered.strip() == "value = obj._"
+
+
+def test_reject_bare_ref_statement() -> None:
+    with pytest.raises(ValueError, match=r"astichi_ref\(\.\.\.\) at line \d+ is value-form only"):
+        astichi.compile("astichi_ref('pkg.mod')\n")
+
+
+def test_reject_bare_ref_sentinel_statement() -> None:
+    with pytest.raises(ValueError, match=r"astichi_ref\(\.\.\.\) at line \d+ is value-form only"):
+        astichi.compile("astichi_ref('pkg.mod').astichi_v\n")
+
+
+# ---------------------------------------------------------------------------
 # §8 rejection cases — value-form
 # ---------------------------------------------------------------------------
 
@@ -282,32 +317,6 @@ def test_reject_ref_path_with_invalid_identifier_segment() -> None:
     compiled = astichi.compile("value = astichi_ref('a.1b')\n")
     with pytest.raises(ValueError, match="not a valid Python identifier"):
         compiled.materialize()
-
-
-# ---------------------------------------------------------------------------
-# §8 rejection cases — sentinel wrapper
-# ---------------------------------------------------------------------------
-
-
-def test_reject_sentinel_chained_attribute_access() -> None:
-    with pytest.raises(ValueError, match="chaining"):
-        astichi.compile(
-            "value = astichi_ref('self.f0').astichi_v.x\n"
-        )
-
-
-def test_reject_sentinel_chained_attribute_via_underscore() -> None:
-    with pytest.raises(ValueError, match="chaining"):
-        astichi.compile(
-            "value = astichi_ref('self.f0')._.other\n"
-        )
-
-
-def test_reject_sentinel_called_as_function() -> None:
-    with pytest.raises(ValueError, match="value, not a callable"):
-        astichi.compile(
-            "value = astichi_ref('self.f0').astichi_v()\n"
-        )
 
 
 # ---------------------------------------------------------------------------

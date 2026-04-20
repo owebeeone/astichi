@@ -318,7 +318,7 @@ def step__astichi_arg__():
     )
     with pytest.raises(
         ValueError,
-        match=r"materialize: no __astichi_arg__ / astichi_import slot named `missing`",
+        match=r"materialize: no __astichi_arg__ / astichi_import / astichi_pass slot named `missing`",
     ):
         compiled.bind_identifier(missing="x")
 
@@ -421,6 +421,32 @@ def test_compose_build_round_trip_is_structurally_stable() -> None:
     reingested = astichi.compile(emitted)
 
     assert ast.dump(reingested.tree) == ast.dump(built.tree)
+
+
+def test_explicit_boundary_binding_survives_emit_compile_round_trip() -> None:
+    step = astichi.compile(
+        "astichi_import(total)\ntotal = total + 1\n",
+        arg_names={"total": "accumulator"},
+    )
+    emitted = step.emit(provenance=False)
+    assert "astichi_import(accumulator, bound=True)" in emitted
+
+    round_tripped = astichi.compile(emitted)
+
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            "accumulator = 0\nastichi_hole(body)\nresult = accumulator\n"
+        )
+    )
+    builder.add.Step(round_tripped)
+    builder.Root.body.add.Step(order=0)
+
+    materialized = builder.build().materialize()
+    namespace: dict[str, object] = {}
+    exec(compile(materialized.emit(provenance=False), "<t>", "exec"), namespace)
+    assert namespace["accumulator"] == 1
+    assert namespace["result"] == 1
 
 
 def test_materialized_emit_is_executable() -> None:

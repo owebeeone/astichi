@@ -67,7 +67,7 @@ The V3 staged-composition suite should follow these rules.
 - variable-binding scenarios in staged tests should be expressed through the
   marker surface:
   - consumers use `astichi_import(...)`
-  - cross-boundary threaded suppliers use `astichi_pass(...)`
+  - value-form scoped reads use `astichi_pass(...)`
   - outward publication uses `astichi_export(...)`
 - keep behavior, when tested here, should use marker keep surfaces rather than
   build-time `keep_names=...`
@@ -97,7 +97,7 @@ Use the following notation in this plan and in future discussion.
 - `A(name)`: identifier demand from `name__astichi_arg__`
 - `K(name)`: keep pin from `astichi_keep(name)` or `name__astichi_keep__`
 - `I(name)`: boundary import from `astichi_import(name)`
-- `P(name)`: boundary pass from `astichi_pass(name)`
+- `P(name)`: value-form scoped read from `astichi_pass(name)`
 - `E(name)`: exported binding from `astichi_export(name)`
 
 ### 3.3 Builder notation
@@ -387,9 +387,9 @@ Shape:
 
 - `C1` contains `astichi_import(counter)` and updates `counter`
 - `S1` builds `B1` with the demand unresolved
-- `S2` inserts `B1` into a root that owns or passes the outer counter
+- `S2` inserts `B1` into a root that owns or exports the outer counter
 - bind later via marker-driven variable binding, for example:
-  - `astichi_pass(counter)` surviving the stage boundary and consumed by
+  - `astichi_export(counter)` surviving the stage boundary and consumed by
     `astichi_import(counter)`
   - or `builder.assign.B1.counter.to().Root.counter` where the source/target
     sides are still expressed through import/pass/export-capable snippets
@@ -451,7 +451,7 @@ Purpose:
 Shape:
 
 - `S1` builds `B1` from a piece with `astichi_import(counter)` and, where
-  needed, `astichi_pass(counter)` or `astichi_export(result)`
+  needed, value-form `astichi_pass(source)` or `astichi_export(result)`
 - `S2` adds `B1` twice as separate instances
 - one instance gets identity binding, the other non-identity binding
 - keep any keep-related variation on marker keep surfaces only; do not use
@@ -528,8 +528,8 @@ Binding surface:
 Binding model in V3 staged coverage:
 
 - demand side is expressed with `astichi_import(...)`
-- cross-stage supplier publication uses `astichi_pass(...)` and
-  `astichi_export(...)`
+- cross-stage supplier publication uses `astichi_export(...)`
+- value-form scoped reads use `astichi_pass(...)`
 - `builder.assign` is the builder-level wiring surface under test
 
 The older `arg_names=` surfaces already have lower-level coverage and should not

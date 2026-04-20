@@ -1,0 +1,5 @@
+{
+  "instances": { "A": "root.py", "B": "impl.py" },
+  "wires": ["builder.A.body.add.B()"],
+  "unroll": false
+}

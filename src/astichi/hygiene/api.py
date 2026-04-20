@@ -102,11 +102,11 @@ def analyze_names(
     identifier_suffix_preserved = _collect_identifier_suffix_preserved(
         composable.markers
     )
-    # Issue 006 6b: `astichi_import(name)` / `astichi_pass(name)` pin
-    # `name` against hygiene rename and suppress implied-demand
-    # classification for Load references to it within the scope — the
-    # name is supplied across an Astichi scope boundary rather than by
-    # the piece's embedding context as a generic external.
+    # Issue 006: `astichi_import(name)` pins `name` against hygiene
+    # rename and suppresses implied-demand classification for Load
+    # references to it within the scope. `astichi_pass(name)` is
+    # value-form only and does not preserve unrelated same-named
+    # references in the surrounding scope.
     boundary_preserved = _collect_boundary_preserved(composable.markers)
     externals = frozenset(
         marker.name_id
@@ -193,15 +193,14 @@ def assign_scope_identity(
     and are suitable for "don't rename this, unless you must" pins
     such as identifier-arg resolution targets.
 
-    ``trust_names`` (issue 006 6c) is the stricter "user explicitly
-    said keep/pass" set. Trusted names are never renamed by
-    ``rename_scope_collisions`` — they always emit literally across
-    every Astichi scope. Marker-derived ``astichi_keep`` /
-    ``astichi_pass`` names are unioned in automatically; callers who
-    have additional trust declarations (e.g. ``keep_names=`` from the
-    builder) must pass them explicitly. Trusted names are also added
-    to ``preserved_names`` so load-time classification remains
-    consistent.
+    ``trust_names`` is the stricter "user explicitly said keep" set.
+    Trusted names are never renamed by ``rename_scope_collisions`` —
+    they always emit literally across every Astichi scope.
+    Marker-derived ``astichi_keep`` names are unioned in automatically;
+    callers who have additional trust declarations (e.g.
+    ``keep_names=`` from the builder) must pass them explicitly.
+    Trusted names are also added to ``preserved_names`` so load-time
+    classification remains consistent.
     """
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
     # Issue 005 §4 + 5b: preserve both stripped and raw suffixed names
@@ -218,7 +217,7 @@ def assign_scope_identity(
     )
     # Issue 006 6c (trust model): the effective trust set unions the
     # caller-supplied `trust_names` with trust-declaring markers
-    # (`astichi_keep` / `astichi_pass`). Callers that want preserved-
+    # (`astichi_keep`). Callers that want preserved-
     # but-not-trusted semantics (e.g. identifier-arg resolution
     # targets that must not blanket-suppress rename on their raw
     # name) pass those through `preserved_names` only.
@@ -373,11 +372,11 @@ def _collect_identifier_suffix_preserved(
 def _collect_boundary_preserved(
     markers: tuple[object, ...],
 ) -> frozenset[str]:
-    """Names declared by ``astichi_import`` / ``astichi_pass`` (issue 006 6b).
+    """Names declared by ``astichi_import`` (issue 006 6b).
 
-    Both boundary markers pin their name against hygiene rename and
-    suppress implied-demand classification for Load references within
-    the scope. Per-shell scope override for imports is layered on by
+    Import pins its name against hygiene rename and suppresses
+    implied-demand classification for Load references within the scope.
+    Per-shell scope override for imports is layered on by
     ``_collect_fresh_scope_imports`` (issue 006 6c); this set exists to
     seed the flat `preserved` set that `analyze_names` consumes.
     """
@@ -385,7 +384,7 @@ def _collect_boundary_preserved(
     for marker in markers:
         if not isinstance(marker, RecognizedMarker):
             continue
-        if marker.source_name not in ("astichi_import", "astichi_pass"):
+        if marker.source_name != "astichi_import":
             continue
         if marker.name_id is not None:
             preserved.add(marker.name_id)
@@ -397,13 +396,12 @@ def _collect_trust_preserved(
 ) -> frozenset[str]:
     """Names the user has declared as *trusted* against hygiene rename.
 
-    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` and
-    ``astichi_pass(name)`` are the user's "I know what I'm doing; trust
-    me — this is my name" contract. A trusted name is never renamed by
+    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` is
+    the user's "I know what I'm doing; trust me — this is my name"
+    contract. A trusted name is never renamed by
     ``rename_scope_collisions``, even if occurrences span multiple
     Astichi scopes: the user owns the name across the composition and
-    is responsible for preventing unintended collisions. Same-root
-    splicing without keep/pass remains subject to normal rename.
+    is responsible for preventing unintended collisions.
 
     ``astichi_import(name)`` is intentionally NOT a trust declaration.
     An import only states "this name is supplied by my enclosing
@@ -418,7 +416,7 @@ def _collect_trust_preserved(
     for marker in markers:
         if not isinstance(marker, RecognizedMarker):
             continue
-        if marker.source_name not in ("astichi_keep", "astichi_pass"):
+        if marker.source_name != "astichi_keep":
             continue
         if marker.name_id is not None:
             trusted.add(marker.name_id)
@@ -430,13 +428,13 @@ def _collect_fresh_scope_trust_declarations(
 ) -> dict[int, frozenset[str]]:
     """Map each Astichi scope node to the names it trust-declares.
 
-    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` and
-    ``astichi_pass(name)`` at the top of a scope are the user's
-    "I own this name in *this* scope" declarations. Trust is
-    therefore a per-scope property — a keep on the module scope pins
-    the module's name but leaves nested inner-shell bindings of the
-    same spelling subject to normal rename, while a keep appearing
-    inside a nested fresh Astichi scope pins *that* scope's name.
+    Issue 006 6c (inheritance / trust model): ``astichi_keep(name)`` at
+    the top of a scope is the user's "I own this name in *this* scope"
+    declaration. Trust is therefore a per-scope property — a keep on
+    the module scope pins the module's name but leaves nested
+    inner-shell bindings of the same spelling subject to normal rename,
+    while a keep appearing inside a nested fresh Astichi scope pins
+    *that* scope's name.
 
     The returned map is keyed by ``id(scope_node)`` where the scope
     node is either the ``ast.Module`` root or a fresh Astichi scope
@@ -450,7 +448,7 @@ def _collect_fresh_scope_trust_declarations(
         marker
         for marker in markers
         if isinstance(marker, RecognizedMarker)
-        and marker.source_name in ("astichi_keep", "astichi_pass")
+        and marker.source_name == "astichi_keep"
         and marker.name_id is not None
     ]
     if not trust_markers:

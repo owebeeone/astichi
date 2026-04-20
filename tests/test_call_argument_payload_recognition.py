@@ -71,6 +71,14 @@ def test_compile_rejects_astichi_pass_in_special_carrier() -> None:
         astichi.compile("astichi_funcargs(_=astichi_pass(total))\n")
 
 
+def test_compile_rejects_sentinel_wrapped_astichi_pass_in_special_carrier() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_pass\(\.\.\.\) is not valid in _=",
+    ):
+        astichi.compile("astichi_funcargs(_=astichi_pass(total)._)\n")
+
+
 @pytest.mark.parametrize(
     "source",
     [

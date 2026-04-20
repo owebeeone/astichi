@@ -1,0 +1,8 @@
+{
+  "instances": {
+    "Root": "root.py",
+    "Impl": { "file": "impl.py", "arg_names": { "seed": "source_value" } }
+  },
+  "wires": ["builder.Root.args.add.Impl()"],
+  "unroll": false
+}

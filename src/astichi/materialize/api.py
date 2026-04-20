@@ -36,12 +36,16 @@ from astichi.lowering.markers import (
     IMPORT,
     KEEP,
     PASS,
+    boundary_explicit_bind_enabled,
+    boundary_outer_bind_enabled,
     call_name,
     is_call_to_marker,
     KEEP_IDENTIFIER,
+    set_boundary_explicit_bind_state,
     strip_identifier_suffix,
 )
 from astichi.lowering.external_ref import apply_external_ref_lowering
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
@@ -317,7 +321,7 @@ def _apply_assign_bindings(
             raise ValueError(
                 format_astichi_error(
                     "materialize",
-                    f"no __astichi_arg__ / astichi_import slot named "
+                    f"no __astichi_arg__ / astichi_import / astichi_pass slot named "
                     f"`{binding.inner_name}` at "
                     f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`",
                     hint="declare the slot in the source snippet or fix the path on `assign`",
@@ -340,6 +344,7 @@ def _rewrite_identifier_demands_in_body(
 ) -> None:
     arg_resolver = _ShellArgIdentifierResolver(bindings)
     import_resolver = _BoundaryImportRenamer(bindings)
+    pass_resolver = _BoundaryPassRenamer(bindings)
     for index, statement in enumerate(body):
         info = boundary_import_statement(statement)
         if info is not None and info[0] in bindings:
@@ -348,7 +353,7 @@ def _rewrite_identifier_demands_in_body(
         if rewritten is None:
             continue
         assert isinstance(rewritten, ast.stmt)
-        body[index] = import_resolver.visit(rewritten)
+        body[index] = pass_resolver.visit(import_resolver.visit(rewritten))
 
 
 def _assign_target_alias_name(binding: AssignBinding) -> str:
@@ -375,9 +380,16 @@ def _publish_assign_target_alias(
     location_donor: ast.AST | None = None,
 ) -> None:
     donor = location_donor or (body[0] if body else None)
-    pass_stmt = ast.Expr(
+    keep_stmt = ast.Expr(
         value=ast.Call(
-            func=ast.Name(id="astichi_pass", ctx=ast.Load()),
+            func=ast.Name(id="astichi_keep", ctx=ast.Load()),
+            args=[ast.Name(id=alias_name, ctx=ast.Load())],
+            keywords=[],
+        )
+    )
+    export_stmt = ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id="astichi_export", ctx=ast.Load()),
             args=[ast.Name(id=alias_name, ctx=ast.Load())],
             keywords=[],
         )
@@ -386,9 +398,9 @@ def _publish_assign_target_alias(
         targets=[ast.Name(id=alias_name, ctx=ast.Store())],
         value=ast.Name(id=source_name, ctx=ast.Load()),
     )
-    for stmt in (pass_stmt, assign_stmt):
+    for stmt in (keep_stmt, export_stmt, assign_stmt):
         propagate_ast_source_locations(stmt, donor)
-    body.extend((pass_stmt, assign_stmt))
+    body.extend((keep_stmt, export_stmt, assign_stmt))
 
 
 class _ShellArgIdentifierResolver(ast.NodeTransformer):
@@ -1829,9 +1841,24 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         # still have matched `__astichi_arg__` above, or they may
         # surface as a validation error at compile-time).
         _resolve_boundary_imports(tree, arg_bindings)
+        _resolve_boundary_passes(tree, arg_bindings)
+    unresolved_boundaries = _find_unresolved_boundary_demands(tree)
+    if unresolved_boundaries:
+        parts = [
+            f"{kind}({name}) at line {lineno}"
+            for kind, name, lineno in unresolved_boundaries
+        ]
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                "unresolved boundary identifier demands: " + "; ".join(parts),
+                hint="wire each `astichi_import(...)` / `astichi_pass(...)` explicitly "
+                "before materialize, or author `outer_bind=True` for immediate same-name outer binding",
+            )
+        )
     apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
-    pinned_targets = frozenset(arg_bindings.values())
+    pinned_targets = frozenset(arg_bindings.values()) | _collect_explicitly_bound_boundary_targets(tree)
     marker_keep_names = frozenset(
         marker.name_id
         for marker in markers
@@ -1848,7 +1875,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     )
 
     # Issue 006 6c (trust model): only user-declared keep_names (plus
-    # keep/pass markers auto-unioned inside `assign_scope_identity`)
+    # keep markers auto-unioned inside `assign_scope_identity`)
     # enter the trust set. `pinned_targets` reach preserved but not
     # trusted — they must still participate in cross-scope rename so
     # sibling-root contributions bound to the same `arg_names` value
@@ -2133,17 +2160,11 @@ _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
 )
 
 
-# Issue 006 6c: `astichi_import(name)` / `astichi_pass(name)` are
-# compile-time declarations that have already contributed port records
-# and scope-identity classification by the time we run the residual
-# stripper. They carry no runtime value and must not appear in the
-# emitted source. Unlike `astichi_keep` / `astichi_export`, these
-# markers may appear in expression positions; ``visit_Call`` / ``visit_NamedExpr``
-# lower them to the wrapped identifier. We strip the enclosing ``Expr`` for
-# statement-form import/pass (no runtime statement remains).
-_BOUNDARY_STATEMENT_MARKER_NAMES: frozenset[str] = frozenset(
-    {"astichi_import", "astichi_pass"}
-)
+# Issue 006: `astichi_import(name)` is the declaration-form boundary
+# marker. It carries no runtime value and is stripped when it survives as
+# a bare statement. `astichi_pass(name)` is the value-form surface and is
+# lowered to the wrapped identifier only in expression positions.
+_BOUNDARY_DECLARATION_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import"})
 
 
 def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
@@ -2159,12 +2180,44 @@ def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
     return node.args[0]
 
 
-def _is_boundary_statement_marker(node: ast.AST) -> bool:
+def _is_boundary_declaration_marker(node: ast.AST) -> bool:
     if not isinstance(node, ast.Call):
         return False
     if not isinstance(node.func, ast.Name):
         return False
-    return node.func.id in _BOUNDARY_STATEMENT_MARKER_NAMES
+    return node.func.id in _BOUNDARY_DECLARATION_MARKER_NAMES
+
+
+def _is_pass_call(node: ast.Call) -> bool:
+    return is_call_to_marker(node, PASS)
+
+
+def _boundary_value_replacement(node: ast.AST) -> ast.expr | None:
+    if (
+        isinstance(node, ast.Call)
+        and (
+            _is_boundary_declaration_marker(node)
+            or _is_pass_call(node)
+        )
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+    ):
+        return copy.deepcopy(node.args[0])
+    sentinel = match_transparent_sentinel(
+        node,
+        is_marker_call=_is_pass_call,
+    )
+    if sentinel is None:
+        return None
+    call = sentinel.call
+    if len(call.args) != 1:
+        return None
+    if not isinstance(call.args[0], ast.Name):
+        return None
+    inner = copy.deepcopy(call.args[0])
+    inner.ctx = sentinel.ctx
+    ast.copy_location(inner, node)
+    return inner
 
 
 def _strip_residual_markers(tree: ast.AST) -> None:
@@ -2189,17 +2242,11 @@ def _strip_residual_markers(tree: ast.AST) -> None:
 
 class _ResidualMarkerStripper(ast.NodeTransformer):
     def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.AST:
-        inner = node.value
-        if (
-            isinstance(inner, ast.Call)
-            and _is_boundary_statement_marker(inner)
-            and len(inner.args) == 1
-            and isinstance(inner.args[0], ast.Name)
-            and not inner.keywords
-        ):
+        replacement = _boundary_value_replacement(node.value)
+        if replacement is not None:
             return ast.NamedExpr(
                 target=node.target,
-                value=copy.deepcopy(inner.args[0]),
+                value=replacement,
             )
         return self.generic_visit(node)
 
@@ -2230,10 +2277,10 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
     def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
         if _residual_marker_inner(node.value) is not None:
             return None
-        if _is_boundary_statement_marker(node.value):
-            # Issue 006 6c: strip the declaration statement; port
-            # records and hygiene-scope classification already consumed
-            # this marker upstream.
+        if _is_boundary_declaration_marker(node.value):
+            # Import declarations are compile-time-only; port records
+            # and hygiene-scope classification already consumed them
+            # upstream.
             return None
         return self.generic_visit(node)
 
@@ -2241,13 +2288,15 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         inner = _residual_marker_inner(node)
         if inner is not None:
             return self.visit(copy.deepcopy(inner))
-        if (
-            _is_boundary_statement_marker(node)
-            and len(node.args) == 1
-            and isinstance(node.args[0], ast.Name)
-            and not node.keywords
-        ):
-            return self.visit(copy.deepcopy(node.args[0]))
+        replacement = _boundary_value_replacement(node)
+        if replacement is not None:
+            return self.visit(replacement)
+        return self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+        replacement = _boundary_value_replacement(node)
+        if replacement is not None:
+            return self.visit(replacement)
         return self.generic_visit(node)
 
 
@@ -2290,6 +2339,170 @@ def _find_unresolved_arg_identifiers(
         (name, tuple(sorted(set(lines))))
         for name, lines in sorted(by_name.items())
     ]
+
+
+def _is_identifier_boundary_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Name):
+        return False
+    return node.func.id in {IMPORT.source_name, PASS.source_name}
+
+
+def _collect_explicitly_bound_boundary_targets(
+    tree: ast.AST,
+) -> frozenset[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not _is_identifier_boundary_call(node):
+            continue
+        if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+            continue
+        if boundary_explicit_bind_enabled(node):
+            names.add(node.args[0].id)
+    return frozenset(names)
+
+
+def _iter_astichi_scopes(
+    tree: ast.Module,
+) -> list[ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
+    scopes: list[ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = [tree]
+
+    def _walk_body(body: list[ast.stmt]) -> None:
+        for statement in body:
+            if not isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            if not is_astichi_insert_shell(statement):
+                continue
+            scopes.append(statement)
+            _walk_body(statement.body)
+
+    _walk_body(tree.body)
+    return scopes
+
+
+def _is_root_equivalent_scope(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> bool:
+    if isinstance(scope, ast.Module):
+        return True
+    info = extract_block_insert_shell(scope, phase="materialize")
+    if info is None:
+        return False
+    return info.target_name.startswith(_ROOT_SCOPE_HOLE_PREFIX)
+
+
+def _scope_runtime_suppliers(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> frozenset[str]:
+    names: set[str] = set()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for argument in (
+            list(scope.args.posonlyargs)
+            + list(scope.args.args)
+            + list(scope.args.kwonlyargs)
+        ):
+            names.add(argument.arg)
+        if scope.args.vararg is not None:
+            names.add(scope.args.vararg.arg)
+        if scope.args.kwarg is not None:
+            names.add(scope.args.kwarg.arg)
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            names.add(node.name)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            names.add(node.name)
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            names.add(node.name)
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+
+    collector = _Collector()
+    for statement in scope.body:
+        collector.visit(statement)
+    return frozenset(names)
+
+
+def _scope_boundary_calls(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> tuple[ast.Call, ...]:
+    calls: list[ast.Call] = []
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if _is_identifier_boundary_call(node):
+                calls.append(node)
+            self.generic_visit(node)
+
+    collector = _Collector()
+    for statement in scope.body:
+        collector.visit(statement)
+    return tuple(calls)
+
+
+def _find_unresolved_boundary_demands(
+    tree: ast.Module,
+) -> list[tuple[str, str, int]]:
+    unresolved: list[tuple[str, str, int]] = []
+    for scope in _iter_astichi_scopes(tree):
+        if _is_root_equivalent_scope(scope):
+            continue
+        local_suppliers = _scope_runtime_suppliers(scope)
+        for node in _scope_boundary_calls(scope):
+            if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+                continue
+            if boundary_outer_bind_enabled(node) or boundary_explicit_bind_enabled(node):
+                continue
+            if node.args[0].id in local_suppliers:
+                continue
+            unresolved.append(
+                (
+                    node.func.id,
+                    node.args[0].id,
+                    getattr(node, "lineno", 0) or 0,
+                )
+            )
+    unresolved.sort()
+    return unresolved
 
 
 def _strip_keep_identifier_suffix(tree: ast.AST) -> None:
@@ -2370,23 +2583,23 @@ def _resolve_boundary_imports(
       is `x` — up to nested fresh-scope boundaries, where inner shells
       that re-declare ``astichi_import(x)`` take over.
 
-    Identity bindings (`"x" -> "x"`) are a no-op; names the user did
-    not rebind are left alone and default to the enclosing Astichi
-    scope's same-named binding (the 6c hygiene fix handles those
-    without any AST rewrite).
+    Identity bindings (`"x" -> "x"`) still stamp the boundary site as
+    explicitly wired so the state survives `emit()` -> `compile()`.
     """
     if not bindings:
         return
-    for shell_node in _find_astichi_shell_nodes(tree):
-        declared_imports = _declared_imports_at_shell_top(shell_node)
+    scope_bodies: list[list[ast.stmt]] = [tree.body] if isinstance(tree, ast.Module) else []
+    scope_bodies.extend(shell_node.body for shell_node in _find_astichi_shell_nodes(tree))
+    for scope_body in scope_bodies:
+        declared_imports = _declared_imports_at_scope_top(scope_body)
         local_map = {
             name: bindings[name]
             for name in declared_imports
-            if name in bindings and bindings[name] != name
+            if name in bindings
         }
         if not local_map:
             continue
-        for statement in shell_node.body:
+        for statement in scope_body:
             info = boundary_import_statement(statement)
             if info is not None and info[0] in local_map:
                 _rewrite_boundary_import_name(statement, local_map[info[0]])
@@ -2405,11 +2618,27 @@ def _resolve_boundary_imports(
         local_map = {
             name: bindings[name]
             for name in declared_imports
-            if name in bindings and bindings[name] != name
+            if name in bindings
         }
         if not local_map:
             continue
         _BoundaryImportRenamer(local_map).visit(payload_call)
+
+
+def _resolve_boundary_passes(
+    tree: ast.AST, bindings: dict[str, str]
+) -> None:
+    """Rename ``astichi_pass(name)`` arguments per explicit user bindings.
+
+    ``astichi_pass`` is the value-form cross-scope surface. When the user
+    binds ``name -> outer_name`` through ``arg_names=`` / ``bind_identifier`` /
+    ``builder.assign``, the marker argument must be rewritten before
+    residual stripping so ``astichi_pass(name)`` later lowers to the bound
+    outer identifier.
+    """
+    if not bindings:
+        return
+    _BoundaryPassRenamer(bindings).visit(tree)
 
 
 def _find_astichi_shell_nodes(
@@ -2441,11 +2670,9 @@ def _find_expression_insert_payload_nodes(tree: ast.AST) -> list[ast.Call]:
     return nodes
 
 
-def _declared_imports_at_shell_top(
-    shell: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
-) -> frozenset[str]:
+def _declared_imports_at_scope_top(body: list[ast.stmt]) -> frozenset[str]:
     names: set[str] = set()
-    for statement in shell.body:
+    for statement in body:
         info = boundary_import_statement(statement)
         if info is None:
             break
@@ -2458,6 +2685,7 @@ def _rewrite_boundary_import_name(stmt: ast.stmt, new_name: str) -> None:
     target = call.args[0]
     assert isinstance(target, ast.Name)
     target.id = new_name
+    set_boundary_explicit_bind_state(call)
 
 
 class _BoundaryImportRenamer(
@@ -2475,6 +2703,19 @@ class _BoundaryImportRenamer(
     def __init__(self, rename_map: dict[str, str]) -> None:
         self._rename_map = rename_map
 
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if not is_call_to_marker(node, IMPORT):
+            return node
+        if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+            return node
+        replacement = self._rename_map.get(node.args[0].id)
+        if replacement is None:
+            return node
+        node.args[0].id = replacement
+        set_boundary_explicit_bind_state(node)
+        return node
+
     def visit_Name(self, node: ast.Name) -> ast.AST:
         replacement = self._rename_map.get(node.id)
         if replacement is not None:
@@ -2486,6 +2727,27 @@ class _BoundaryImportRenamer(
         if replacement is not None:
             node.arg = replacement
         return self.generic_visit(node)
+
+
+class _BoundaryPassRenamer(ast.NodeTransformer):
+    def __init__(self, rename_map: dict[str, str]) -> None:
+        self._rename_map = rename_map
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if not is_call_to_marker(node, PASS):
+            return node
+        if len(node.args) != 1:
+            return node
+        target = node.args[0]
+        if not isinstance(target, ast.Name):
+            return node
+        replacement = self._rename_map.get(target.id)
+        if replacement is None:
+            return node
+        target.id = replacement
+        set_boundary_explicit_bind_state(node)
+        return node
 def _assert_no_arg_suffix_remains(tree: ast.AST) -> None:
     """Sanity check that the arg-resolver + gate cover every occurrence.
 

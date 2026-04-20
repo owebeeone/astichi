@@ -19,6 +19,62 @@ from astichi.asttools import (
 from astichi.shell_refs import parse_ref_path_literal
 
 
+BOUNDARY_OUTER_BIND_KEYWORD = "outer_bind"
+BOUNDARY_EXPLICIT_BIND_KEYWORD = "bound"
+BOUNDARY_STATE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        BOUNDARY_OUTER_BIND_KEYWORD,
+        BOUNDARY_EXPLICIT_BIND_KEYWORD,
+    }
+)
+
+
+def _boundary_keyword_bool(keyword: ast.keyword) -> bool:
+    value = keyword.value
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, bool):
+        raise ValueError(
+            f"boundary keyword `{keyword.arg}` must be a literal True/False"
+        )
+    return value.value
+
+
+def boundary_outer_bind_enabled(call: ast.Call) -> bool:
+    for keyword in call.keywords:
+        if keyword.arg == BOUNDARY_OUTER_BIND_KEYWORD:
+            return _boundary_keyword_bool(keyword)
+    return False
+
+
+def boundary_explicit_bind_enabled(call: ast.Call) -> bool:
+    for keyword in call.keywords:
+        if keyword.arg == BOUNDARY_EXPLICIT_BIND_KEYWORD:
+            return _boundary_keyword_bool(keyword)
+    return False
+
+
+def set_boundary_explicit_bind_state(call: ast.Call) -> None:
+    """Mark ``call`` as explicitly wired in source-visible syntax."""
+    kept_keywords: list[ast.keyword] = []
+    saw_bound = False
+    for keyword in call.keywords:
+        if keyword.arg == BOUNDARY_OUTER_BIND_KEYWORD:
+            continue
+        if keyword.arg == BOUNDARY_EXPLICIT_BIND_KEYWORD:
+            keyword.value = ast.Constant(value=True)
+            kept_keywords.append(keyword)
+            saw_bound = True
+            continue
+        kept_keywords.append(keyword)
+    if not saw_bound:
+        kept_keywords.append(
+            ast.keyword(
+                arg=BOUNDARY_EXPLICIT_BIND_KEYWORD,
+                value=ast.Constant(value=True),
+            )
+        )
+    call.keywords = kept_keywords
+
+
 @dataclass(frozen=True)
 class PortTemplate:
     """Port parameters contributed by a marker at a single occurrence.
@@ -196,6 +252,37 @@ class _SimpleMarker(MarkerSpec):
                 raise ValueError(
                     f"{self.source_name} requires a bare identifier-like first argument"
                 )
+
+
+class _BoundaryIdentifierMarker(_SimpleMarker):
+    """Boundary identifier marker with explicit state keywords."""
+
+    def validate_node(self, node: ast.AST) -> None:
+        super().validate_node(node)
+        assert isinstance(node, ast.Call)
+        seen: set[str] = set()
+        for keyword in node.keywords:
+            if keyword.arg not in BOUNDARY_STATE_KEYWORDS:
+                raise ValueError(
+                    f"{self.source_name}(...) does not accept keyword `{keyword.arg}`; "
+                    f"only `{BOUNDARY_OUTER_BIND_KEYWORD}=True|False` and "
+                    f"`{BOUNDARY_EXPLICIT_BIND_KEYWORD}=True|False` are allowed"
+                )
+            if keyword.arg in seen:
+                raise ValueError(
+                    f"{self.source_name}(...) received duplicate keyword `{keyword.arg}`"
+                )
+            seen.add(keyword.arg)
+            _boundary_keyword_bool(keyword)
+        if (
+            boundary_outer_bind_enabled(node)
+            and boundary_explicit_bind_enabled(node)
+        ):
+            raise ValueError(
+                f"{self.source_name}(...) may not combine "
+                f"`{BOUNDARY_OUTER_BIND_KEYWORD}=True` with "
+                f"`{BOUNDARY_EXPLICIT_BIND_KEYWORD}=True`"
+            )
 
 
 class _SuffixIdentifierMarker(MarkerSpec):
@@ -436,12 +523,12 @@ INSERT = _InsertMarker()
 REF = _RefMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
-# Issue 006 §9.2: `astichi_import(name)` imports an outer-scope
-# identifier into the inner Astichi scope; `astichi_pass(name)` exposes
-# an inner-scope identifier to the outer scope. Both are boundary
-# declarations; statement-prefix placement is enforced in `boundaries.py`
-# (expression-position sites are not restricted by that rule).
-IMPORT = _SimpleMarker(
+# Issue 006: `astichi_import(name)` is the declaration-form
+# identifier-threading surface; `astichi_pass(name)` is the value-form
+# surface. Import participates in the top-prefix boundary-declaration
+# rule; pass contributes an IDENTIFIER demand and is resolved later as a
+# value expression.
+IMPORT = _BoundaryIdentifierMarker(
     "astichi_import",
     positional_args=1,
     name_bearing=True,
@@ -451,12 +538,11 @@ IMPORT = _SimpleMarker(
         shape=IDENTIFIER, mutability="const", source_tag="import"
     ),
 )
-PASS = _SimpleMarker(
+PASS = _BoundaryIdentifierMarker(
     "astichi_pass",
     positional_args=1,
     name_bearing=True,
-    expression_prefix_directive=True,
-    supply_template=PortTemplate(
+    demand_template=PortTemplate(
         shape=IDENTIFIER, mutability="const", source_tag="pass"
     ),
 )

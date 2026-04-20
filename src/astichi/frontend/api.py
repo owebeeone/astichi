@@ -115,7 +115,7 @@ def compile(
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
-    return FrontendComposable(
+    compiled = FrontendComposable(
         tree=tree,
         origin=origin,
         markers=markers,
@@ -125,6 +125,9 @@ def compile(
         arg_bindings=validated_arg_bindings,
         keep_names=validated_keep_names,
     )
+    if validated_arg_bindings:
+        return compiled.bind_identifier(dict(validated_arg_bindings))
+    return compiled
 
 
 def _validate_keep_names(names: Iterable[str] | None) -> frozenset[str]:
@@ -148,14 +151,14 @@ def _validate_arg_names(
         return ()
     if not isinstance(arg_names, Mapping):
         raise TypeError("arg_names must implement Mapping")
-    # Issue 006 6c: an IDENTIFIER-demand port can come from either a
-    # ``name__astichi_arg__`` suffix slot (005) or an ``astichi_import``
-    # declaration (006). Both are wired through the same ``arg_names``
-    # mapping — the import form is "suffixed-arg spelled as a call".
+    # Issue 006: an IDENTIFIER-demand port can come from a
+    # ``name__astichi_arg__`` suffix slot (005), an ``astichi_import``
+    # declaration, or a value-form ``astichi_pass(...)`` occurrence.
+    # All three are wired through the same ``arg_names`` mapping.
     arg_slot_names = {
         port.name
         for port in demand_ports
-        if "arg" in port.sources or "import" in port.sources
+        if "arg" in port.sources or "import" in port.sources or "pass" in port.sources
     }
     resolved: dict[str, str] = {}
     for key, value in arg_names.items():
@@ -171,7 +174,7 @@ def _validate_arg_names(
         if key not in arg_slot_names:
             known = tuple(sorted(arg_slot_names))
             raise ValueError(
-                f"no __astichi_arg__ / astichi_import slot named `{key}` "
+                f"no __astichi_arg__ / astichi_import / astichi_pass slot named `{key}` "
                 f"in source; known identifier demands: {known!r}"
             )
         resolved[key] = value

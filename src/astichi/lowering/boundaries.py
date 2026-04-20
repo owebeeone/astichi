@@ -1,26 +1,19 @@
-"""Astichi scope-boundary marker validation (issue 006).
+"""Astichi boundary/value marker validation (issue 006).
 
-This module owns the *structural* checks for the two cross-scope
-boundary markers:
+This module owns the structural checks for the cross-scope identifier
+surfaces:
 
-- ``astichi_import(name)``: imports an outer-scope identifier into the
-  immediately enclosing Astichi scope.
-- ``astichi_pass(name)``: exposes an inner-scope identifier to the
-  immediately enclosing outer Astichi scope.
+- ``astichi_import(name)`` is the declaration-form surface. A bare
+  ``astichi_import(...)`` statement is legal only in the contiguous
+  top-of-body prefix of an Astichi scope (the module, or an
+  ``@astichi_insert``-decorated class/def body).
+- ``astichi_pass(name)`` is the value-form surface. It may appear where
+  an expression is valid, but a bare statement-form ``astichi_pass(...)``
+  is always rejected.
 
-Both are **declarations**, not executable calls. **Statement-form**
-``astichi_import(...)`` / ``astichi_pass(...)`` (a bare expression
-statement) must appear as the contiguous top-of-body prefix of their
-Astichi scope (the module, or an ``@astichi_insert``-decorated
-class/def body). The same markers may also appear in **expression**
-positions (e.g. walrus RHS, assignment RHS); those sites are **not**
-subject to this prefix rule—only the statement-prefix rule applies to
-leading boundary statements.
-
-The interaction-matrix validator (issue 006 6b) groups recognized
-markers by their enclosing Astichi scope and rejects the forbidden
-combinations spelled out in
-``AstichiSingleSourceSummary.md §9.2``.
+The interaction-matrix validator groups recognized markers by their
+enclosing Astichi scope and rejects the forbidden combinations spelled
+out in ``AstichiSingleSourceSummary.md §9.2``.
 """
 
 from __future__ import annotations
@@ -29,34 +22,18 @@ import ast
 from dataclasses import dataclass, field
 
 from astichi.lowering.markers import RecognizedMarker
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 
-_BOUNDARY_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import", "astichi_pass"})
+_IMPORT_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import"})
 
 
 def validate_boundary_marker_placement(tree: ast.Module) -> None:
-    """Enforce the **statement-prefix** rule for boundary markers.
-
-    Placement rule (issue 006 §9.2):
-
-    - **Statement-form** markers (a bare ``Expr`` whose value is a
-      boundary ``Call``) must be contiguous at the top of each Astichi
-      scope body—no other statement may precede them in that prefix.
-    - The same calls may additionally appear in expression positions; this
-      validator does **not** reject those (static semantics apply to the
-      whole fragment).
-
-    An Astichi scope body is either the module body or the body of an
-    ``@astichi_insert``-decorated ``FunctionDef`` / ``AsyncFunctionDef``
-    / ``ClassDef``. Expression-form ``astichi_insert(name, expr)`` has
-    no body.
-    """
+    """Enforce import-prefix placement and reject bare value-form pass."""
     errors: list[str] = []
     _validate_scope_body(tree.body, "module body", errors)
     if errors:
-        raise ValueError(
-            "misplaced Astichi boundary marker(s): " + "; ".join(errors)
-        )
+        raise ValueError("invalid Astichi boundary/value marker usage: " + "; ".join(errors))
 
 
 def _validate_scope_body(
@@ -64,7 +41,17 @@ def _validate_scope_body(
 ) -> None:
     past_prefix = False
     for stmt in body:
-        info = _top_level_boundary_marker(stmt)
+        value_only = _top_level_value_only_marker(stmt)
+        if value_only is not None:
+            kind, lineno = value_only
+            errors.append(
+                f"{kind}(...) at line {lineno} in {scope_label}: {kind}(...) is "
+                "value-form only and may not appear as a bare statement; bind it "
+                "in a real expression (for example `x = astichi_pass(y)`) or use "
+                "`astichi_import(name)` for declaration-style scope threading"
+            )
+            continue
+        info = _top_level_import_marker(stmt)
         if info is not None:
             kind, lineno = info
             if past_prefix:
@@ -87,7 +74,8 @@ def _validate_nested(
 
     When we encounter an ``@astichi_insert`` shell we descend into its
     body as a fresh Astichi scope (its body has its own top-prefix
-    rule). Expression-position boundary markers are ignored here.
+    rule). Bare statement-form ``astichi_pass(...)`` is rejected in any
+    nested statement body, regardless of scope type.
     """
     if _is_insert_shell(node):
         assert isinstance(
@@ -114,9 +102,18 @@ def _flag_nested_boundaries(
     scope_label: str,
     errors: list[str],
 ) -> None:
-    """Descend into ``node`` for nested insert shells; boundary calls in
-    arbitrary expression positions are allowed and are not flagged here.
-    """
+    """Descend into ``node`` for nested insert shells and bare pass statements."""
+    if isinstance(node, ast.Expr):
+        info = _top_level_value_only_marker(node)
+        if info is not None:
+            kind, lineno = info
+            errors.append(
+                f"{kind}(...) at line {lineno} in {scope_label}: {kind}(...) is "
+                "value-form only and may not appear as a bare statement; bind it "
+                "in a real expression (for example `x = astichi_pass(y)`) or use "
+                "`astichi_import(name)` for declaration-style scope threading"
+            )
+            return
     if _is_insert_shell(node):
         # Enter the shell as a fresh Astichi scope instead of treating
         # its contents as still inside `scope_label`.
@@ -126,13 +123,11 @@ def _flag_nested_boundaries(
         _flag_nested_boundaries(child, scope_label, errors)
 
 
-def _top_level_boundary_marker(stmt: ast.stmt) -> tuple[str, int] | None:
-    """Return ``(marker_name, lineno)`` if ``stmt`` is a bare boundary call."""
+def _top_level_import_marker(stmt: ast.stmt) -> tuple[str, int] | None:
+    """Return ``(marker_name, lineno)`` if ``stmt`` is a bare import call."""
     if not isinstance(stmt, ast.Expr):
         return None
-    if not isinstance(stmt.value, ast.Call):
-        return None
-    name = _boundary_call_name(stmt.value)
+    name = _import_expr_name(stmt.value)
     if name is None:
         return None
     lineno = getattr(stmt, "lineno", 0) or getattr(stmt.value, "lineno", 0) or 0
@@ -142,9 +137,44 @@ def _top_level_boundary_marker(stmt: ast.stmt) -> tuple[str, int] | None:
 def _boundary_call_name(call: ast.Call) -> str | None:
     if not isinstance(call.func, ast.Name):
         return None
-    if call.func.id not in _BOUNDARY_MARKER_NAMES:
+    if call.func.id not in _IMPORT_MARKER_NAMES:
         return None
     return call.func.id
+
+
+def _import_expr_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Call):
+        return _boundary_call_name(node)
+    return None
+
+
+def _top_level_value_only_marker(stmt: ast.stmt) -> tuple[str, int] | None:
+    if not isinstance(stmt, ast.Expr):
+        return None
+    name = _value_only_expr_name(stmt.value)
+    if name is None:
+        return None
+    lineno = getattr(stmt, "lineno", 0) or getattr(stmt.value, "lineno", 0) or 0
+    return name, lineno
+
+
+def _value_only_expr_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Call) and _is_pass_call(node):
+        return "astichi_pass"
+    sentinel = match_transparent_sentinel(
+        node,
+        is_marker_call=_is_pass_call,
+    )
+    if sentinel is None:
+        return None
+    return "astichi_pass"
+
+
+def _is_pass_call(call: ast.Call) -> bool:
+    return (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "astichi_pass"
+    )
 
 
 def _is_insert_shell(node: ast.AST) -> bool:
@@ -200,10 +230,6 @@ def validate_boundary_interaction_matrix(
         name__astichi_keep__            # import + keep suffix
         name__astichi_arg__             # import + arg suffix
         astichi_export(name)            # import + export
-
-    ``astichi_pass`` may freely coexist with keep / arg / export —
-    supplying a name outward does not conflict with hygiene pins or
-    export-side supplies on the same name.
 
     Scope boundaries match `group_markers_by_astichi_scope`: the module
     body is the root Astichi scope, each ``@astichi_insert``-decorated

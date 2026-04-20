@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+
 import pytest
 
 import astichi
@@ -11,9 +13,8 @@ from astichi.model.ports import IDENTIFIER
 
 
 def test_import_and_pass_markers_are_registered() -> None:
-    # Issue 006 6a: `astichi_import` and `astichi_pass` must be recognised
-    # alongside the other call-form markers and self-report as
-    # name-bearing identifier declarations.
+    # Issue 006: `astichi_import` and `astichi_pass` are recognised
+    # marker surfaces and both carry a name-bearing first argument.
     assert "astichi_import" in MARKERS_BY_NAME
     assert "astichi_pass" in MARKERS_BY_NAME
     assert MARKERS_BY_NAME["astichi_import"].is_name_bearing() is True
@@ -24,10 +25,9 @@ def test_compile_recognizes_module_level_boundary_markers() -> None:
     compiled = astichi.compile(
         """
 astichi_import(outer_name)
-astichi_pass(inner_name)
+value = astichi_pass(inner_name)
 
-result = outer_name + inner_name
-inner_name = 0
+result = outer_name + value
 """
     )
 
@@ -44,15 +44,14 @@ inner_name = 0
 
 
 def test_compile_emits_identifier_ports_for_boundary_markers() -> None:
-    # Issue 006 6a: `astichi_import(name)` surfaces as an IDENTIFIER
-    # demand port on the piece, `astichi_pass(name)` as an IDENTIFIER
-    # supply port.
+    # Issue 006: both `astichi_import(name)` and value-form
+    # `astichi_pass(name)` surface as IDENTIFIER demand ports.
     compiled = astichi.compile(
         """
 astichi_import(dep)
-astichi_pass(result)
+result = astichi_pass(seed)
 
-result = dep
+value = dep + result
 """
     )
 
@@ -63,41 +62,34 @@ result = dep
     assert dep_port.placement == "identifier"
     assert "import" in dep_port.sources
 
-    result_port = next(
-        port for port in compiled.supply_ports if port.name == "result"
+    seed_port = next(
+        port for port in compiled.demand_ports if port.name == "seed"
     )
-    assert result_port.shape is IDENTIFIER
-    assert result_port.placement == "identifier"
-    assert "pass" in result_port.sources
+    assert seed_port.shape is IDENTIFIER
+    assert seed_port.placement == "identifier"
+    assert "pass" in seed_port.sources
 
 
-def test_placement_accepts_top_prefix_at_module_and_shell_scopes() -> None:
-    # Issue 006 6a: the top-of-body prefix in both the module scope and
-    # any `@astichi_insert`-decorated shell body is a legal position.
+def test_placement_accepts_top_prefix_import_at_module_and_shell_scopes() -> None:
     astichi.compile(
         """
 astichi_import(outer)
-astichi_pass(top_result)
+top_result = outer
 
 @astichi_insert(target)
 def shell_block():
     astichi_import(shared)
-    astichi_pass(nested_out)
-
     nested_out = shared + 1
 
-top_result = 0
+result = top_result
 """
     )
 
 
 def test_placement_rejects_boundary_after_real_statement_in_module() -> None:
-    # Issue 006 6a: boundary markers that appear after any real
-    # statement in the module body break the top-prefix rule.
     with pytest.raises(
         ValueError,
-        match=r"astichi_import\(\.\.\.\) at line \d+ in module body: "
-        r"boundary markers must form the top-of-body prefix",
+        match=r"astichi_import\(\.\.\.\) at line \d+ in module body: boundary markers must form the top-of-body prefix",
     ):
         astichi.compile(
             """
@@ -105,17 +97,6 @@ x = 1
 astichi_import(late)
 """
         )
-
-
-def test_placement_accepts_boundary_nested_in_if_block() -> None:
-    # Expression-position boundary markers are allowed (prefix rule applies
-    # only to statement-form markers at scope-body top).
-    astichi.compile(
-        """
-if True:
-    astichi_pass(stray)
-"""
-    )
 
 
 def test_placement_accepts_boundary_inside_non_shell_def() -> None:
@@ -134,7 +115,7 @@ def test_placement_accepts_boundary_as_top_prefix_in_shell_but_rejects_after() -
     # not leaked through because the module-level prefix accepted them.
     with pytest.raises(
         ValueError,
-        match=r"astichi_pass\(\.\.\.\) at line \d+ in shell 'block' body",
+        match=r"astichi_import\(\.\.\.\) at line \d+ in shell 'block' body",
     ):
         astichi.compile(
             """
@@ -142,20 +123,16 @@ def test_placement_accepts_boundary_as_top_prefix_in_shell_but_rejects_after() -
 def block():
     astichi_import(ok_prefix)
     ok_prefix
-    astichi_pass(late_in_shell)
+    astichi_import(late_in_shell)
 """
         )
 
 
-def test_placement_allows_multiple_prefix_boundary_statements() -> None:
-    # Issue 006 6a: any number of contiguous import/pass statements at
-    # the top of an Astichi scope are legal.
+def test_placement_allows_multiple_prefix_import_statements() -> None:
     astichi.compile(
         """
 astichi_import(a)
 astichi_import(b)
-astichi_pass(c)
-astichi_pass(d)
 
 c = a
 d = b
@@ -163,10 +140,34 @@ d = b
     )
 
 
-def test_placement_accepts_boundary_marker_in_assignment_rhs() -> None:
+def test_placement_rejects_bare_astichi_pass_statement_with_import_hint() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_pass\(\.\.\.\).*value-form only.*astichi_import",
+    ):
+        astichi.compile(
+            """
+astichi_pass(counter)
+"""
+        )
+
+
+def test_placement_rejects_bare_astichi_pass_sentinel_statement_with_import_hint() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_pass\(\.\.\.\).*value-form only.*astichi_import",
+    ):
+        astichi.compile(
+            """
+astichi_pass(counter).astichi_v
+"""
+        )
+
+
+def test_placement_accepts_astichi_pass_in_assignment_rhs() -> None:
     astichi.compile(
         """
-result = astichi_import(bound_name)
+result = astichi_pass(bound_name)
 """
     )
 
@@ -199,22 +200,117 @@ if True:
     )
 
 
+def test_placement_rejects_bare_astichi_ref_statement() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_ref\(\.\.\.\) at line \d+ is value-form only",
+    ):
+        astichi.compile("astichi_ref('pkg.mod')\n")
+
+
+def test_placement_rejects_bare_astichi_ref_sentinel_statement() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_ref\(\.\.\.\) at line \d+ is value-form only",
+    ):
+        astichi.compile("astichi_ref('pkg.mod').astichi_v\n")
+
+
+def test_pass_sentinel_assign_lowers_to_identifier_store() -> None:
+    rendered = ast.unparse(
+        astichi.compile("astichi_pass(counter).astichi_v = 42\n")
+        .materialize()
+        .tree
+    )
+    assert rendered.strip() == "counter = 42"
+
+
+def test_pass_sentinel_chain_is_transparent_once() -> None:
+    rendered = ast.unparse(
+        astichi.compile("value = astichi_pass(obj)._.field\n")
+        .materialize()
+        .tree
+    )
+    assert rendered.strip() == "value = obj.field"
+
+
+def test_pass_sentinel_method_call_is_transparent_once() -> None:
+    namespace = _exec_emitted(
+        astichi.compile(
+            """
+shared_trace = []
+astichi_pass(shared_trace)._.append("leaf")
+"""
+        ).materialize()
+    )
+    assert namespace["shared_trace"] == ["leaf"]
+
+
+def test_pass_sentinel_strips_once_so_real_underscore_field_remains() -> None:
+    rendered = ast.unparse(
+        astichi.compile("value = astichi_pass(obj)._._\n")
+        .materialize()
+        .tree
+    )
+    assert rendered.strip() == "value = obj._"
+
+
+def test_nested_pass_requires_outer_bind_or_explicit_wiring() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+events = []
+astichi_hole(body)
+result = events
+"""
+        )
+    )
+    builder.add.Step(
+        astichi.compile('astichi_pass(events).append("leaf")\n')
+    )
+    builder.Root.body.add.Step(order=0)
+
+    with pytest.raises(
+        ValueError,
+        match=r"unresolved boundary identifier demands: astichi_pass\(events\)",
+    ):
+        builder.build().materialize()
+
+
+def test_nested_pass_outer_bind_threads_same_name_explicitly() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+events = []
+astichi_hole(body)
+result = events
+"""
+        )
+    )
+    builder.add.Step(
+        astichi.compile(
+            'astichi_pass(events, outer_bind=True).append("leaf")\n'
+        )
+    )
+    builder.Root.body.add.Step(order=0)
+
+    namespace = _exec_emitted(builder.build().materialize())
+    assert namespace["result"] == ["leaf"]
+
+
 # ---------------------------------------------------------------------------
 # 6b: hygiene pinning + interaction matrix
 # ---------------------------------------------------------------------------
 
 
-def test_hygiene_pins_import_and_pass_names_against_implied_demand() -> None:
-    # Issue 006 6b: Load references to an imported/passed name inside
-    # the scope must NOT be reclassified as implied SCALAR_EXPR demands
-    # (the name is supplied across an Astichi scope boundary). Only the
-    # IDENTIFIER-shape port sourced from the boundary marker survives.
+def test_import_and_pass_do_not_clone_implied_demands() -> None:
     compiled = astichi.compile(
         """
 astichi_import(dep)
-astichi_pass(out)
-
-out = dep + 1
+value = astichi_pass(seed)
+out = dep + value
 """
     )
 
@@ -223,11 +319,13 @@ out = dep + 1
         for port in compiled.demand_ports
         if port.name == "dep"
     }
-    # dep shows up exactly as the IDENTIFIER import demand; no implied
-    # SCALAR_EXPR clone was added.
     assert dep_sources == {frozenset({"import"})}
-    # `out` is not classified as an implied demand either.
-    assert not any(port.name == "out" for port in compiled.demand_ports)
+    seed_sources = {
+        port.sources
+        for port in compiled.demand_ports
+        if port.name == "seed"
+    }
+    assert seed_sources == {frozenset({"pass"})}
 
 
 def test_interaction_matrix_rejects_import_and_pass_on_same_name() -> None:
@@ -238,7 +336,7 @@ def test_interaction_matrix_rejects_import_and_pass_on_same_name() -> None:
         astichi.compile(
             """
 astichi_import(x)
-astichi_pass(x)
+value = astichi_pass(x)
 """
         )
 
@@ -288,13 +386,10 @@ astichi_export(shared)
         )
 
 
-def test_interaction_matrix_allows_pass_alongside_keep_and_arg() -> None:
-    # Issue 006 §9.2: `pass` may coexist with keep-suffix and
-    # arg-suffix on the same name — the matrix gate does not reject.
+def test_interaction_matrix_allows_pass_alongside_non_conflicting_markers() -> None:
     astichi.compile(
         """
-astichi_pass(handler)
-astichi_pass(knob)
+value = astichi_pass(inbound)
 
 class handler__astichi_keep__:
     pass
@@ -302,33 +397,11 @@ class handler__astichi_keep__:
 
 def knob__astichi_arg__():
     return 0
-"""
-    )
-
-
-def test_interaction_matrix_allows_pass_plus_export_via_direct_gate_call() -> None:
-    # Issue 006 §9.2: `pass + astichi_export` on the same name is
-    # valid at the interaction-matrix level. We exercise the gate
-    # directly because `pass` contributes an IDENTIFIER supply and
-    # `export` contributes a SCALAR_EXPR supply for the same name;
-    # the compile-time supply-port merge across distinct shapes is
-    # a separate concern handled by 6c.
-    import ast as _ast
-    from astichi.lowering import (
-        recognize_markers,
-        validate_boundary_interaction_matrix,
-    )
-
-    tree = _ast.parse(
-        """
-astichi_pass(shared)
 
 shared = 42
 astichi_export(shared)
 """
     )
-    markers = recognize_markers(tree)
-    validate_boundary_interaction_matrix(tree, markers)
 
 
 def test_interaction_matrix_is_scoped_per_astichi_scope() -> None:
@@ -550,7 +623,7 @@ def test_6c_builder_arg_names_rejects_unknown_import_slot() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"no __astichi_arg__ / astichi_import slot named `missing`",
+        match=r"no __astichi_arg__ / astichi_import / astichi_pass slot named `missing`",
     ):
         builder.Root.body.add.Step1(order=0, arg_names={"missing": "total"})
 
@@ -709,7 +782,7 @@ def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            r"build: no __astichi_arg__ / astichi_import slot named "
+            r"build: no __astichi_arg__ / astichi_import / astichi_pass slot named "
             r"`nonexistent`"
         ),
     ):
@@ -796,35 +869,33 @@ def test_6c_assign_surface_raw_build_rejects_unknown_deep_target_path() -> None:
         builder.build()
 
 
-def test_6c_assign_surface_connects_dangling_pass_across_build_stages() -> None:
-    # Issue 006 6c assign surface: multi-stage composition. Stage 1
-    # builds a composable whose `astichi_pass(counter)` declaration is
-    # dangling — no edge in stage 1 consumes it, so the supply
-    # survives on the merged composable as a port. Stage 2 re-uses
+def test_6c_assign_surface_connects_exported_supplier_across_build_stages() -> None:
+    # Issue 006 assign surface: multi-stage composition. Stage 1 builds
+    # a composable that explicitly exports `counter`; stage 2 re-uses
     # that composable as an instance and adds a sibling reader that
-    # declares `astichi_import(counter)`; `builder.assign` wires them
+    # declares `astichi_import(counter)`. `builder.assign` wires them
     # fully-qualified across the stage boundary.
     producer_src = """
-astichi_pass(counter)
-
+astichi_keep(counter)
 counter = 42
+astichi_export(counter)
 """
     stage1 = astichi.build()
     stage1.add.Producer(astichi.compile(producer_src))
     stage1_composable = stage1.build()
 
-    # The merged stage-1 composable still advertises `counter` as an
-    # IDENTIFIER supply port with source_tag="pass" — the marker and
-    # the port survive through `build_merge` because nothing in stage
-    # 1 consumed them.
+    # The merged stage-1 composable still advertises `counter` as a
+    # supply port with source_tag="export"` — the marker and the port
+    # survive through `build_merge` because nothing in stage 1 consumed
+    # them.
     counter_supply = [
         port for port in stage1_composable.supply_ports if port.name == "counter"
     ]
     assert counter_supply, (
-        "stage 1 should advertise the dangling `counter` pass as a "
+        "stage 1 should advertise the exported `counter` as a "
         "supply port on the merged composable"
     )
-    assert "pass" in counter_supply[0].sources
+    assert "export" in counter_supply[0].sources
 
     reader_src = """
 astichi_import(counter)
@@ -835,7 +906,7 @@ result = counter * 2
     stage2.add.Producer(stage1_composable)
     stage2.add.Reader(astichi.compile(reader_src, keep_names=["result"]))
     # Connect the Reader's dangling import demand in stage 2 to the
-    # Producer's dangling pass supply from stage 1. The producer
+    # Producer's exported supply from stage 1. The producer
     # composable does not have to be re-inspected by the user: the
     # fully-qualified assign names the supplier by (instance, name).
     stage2.assign.Reader.counter.to().Producer.counter
@@ -871,7 +942,7 @@ def test_6c_assign_surface_deep_target_path_selects_nested_supplier() -> None:
     stage1 = astichi.build()
     stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
     stage1.add.Left(astichi.compile("total = 10\n"))
-    stage1.add.Right(astichi.compile("total = 20\n"))
+    stage1.add.Right(astichi.compile("astichi_keep(total)\ntotal = 20\n"))
     stage1.Root.body.add.Left(order=0)
     stage1.Root.body.add.Right(order=1)
     built = stage1.build()

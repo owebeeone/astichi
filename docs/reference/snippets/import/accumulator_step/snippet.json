@@ -1,0 +1,7 @@
+{
+  "instances": { "Root": "root.py", "Step1": "step.py" },
+  "wires": [
+    "builder.Root.body.add.Step1(order=0, arg_names={\"total\": \"total\"})"
+  ],
+  "unroll": false
+}

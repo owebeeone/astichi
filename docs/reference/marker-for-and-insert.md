@@ -70,6 +70,32 @@ astichi_funcargs(
 )
 ```
 
+- `astichi_pass(name).astichi_v` (or `._`) follows the same transparent
+  one-shot strip rule as `astichi_ref(...)`:
+
+```python
+astichi_pass(trace).append("leaf")       # -> trace.append("leaf")
+astichi_pass(trace)._.append("leaf")     # -> trace.append("leaf")
+astichi_pass(counter).astichi_v = 1      # -> counter = 1
+astichi_pass(obj)._._                    # -> obj._
+```
+
+- For a same-name bind to the immediately enclosing Astichi scope, spell it
+  explicitly with `outer_bind=True`:
+
+```python
+astichi_pass(trace, outer_bind=True).append("leaf")
+astichi_import(total, outer_bind=True)
+```
+
+- Explicit `arg_names=` / `.bind_identifier(...)` / `builder.assign...`
+  resolution is serialized back into source as `bound=True` on the rewritten
+  marker call so `emit()` -> `compile()` preserves the wiring contract.
+
+- Bare statement-form `astichi_pass(name)` (including
+  `astichi_pass(name).astichi_v`) rejects at `compile()` time. If you need a
+  declaration-form threaded name for a whole scope, use `astichi_import(name)`.
+
 - Duplicate explicit emitted keyword names reject at build time.
 - For non-call expression holes, the authored surface is a plain expression:
 

@@ -32,3 +32,12 @@ include = ["src/astichi", "tests", "dev-docs", "scratch"]
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
 testpaths = ["tests"]
+
+# Hatchling uses `src/` layout; Pyright/Basedpyright need the same path so
+# `import astichi` resolves when analyzing files under `docs/` (and from the
+# monorepo root, see `../pyrightconfig.json`).
+[tool.pyright]
+extraPaths = ["src"]
+
+[tool.basedpyright]
+extraPaths = ["src"]

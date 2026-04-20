@@ -6,7 +6,12 @@ import ast
 from dataclasses import dataclass
 
 from astichi.diagnostics import default_build_path_hint, format_astichi_error
-from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
+from astichi.lowering.markers import (
+    ARG_IDENTIFIER,
+    boundary_explicit_bind_enabled,
+    boundary_outer_bind_enabled,
+    strip_identifier_suffix,
+)
 from astichi.shell_refs import (
     RefPath,
     RefSegment,
@@ -245,7 +250,15 @@ def boundary_import_statement(stmt: ast.stmt) -> tuple[str, ast.Call] | None:
         return None
     if not isinstance(value.func, ast.Name) or value.func.id != "astichi_import":
         return None
-    if not value.args or not isinstance(value.args[0], ast.Name):
+    if (
+        len(value.args) != 1
+        or not isinstance(value.args[0], ast.Name)
+    ):
+        return None
+    for keyword in value.keywords:
+        if keyword.arg not in {"outer_bind", "bound"}:
+            return None
+    if boundary_outer_bind_enabled(value) and boundary_explicit_bind_enabled(value):
         return None
     return value.args[0].id, value
 
@@ -305,13 +318,11 @@ def collect_identifier_demands_in_body(body: list[ast.stmt]) -> frozenset[str]:
             if fid == "astichi_import" and (
                 len(node.args) == 1
                 and isinstance(node.args[0], ast.Name)
-                and not node.keywords
             ):
                 names.add(node.args[0].id)
             elif fid == "astichi_pass" and (
                 len(node.args) == 1
                 and isinstance(node.args[0], ast.Name)
-                and not node.keywords
             ):
                 names.add(node.args[0].id)
 

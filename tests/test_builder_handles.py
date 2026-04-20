@@ -163,7 +163,7 @@ def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
     builder = astichi.build()
     with pytest.raises(
         ValueError,
-        match=r"materialize: no __astichi_arg__ / astichi_import slot named `missing`",
+        match=r"materialize: no __astichi_arg__ / astichi_import / astichi_pass slot named `missing`",
     ):
         builder.add.A(piece, arg_names={"missing": "x"})
 

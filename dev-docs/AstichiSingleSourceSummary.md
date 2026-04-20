@@ -295,6 +295,12 @@ Current materialize behavior that is already in place:
 - matched source-level inserts flatten into hole positions
 - builder-added contributions become insert shells before materialize, then are
   flattened and hygienically renamed if needed
+- the first immediate `.astichi_v` / `._` segment after
+  `astichi_ref(...)` or `astichi_pass(name)` is transparent and strips exactly
+  once during materialize; any later postfix syntax is real surface on the
+  lowered result
+- bare statement-form `astichi_ref(...)` / `astichi_pass(...)` rejects at
+  compile time; both are value-form surfaces in authored code
 - residual `astichi_keep`, `astichi_export`, and current
   `astichi_definitional_name` markers are stripped
 
@@ -319,8 +325,8 @@ Scope isolation is strict (and intentional):
   merge-time root wrap, every builder contribution shell, every
   expression-form insert wrapper) owns its own lexical name space
 - cross-scope wiring is *explicit*: declare intent via
-  `astichi_import` (consumer side), `astichi_pass` (supplier side
-  that re-exports the binding to its enclosing scope),
+  `astichi_import` (declaration-form consumer side),
+  `astichi_pass` (value-form consumer side),
   `astichi_export` (supplier side, published to the composable
   boundary), `__astichi_arg__` / `__astichi_keep__` suffixes, or the
   builder-level equivalents `arg_names=`, `keep_names=`, and
@@ -515,24 +521,28 @@ Do not keep the old `__astichi__` surface alive as a parallel system.
 
 Cross-scope threading decisions that are already locked:
 
-- `astichi_import(name)` and `astichi_pass(name)` are boundary markers for the
-  immediately enclosing Astichi scope only
+- `astichi_import(name)` is the declaration-form surface for the immediately
+  enclosing Astichi scope only
   - no scope-skipping
   - multi-hop crossing requires explicit chaining through intermediate scopes
-- placement rule:
-  - these markers are declarations, not actions
-  - they must appear at the top of the inner scope body, before real
-    statements
-- `astichi_pass(name)` must pin both scopes
-  - pin the name in the inner scope
-  - also add it to the outer preserved set at the splice point
+  - placement rule: declaration-form `astichi_import(...)` must appear at the
+    top of the inner scope body, before real statements
+  - same-name immediate-outer convenience is explicit:
+    `astichi_import(name, outer_bind=True)`
+- `astichi_pass(name)` is the expression/value-form surface
+  - it does not publish a supplier declaration by itself
+  - bare statement-form `astichi_pass(...)` rejects; if a whole scope needs a
+    declaration-form threaded name, use `astichi_import(...)`
+  - same-name immediate-outer convenience is explicit:
+    `astichi_pass(name, outer_bind=True)`
+  - explicit user wiring (`arg_names=`, `.bind_identifier(...)`,
+    `builder.assign...`) serializes back into source as `bound=True` on the
+    rewritten marker call so `emit()` -> `compile()` preserves the wiring
+    contract without relying on provenance
 - interaction matrix that must be preserved:
   - `import + pass` on the same name: reject
   - `import + __astichi_arg__`: reject
   - `import + __astichi_keep__`: reject
-  - `pass + __astichi_arg__`: valid
-  - `pass + __astichi_keep__`: valid
-  - `pass + astichi_export`: valid
   - `import + astichi_export`: reject
 
 ### 9.3 Materialize soundness: open gaps vs. contracts
@@ -629,7 +639,7 @@ Treat these as one cluster, not as unrelated tickets.
    - top semantic blocker
    - boundary crossings must be explicit and local
    - `astichi_import(name)` for outer -> inner
-   - `astichi_pass(name)` for inner -> outer
+   - `astichi_pass(name)` for value-form scoped reference
 2. `005` within-scope identifier slots / definitional replacement
    - replace legacy `__astichi__`
    - add `__astichi_arg__`
@@ -745,33 +755,38 @@ Recommended execution order:
      because IDENTIFIER-shape supply sources are 006 territory.
 3. Boundary-threading implementation for 006
    - `6a` **done**: `astichi_import` / `astichi_pass` registered as
-     call-form boundary markers (ALL_MARKERS + port templates); the
-     placement gate rejects boundary declarations that aren't at the
-     top-of-body prefix of their immediately enclosing Astichi scope
-     (module body, or an `@astichi_insert`-decorated class/def body);
-     IDENTIFIER-shape demand (for `import`) and supply (for `pass`)
-     ports surface at the composable boundary. Also collapses
+     call-form boundary/value markers (ALL_MARKERS + port templates);
+     the placement gate rejects declaration-form `astichi_import(...)`
+     statements that aren't at the top-of-body prefix of their
+     immediately enclosing Astichi scope (module body, or an
+     `@astichi_insert`-decorated class/def body), and rejects bare
+     statement-form `astichi_pass(...)` because `pass` is value-form
+     only. IDENTIFIER-shape demand ports surface for both `import`
+     and `pass`. Also collapses
      `extract_demand_ports` / `extract_supply_ports` onto a new
      `MarkerSpec.demand_template` / `supply_template` hook returning
      a `PortTemplate`, so per-marker knowledge lives on the marker
      spec instead of in an if/elif chain. `IDENTIFIER` is now a
      first-class shape in `asttools.shapes`.
-   - `6b` **done**: hygiene pins for `import` / `pass` names keep
-     them out of implied-demand classification and protect them
-     from rename; the per-Astichi-scope interaction-matrix gate
+   - `6b` **done**: `astichi_import(name)` stays out of implied-demand
+     classification and is protected from rename inside its declaring
+     scope; value-form `astichi_pass(name)` contributes an
+     IDENTIFIER demand without pinning unrelated same-named
+     references in the scope. The per-Astichi-scope interaction-matrix gate
      rejects `import + pass`, `import + __astichi_keep__`,
      `import + __astichi_arg__`, and `import + astichi_export` on
-     the same name in the same scope while allowing `pass` to
-     coexist with keep / arg / export. Scope-aware pinning (strict
-     inner-only for `import`, dual inner+outer for `pass`) is
-     deferred to 6c when the resolver lands.
-   - `6c` **done** (for `astichi_import`): the hygiene-scope visitor
+     the same name in the same scope.
+   - `6c` **done** (`astichi_import` + value-form `astichi_pass`): the hygiene-scope visitor
      classifies `astichi_import`-declared name occurrences (the
      declaration site itself and Name/arg references that resolve
      through it) against the *enclosing* Astichi scope rather than the
      declaring shell, and the residual-marker stripper removes every
-     surviving `astichi_import(...)` / `astichi_pass(...)` Expr
-     statement from the materialized tree. The visitor uses a
+     surviving `astichi_import(...)` Expr statement from the
+     materialized tree. `astichi_pass(...)` is resolved as a
+     value-form marker: explicit identifier bindings rename its
+     marker argument before residual stripping, the shared one-shot
+     sentinel strip lowers `.astichi_v` / `._`, and bare
+     statement-form authored uses reject at compile time. The visitor uses a
      two-level trust model (see below) to decide whether an import
      occurrence is `role="preserved"` (inherits cross-scope trust) or
      `role="internal"` (same-root splicing unifies onto the enclosing
@@ -780,8 +795,15 @@ Recommended execution order:
      consumes is also passed to `_resolve_boundary_imports`, which
      rewrites `astichi_import` declarations (and their Name/arg
      references within the declaring shell body, stopping at nested
-     shell boundaries) when the user supplies a non-identity rebind
-     such as `arg_names={"total": "accumulator"}`. The builder
+     shell boundaries) when the user supplies a rebind such as
+     `arg_names={"total": "accumulator"}`. Identity and non-identity
+     explicit boundary binds are now source-visible: rewritten
+     `astichi_import(...)` / `astichi_pass(...)` calls carry
+     `bound=True`, while authored same-name immediate-outer fallback
+     uses `outer_bind=True`. Nested shell boundaries without either
+     form are rejected at materialize time; module root and synthetic
+     root-wrap scopes still permit unresolved boundary markers to
+     survive as ordinary free-name demand surface. The builder
      target-adder surface grows `arg_names=` / `keep_names=`
      parameters (`target.add.<Name>(order=0, arg_names={"total":
      "total"})`) that union onto the source instance via the
@@ -793,8 +815,8 @@ Recommended execution order:
      after the assign call and (for same-root wiring) the supplier
      may live in a sibling composable rather than the edge target.
      `_validate_arg_names` / `BasicComposable.bind_identifier` now
-     accept IDENTIFIER demand ports sourced from either
-     `__astichi_arg__` suffix or `astichi_import` declarations.
+     accept IDENTIFIER demand ports sourced from
+     `__astichi_arg__`, `astichi_import`, or `astichi_pass`.
      Root-scope wrap: `build_merge` wraps every root instance's body
      in a synthetic `astichi_hole(__astichi_root__<name>__)` /
      `@astichi_insert(__astichi_root__<name>__) def __astichi_root__<name>__(): ...`
@@ -824,11 +846,11 @@ Recommended execution order:
        contract) is built from the user-typed `keep_names=`
        parameter on `compile()` / `with_keep_names()` /
        `builder.add.<Name>(keep_names=...)` plus literal
-       `astichi_keep(name)` / `astichi_pass(name)` markers in the
-       source. A name listed in `trust_names` is *never* renamed by
+       `astichi_keep(name)` markers in the source. A name listed in
+       `trust_names` is *never* renamed by
        `rename_scope_collisions`: every scope that carries a
        `role="preserved"` occurrence for that name keeps the raw
-       spelling (not just the first one), so a `keep`/`pass` on the
+       spelling (not just the first one), so a `keep` on the
        producer side and a matching `astichi_import` on the
        consumer side can co-emit the same literal name even when
        they live in distinct Astichi scopes (distinct root
@@ -838,10 +860,10 @@ Recommended execution order:
        away. `_ScopeIdentityVisitor` tracks trust at two
        granularities — a module-level `trust_names` set (used to
        classify import occurrences, which inherit trust from the
-       enclosing scope's keep/pass contract) and a per-scope
+       enclosing scope's keep contract) and a per-scope
        `fresh_scope_trust_declarations` map (used to classify Store
        occurrences, so an inner shell that happens to bind a
-       trusted spelling without its own keep/pass declaration stays
+       trusted spelling without its own keep declaration stays
        `role="internal"` and renames apart).
      Cross-root assign wiring therefore works end-to-end:
      `builder.assign.<Src>.<inner>.to().<DstOtherRoot>.<outer>`
@@ -849,12 +871,11 @@ Recommended execution order:
      the source is spliced into emits with the literal outer name
      preserved, because `Src`'s import inherits `DstOtherRoot`'s
      keep trust through the trust set.
-   - `6c` remaining: reshape `astichi_pass` into the expression form
-     the spec describes (currently still the statement declaration
-     from 6a); wire `astichi_pass` through the materialize resolver
-     (value-level) with invariant asserts; enable
-     `wire_identifier(...)` on builder slot handles once
-     `astichi_pass` supply sources land.
+   - `6c` follow-on: `wire_identifier(...)` on builder slot handles is
+     still deferred. `astichi_pass` no longer provides the old
+     supplier-declaration surface, so any future shorthand should
+     target explicit import/export wiring rather than resurrecting
+     statement-form `pass`.
 4. Soundness closure for 004
    - gate undeclared crossings (diagnostic layer on top of §5.4
      strict scope isolation: tell the user which free name inside a

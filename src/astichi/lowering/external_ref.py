@@ -15,10 +15,11 @@ expressed as a compile-time string and lowers it into the corresponding
 Two surface positions are supported:
 
 1. value-form (§3): the call result fills any expression slot.
-2. sentinel-attribute LHS form (§3a): wrapping the call as
+2. sentinel-attribute surface (§3a): wrapping the call as
    `astichi_ref(...).astichi_v` (or `.._`) makes it grammatically
-   legal as an `Assign` / `AugAssign` / `Delete` target. The sentinel
-   wrapper is stripped at materialize time and its `ctx`
+   legal as an `Assign` / `AugAssign` / `Delete` target and is also a
+   valid no-op in ordinary expression positions. The first immediate
+   sentinel segment is stripped at materialize time and its `ctx`
    (`Load` / `Store` / `Del`) is propagated onto the lowered chain.
 
 Lowering happens at materialize time, after `bind()` has substituted
@@ -33,7 +34,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-_SENTINEL_ATTRS: frozenset[str] = frozenset({"astichi_v", "_"})
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,8 @@ class _RefLowerer(ast.NodeTransformer):
     Handled shapes:
 
     - sentinel wrapper (§3a): `Attribute(Call(astichi_ref...), SENTINEL)`
-      — strip the wrapper and propagate its `ctx` to the lowered chain.
+      — strip the wrapper once and propagate its `ctx` to the lowered
+      chain.
     - value form (§3): `Call(astichi_ref...)` not wrapped by a sentinel
       attribute — lower as `Load`-context chain.
 
@@ -147,13 +149,12 @@ class _RefLowerer(ast.NodeTransformer):
     """
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
-        if (
-            isinstance(node.value, ast.Call)
-            and _is_astichi_ref_call(node.value)
-            and node.attr in _SENTINEL_ATTRS
-        ):
-            self._reject_sentinel_chained_call(node)
-            chain = _lower_ref_call_to_chain(node.value, ctx=node.ctx)
+        sentinel = match_transparent_sentinel(
+            node,
+            is_marker_call=_is_astichi_ref_call,
+        )
+        if sentinel is not None:
+            chain = _lower_ref_call_to_chain(sentinel.call, ctx=sentinel.ctx)
             return chain
         # Non-sentinel attribute access on a ref: lower the inner call
         # in Load context, then leave the outer Attribute alone.
@@ -171,23 +172,6 @@ class _RefLowerer(ast.NodeTransformer):
             return _lower_ref_call_to_chain(node, ctx=ast.Load())
         self.generic_visit(node)
         return node
-
-    @staticmethod
-    def _reject_sentinel_chained_call(node: ast.Attribute) -> None:
-        """Defensive check — relies on the AST shape Python emits.
-
-        `astichi_ref(p).astichi_v.x` parses as
-        `Attribute(value=Attribute(value=Call(...), attr='astichi_v'), attr='x')`.
-        The outer Attribute trips this check by hitting the inner
-        sentinel Attribute as its `.value`, but that is detected at the
-        *outer* Attribute visit only when we observe its `.value` is
-        itself a sentinel-wrapped ref. Per spec we must also reject
-        `astichi_ref(p).astichi_v(...)` which parses as a Call whose
-        `.func` is the sentinel Attribute. Both paths are handled by
-        the parent-aware reject pass below, so this static check is
-        intentionally a no-op for the simple case.
-        """
-
 
 def _is_astichi_ref_call(node: ast.AST) -> bool:
     return (
@@ -385,53 +369,29 @@ def _build_chain(
     return node
 
 
-# ---------------------------------------------------------------------------
-# §3a / §8: structural rejection of chained sentinel forms
-# ---------------------------------------------------------------------------
-
-
 def validate_external_ref_surface(tree: ast.AST) -> None:
-    """Statically reject malformed sentinel shapes (per §8).
-
-    Runs at `compile()` time, before marker recognition has hardened
-    into a composable. Catches:
-
-    - `astichi_ref(p).astichi_v.x`           (attribute chained after sentinel)
-    - `astichi_ref(p).astichi_v(...)`        (calling the sentinel wrapper)
-    - `astichi_ref(p)._.other`               (same, via `_` shorthand)
-    """
-    _SentinelChainChecker().visit(tree)
-
-
-class _SentinelChainChecker(ast.NodeVisitor):
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        if _is_sentinel_wrapper(node.value):
-            raise ValueError(
-                "astichi_ref(...).%s.%s is rejected: chaining attribute "
-                "access after the sentinel attribute is ambiguous (the "
-                "lowered ref already terminates the path)."
-                % (
-                    getattr(node.value, "attr", "<sentinel>"),
-                    node.attr,
-                )
-            )
-        self.generic_visit(node)
-
-    def visit_Call(self, node: ast.Call) -> None:
-        if _is_sentinel_wrapper(node.func):
-            raise ValueError(
-                "astichi_ref(...).%s(...) is rejected: the sentinel wrapper "
-                "yields a value, not a callable; if you meant to call the "
-                "lowered ref, use the value form astichi_ref(...)(...)."
-                % getattr(node.func, "attr", "<sentinel>")
-            )
-        self.generic_visit(node)
+    """Reject bare statement-form ``astichi_ref(...)`` surfaces."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Expr):
+            continue
+        if _statement_form_ref(node.value) is None:
+            continue
+        lineno = getattr(node, "lineno", 0) or getattr(node.value, "lineno", 0) or 0
+        raise ValueError(
+            "astichi_ref(...) at line "
+            f"{lineno} is value-form only and may not appear as a bare "
+            "statement; use it in a real expression or wrap the immediate "
+            "target position in `.astichi_v` / `._`"
+        )
 
 
-def _is_sentinel_wrapper(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Attribute)
-        and node.attr in _SENTINEL_ATTRS
-        and isinstance(node.value, ast.Call)
-        and _is_astichi_ref_call(node.value)
+def _statement_form_ref(node: ast.AST) -> ast.Call | None:
+    if _is_astichi_ref_call(node):
+        return node
+    sentinel = match_transparent_sentinel(
+        node,
+        is_marker_call=_is_astichi_ref_call,
     )
+    if sentinel is None:
+        return None
+    return sentinel.call
