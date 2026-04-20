@@ -24,7 +24,8 @@ Current status: **recognized only**.
 - Values come from **composition context**, not from normal runtime name lookup
   of the generated module.
 - Current supported value shapes are `None`, `bool`, `int`, `float`, `str`, and
-  recursively nested `tuple` / `list` values using those element types.
+  recursively nested `tuple` / `list` / `dict` values using those element
+  types.
 
 ## `astichi_export(name)`
 

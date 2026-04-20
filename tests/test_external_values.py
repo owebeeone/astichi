@@ -22,6 +22,11 @@ from astichi.model import MAX_EXTERNAL_VALUE_DEPTH, validate_external_value, val
         ([1, 2, 3], "[1, 2, 3]"),
         ((1, ("nested", "tuple")), "(1, ('nested', 'tuple'))"),
         ([1, [2, None], ("x", False)], "[1, [2, None], ('x', False)]"),
+        ({"k": "v"}, "{'k': 'v'}"),
+        (
+            {"left": [1, 2], "right": ("x", {"nested": True})},
+            "{'left': [1, 2], 'right': ('x', {'nested': True})}",
+        ),
     ],
 )
 def test_value_to_ast_round_trips_supported_v1_values(
@@ -44,6 +49,8 @@ def test_value_to_ast_round_trips_supported_v1_values(
         None,
         (1, ("nested", "tuple")),
         [1, [2, None], ("x", False)],
+        {"k": "v"},
+        {"left": [1, 2], "right": ("x", {"nested": True})},
     ],
 )
 def test_validate_external_value_accepts_supported_v1_values(value: object) -> None:
@@ -63,13 +70,11 @@ def test_value_to_ast_preserves_bool_and_int_types() -> None:
 @pytest.mark.parametrize(
     ("value", "expected_type_name"),
     [
-        ({"k": "v"}, "dict"),
         ({"a", "b"}, "set"),
         (object(), "object"),
         (lambda value: value, "function"),
         (b"bytes", "bytes"),
         (1 + 2j, "complex"),
-        ((1, {"k": "v"}), "dict"),
     ],
 )
 def test_value_to_ast_rejects_unsupported_v1_values(
@@ -128,9 +133,32 @@ def test_value_to_ast_rejects_indirect_recursive_sequence() -> None:
         value_to_ast(left)
 
 
+def test_value_to_ast_rejects_recursive_dict() -> None:
+    recursive: dict[object, object] = {}
+    recursive["self"] = recursive
+
+    with pytest.raises(
+        ValueError,
+        match=r"recursive external binding value is not supported at value\.values\[0\]",
+    ):
+        value_to_ast(recursive)
+
+
+def test_value_to_ast_rejects_indirect_recursive_list_dict_cycle() -> None:
+    left: list[object] = []
+    right: dict[str, object] = {"loop": left}
+    left.append(right)
+
+    with pytest.raises(
+        ValueError,
+        match=r"recursive external binding value is not supported at value\[0\]\.values\[0\]",
+    ):
+        value_to_ast(left)
+
+
 def test_validate_external_value_rejects_unsupported_values_without_conversion() -> None:
     with pytest.raises(
         ValueError,
-        match=r"unsupported external binding value type at value: dict",
+        match=r"unsupported external binding value type at value: set",
     ):
-        validate_external_value({"k": "v"})
+        validate_external_value({"k"})

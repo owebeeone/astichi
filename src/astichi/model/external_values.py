@@ -38,6 +38,14 @@ def _validate_external_value(
             active_ids=active_ids,
         )
         return
+    if isinstance(value, dict):
+        _validate_dict_items(
+            value,
+            depth=depth,
+            path=path,
+            active_ids=active_ids,
+        )
+        return
 
     raise ValueError(f"unsupported external binding value type at {path}: {type(value).__name__}")
 
@@ -81,6 +89,21 @@ def _convert_external_value(
             ),
             ctx=ast.Load(),
         )
+    if isinstance(value, dict):
+        return ast.Dict(
+            keys=_convert_dict_keys(
+                value,
+                depth=depth,
+                path=path,
+                active_ids=active_ids,
+            ),
+            values=_convert_dict_values(
+                value,
+                depth=depth,
+                path=path,
+                active_ids=active_ids,
+            ),
+        )
 
     raise ValueError(f"unsupported external binding value type at {path}: {type(value).__name__}")
 
@@ -92,7 +115,7 @@ def _convert_sequence_elements(
     path: str,
     active_ids: frozenset[int],
 ) -> list[ast.expr]:
-    next_active_ids = _descend_sequence(value, path=path, active_ids=active_ids)
+    next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
     return [
         _convert_external_value(
             item,
@@ -111,12 +134,73 @@ def _validate_sequence_elements(
     path: str,
     active_ids: frozenset[int],
 ) -> None:
-    next_active_ids = _descend_sequence(value, path=path, active_ids=active_ids)
+    next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
     for index, item in enumerate(value):
         _validate_external_value(
             item,
             depth=depth + 1,
             path=f"{path}[{index}]",
+            active_ids=next_active_ids,
+        )
+
+
+def _convert_dict_keys(
+    value: dict[object, object],
+    *,
+    depth: int,
+    path: str,
+    active_ids: frozenset[int],
+) -> list[ast.expr]:
+    next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+    return [
+        _convert_external_value(
+            key,
+            depth=depth + 1,
+            path=f"{path}.keys[{index}]",
+            active_ids=next_active_ids,
+        )
+        for index, key in enumerate(value)
+    ]
+
+
+def _convert_dict_values(
+    value: dict[object, object],
+    *,
+    depth: int,
+    path: str,
+    active_ids: frozenset[int],
+) -> list[ast.expr]:
+    next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+    return [
+        _convert_external_value(
+            item,
+            depth=depth + 1,
+            path=f"{path}.values[{index}]",
+            active_ids=next_active_ids,
+        )
+        for index, item in enumerate(value.values())
+    ]
+
+
+def _validate_dict_items(
+    value: dict[object, object],
+    *,
+    depth: int,
+    path: str,
+    active_ids: frozenset[int],
+) -> None:
+    next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+    for index, (key, item) in enumerate(value.items()):
+        _validate_external_value(
+            key,
+            depth=depth + 1,
+            path=f"{path}.keys[{index}]",
+            active_ids=next_active_ids,
+        )
+        _validate_external_value(
+            item,
+            depth=depth + 1,
+            path=f"{path}.values[{index}]",
             active_ids=next_active_ids,
         )
 
@@ -128,8 +212,8 @@ def _check_external_value_depth(*, depth: int, path: str) -> None:
         )
 
 
-def _descend_sequence(
-    value: tuple[object, ...] | list[object],
+def _descend_container(
+    value: tuple[object, ...] | list[object] | dict[object, object],
     *,
     path: str,
     active_ids: frozenset[int],

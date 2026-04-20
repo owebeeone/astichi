@@ -493,6 +493,23 @@ result = (factor, factor * 2, [factor, factor + 1])
     assert namespace["result"] == (7, 14, [7, 8])
 
 
+def test_materialize_bind_external_dict_value_in_expression_position() -> None:
+    compiled = astichi.compile(
+        """
+astichi_bind_external(config)
+result = config
+"""
+    )
+
+    materialized = compiled.bind(config={"answer": 42, "enabled": True}).materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert rendered.strip() == "result = {'answer': 42, 'enabled': True}"
+    namespace: dict[str, object] = {}
+    exec(compile(materialized.emit(provenance=False), "<t>", "exec"), namespace)
+    assert namespace["result"] == {"answer": 42, "enabled": True}
+
+
 def test_materialize_bind_external_with_multiple_names() -> None:
     """Multiple binds in one compose resolve independently."""
     compiled = astichi.compile(

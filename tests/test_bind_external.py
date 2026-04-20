@@ -46,6 +46,19 @@ print(fields)
     assert ast.unparse(bound.tree) == "print(('x', 'y'))"
 
 
+def test_bind_external_dict_value_is_supported() -> None:
+    snippet = astichi.compile(
+        """
+astichi_bind_external(config)
+print(config)
+"""
+    )
+
+    bound = snippet.bind(config={"answer": 42, "enabled": True})
+
+    assert ast.unparse(bound.tree) == "print({'answer': 42, 'enabled': True})"
+
+
 def test_bind_external_kwargs_win_over_mapping_on_collision() -> None:
     snippet = astichi.compile(
         """

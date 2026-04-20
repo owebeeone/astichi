@@ -270,8 +270,8 @@ Shipped behavior:
   - `str`
   - recursive `tuple`
   - recursive `list`
+  - recursive `dict`
 - unsupported values reject:
-  - `dict`
   - `set`
   - `bytes`
   - callables
