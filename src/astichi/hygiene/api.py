@@ -795,6 +795,10 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.astichi_scope_trusts_stack: list[frozenset[str]] = [
             module_trust_declarations
         ]
+        # Imported-name origin is stable for a given Astichi scope, so
+        # repeated reads of the same imported name in that scope can
+        # reuse one ancestor-resolution result.
+        self.import_origin_scope_cache: dict[tuple[ScopeId, str], ScopeId] = {}
         self.python_bindings = _ScopeBindingCollector().bindings_by_scope
         self.python_scope_bindings: dict[int, frozenset[str]] = {}
         self.python_scope_stack: list[frozenset[str]] = []
@@ -833,7 +837,11 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # inheritance scan keeps the literal name intact through
             # rename. Untrusted imports default to the surrounding
             # Astichi scope's binding so same-root splices unify on a
-            # single rename target and sibling roots rename apart.
+            # single rename target and sibling roots rename apart. If
+            # an ancestor scope also imports the same name, keep
+            # walking outward until we reach the first non-importing
+            # Astichi scope; imported chains are alias-through, not a
+            # sequence of fresh intermediate bindings.
             binding_kind: BindingKind = (
                 "reference" if isinstance(node.ctx, ast.Load) else "binding"
             )
@@ -842,7 +850,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 scope_id = self._current_scope()
             else:
                 role = "internal"
-                scope_id = self._outer_scope()
+                scope_id = self._import_origin_scope(node.id)
         elif isinstance(node.ctx, ast.Load):
             role = self._load_role(node.id)
             binding_kind = "reference"
@@ -935,6 +943,37 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         if len(self.scope_stack) >= 2:
             return self.scope_stack[-2]
         return self.scope_stack[-1]
+
+    def _import_origin_scope(self, raw_name: str) -> ScopeId:
+        """Resolve the owning Astichi scope for an imported name.
+
+        The current scope already imports ``raw_name``. Walk outward
+        across ancestor Astichi scopes that also import the same name,
+        and return the first enclosing Astichi scope that does *not*
+        import it. That outer scope owns the binding that every import
+        in the chain aliases through.
+        """
+        cache_key = (self._current_scope(), raw_name)
+        cached = self.import_origin_scope_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        scope_index = len(self.scope_stack) - 1
+        while scope_index > 1:
+            parent_index = scope_index - 1
+            if parent_index < 2:
+                result = self.scope_stack[parent_index]
+                self.import_origin_scope_cache[cache_key] = result
+                return result
+            imported_names = self.astichi_scope_imports_stack[parent_index - 2]
+            if raw_name not in imported_names:
+                result = self.scope_stack[parent_index]
+                self.import_origin_scope_cache[cache_key] = result
+                return result
+            scope_index = parent_index
+        result = self.scope_stack[1]
+        self.import_origin_scope_cache[cache_key] = result
+        return result
 
     def _current_python_bindings(self) -> frozenset[str]:
         if not self.python_scope_stack:

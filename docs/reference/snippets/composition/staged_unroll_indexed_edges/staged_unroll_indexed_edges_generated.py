@@ -2,7 +2,7 @@
 
 events = []
 events.append('first')
-events__astichi_scoped_1.append('second')
-events__astichi_scoped_2 = events
-events__astichi_scoped_2.append('third')
+events.append('second')
+events__astichi_scoped_1 = events
+events__astichi_scoped_1.append('third')
 result = events

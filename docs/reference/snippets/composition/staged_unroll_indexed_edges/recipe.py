@@ -14,13 +14,18 @@ domain produces one target per iteration—``step[0]``, ``step[1]``, ``step[2]``
 each append insert wires to the matching iteration’s body.
 
 Stage-2 inserts live **under** ``Pipeline`` / unrolled ``Loop`` bodies; ``events`` is
-defined on the outer ``Root`` fragment. ``astichi_pass(events, outer_bind=True)``
-requests a **same-name immediate outer bind**: the pass demand resolves to the
-``events`` in the parent Astichi scope (same list as ``events = []`` on ``Root``).
-Without ``outer_bind=True`` (or an explicit ``builder.assign`` / export–import path),
-that nested boundary does not auto-resolve. Do not use bare statement-form
-``astichi_pass(events); ...`` (rejected). Other options: export ``events`` from one
-insert and ``astichi_import(events)`` in others, or use ``assign`` wiring.
+defined on the outer ``Root`` fragment. The explicit threading story is:
+
+- ``Loop`` imports ``events`` from ``Root``
+- ``Step0`` imports ``events`` and is wired explicitly with ``builder.assign``
+- ``Step1`` imports ``events`` from its immediate enclosing ``Loop`` via ``outer_bind=True``
+- ``Step2`` uses value-form ``astichi_pass(events, outer_bind=True)`` to alias Loop's
+  imported ``events`` locally before appending
+
+The middle ``Loop`` import is now required for the nested ``outer_bind=True`` cases:
+the child step resolves against its immediate enclosing Astichi scope, not by
+searching outward. Do not use bare statement-form
+``astichi_pass(events); ...`` (rejected).
 """
 
 def run() -> str:
@@ -39,6 +44,7 @@ def run() -> str:
     builder1.add.Root(
         piece(
             """
+            # Root owns the concrete `events` binding for this composition.
             events = []
             astichi_hole(body)
             result = events
@@ -48,23 +54,29 @@ def run() -> str:
     builder1.add.Loop(
         piece(
             """
+            # imports events from Root so nested steps can resolve through Loop.
+            astichi_import(events, outer_bind=True)
             for x in astichi_for((1, 2, 3)):
                 astichi_hole(step)
             """
         )
     )
+    # Root.body ← Loop (single child in the body hole).
     builder1.Root.body.add.Loop(order=0)
-    composable1 = builder1.build()
+    composable1 = builder1.build()  # Merged Root+Loop; unroll happens on stage-2 build.
 
     # Stage 2: embed composable1; one insert per loop iteration (indexed step targets).
-    # outer_bind=True on each pass: bind `events` to Root’s `events` (nested insert → outer scope).
+    # Each step imports `events` from its immediate enclosing Loop scope.
     builder2: BuilderHandle = astichi.build()
+    # Pipeline wraps the stage-1 composable as one insert target.
     builder2.add.Pipeline(composable1)
 
     builder2.add.Step0(
         piece(
             """
-            astichi_pass(events, outer_bind=True).append("first")
+            # Explicit builder.assign below binds this import to Pipeline.events.
+            astichi_import(events)
+            events.append("first")
             """
         )
     )
@@ -74,24 +86,29 @@ def run() -> str:
     builder2.add.Step1(
         piece(
             """
-            # Imports the events list from the outer scope.
+            # outer_bind=True resolves to Loop's imported `events`.
             astichi_import(events, outer_bind=True)
             events.append("second")
             """
         )
     )
+    # step[1]: second unrolled iteration.
     builder2.Pipeline.Loop.step[1].add.Step1(order=1)
 
     builder2.add.Step2(
         piece(
             """
-            # Creates a local scope copy of events.
+            # outer_bind=True resolves pass() through Loop, then aliases locally.
             events = astichi_pass(events, outer_bind=True)
             events.append("third")
             """
         )
     )
+    # step[2]: third unrolled iteration.
     builder2.Pipeline.Loop.step[2].add.Step2(order=2)
 
-    composable2 = builder2.build()
+    # Step0 uses bare import; wire its demand to Pipeline’s `events` supply.
+    builder2.assign.Step0.events.to().Pipeline.events
+
+    composable2 = builder2.build()  # Indexed edges → default unroll="auto" runs unroll.
     return ast.unparse(composable2.materialize().tree)

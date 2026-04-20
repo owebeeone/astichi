@@ -219,6 +219,43 @@ def test_v3_late_bind_and_delayed_unroll_matrix(
     assert namespace["result"] == expected_labels
 
 
+def test_v3_import_chain_threads_through_intermediate_unrolled_scope() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(_events_root_piece())
+    stage1.add.Loop(
+        _piece(
+            """
+            astichi_import(events, outer_bind=True)
+            for x in astichi_for((1, 2, 3)):
+                astichi_hole(step)
+            """
+        )
+    )
+    stage1.Root.body.add.Loop(order=0)
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    for index, label in enumerate(["first", "second", "third"]):
+        step_name = f"Step{index}"
+        getattr(stage2.add, step_name)(
+            _piece(
+                f"""
+                astichi_import(events, outer_bind=True)
+                events.append({label!r})
+                """
+            )
+        )
+        getattr(stage2.Pipeline.Loop.step[index].add, step_name)(order=index)
+
+    materialized = stage2.build(unroll="auto").materialize()
+    source = materialized.emit(provenance=False)
+    assert "events__astichi_scoped_" not in source
+
+    namespace = _exec_emitted(materialized)
+    assert namespace["result"] == ["first", "second", "third"]
+
+
 def test_v3_spine_stage_built_import_demand_bound_later() -> None:
     stage1 = astichi.build()
     stage1.add.Step(
