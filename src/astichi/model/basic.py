@@ -8,6 +8,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
@@ -86,12 +87,20 @@ class BasicComposable(Composable):
                 continue
             if key in self.bound_externals:
                 raise ValueError(
-                    f"cannot re-bind `{key}`: the external binding has already "
-                    "been applied to this composable"
+                    format_astichi_error(
+                        "materialize",
+                        f"cannot re-bind `{key}`: the external binding has already "
+                        "been applied to this composable",
+                        hint="each external key is applied once; use a fresh composable if needed",
+                    )
                 )
             raise ValueError(
-                f"no astichi_bind_external({key}) site found; known bind-external "
-                f"demands on this composable: {known_demands!r}"
+                format_astichi_error(
+                    "materialize",
+                    f"no astichi_bind_external({key}) site found; known bind-external "
+                    f"demands on this composable: {known_demands!r}",
+                    hint="add `astichi_bind_external({key})` to the snippet or bind only listed keys",
+                )
             )
 
         for value in resolved.values():
@@ -125,7 +134,11 @@ class BasicComposable(Composable):
             for name in collection:
                 if not isinstance(name, str) or not name.isidentifier():
                     raise ValueError(
-                        f"keep-name `{name}` is not a valid Python identifier"
+                        format_astichi_error(
+                            "materialize",
+                            f"keep-name `{name}` is not a valid Python identifier",
+                            hint="pass valid Python identifiers to `with_keep_names(...)`",
+                        )
                     )
                 merged.add(name)
         new_keep_names = frozenset(merged)
@@ -170,14 +183,23 @@ class BasicComposable(Composable):
             if key not in arg_demand_names:
                 known = tuple(sorted(arg_demand_names))
                 raise ValueError(
-                    f"no __astichi_arg__ / astichi_import slot named "
-                    f"`{key}`; known identifier demands on this "
-                    f"composable: {known!r}"
+                    format_astichi_error(
+                        "materialize",
+                        f"no __astichi_arg__ / astichi_import slot named "
+                        f"`{key}`; known identifier demands on this "
+                        f"composable: {known!r}",
+                        hint="use `bind_identifier` only for declared slot names; "
+                        "declare slots with `__astichi_arg__` or `astichi_import`",
+                    )
                 )
             if key in existing and existing[key] != value:
                 raise ValueError(
-                    f"cannot re-bind identifier arg `{key}`: already "
-                    f"resolved to `{existing[key]}`"
+                    format_astichi_error(
+                        "materialize",
+                        f"cannot re-bind identifier arg `{key}`: already "
+                        f"resolved to `{existing[key]}`",
+                        hint="use one resolution per slot; remove conflicting `bind_identifier`",
+                    )
                 )
             existing[key] = value
 
@@ -203,7 +225,13 @@ def _resolve_bindings(
         resolved = {}
         for key, value in mapping.items():
             if not isinstance(key, str) or not key.isidentifier():
-                raise ValueError(f"binding key `{key}` is not a valid Python identifier")
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        f"binding key `{key}` is not a valid Python identifier",
+                        hint="use `bind(foo=...)` only with valid identifier keys",
+                    )
+                )
             resolved[key] = value
     resolved.update(values)
     return resolved
@@ -222,15 +250,23 @@ def _resolve_identifier_bindings(
         for key, value in mapping.items():
             if not isinstance(key, str) or not key.isidentifier():
                 raise ValueError(
-                    f"identifier-arg slot name `{key}` is not a valid Python identifier"
+                    format_astichi_error(
+                        "materialize",
+                        f"identifier-arg slot name `{key}` is not a valid Python identifier",
+                        hint="keys in `bind_identifier` must be valid Python identifiers",
+                    )
                 )
             resolved[key] = value
     resolved.update(values)
     for key, value in resolved.items():
         if not isinstance(value, str) or not value.isidentifier():
             raise ValueError(
-                f"identifier-arg resolution for `{key}` must be a valid "
-                f"Python identifier, got {value!r}"
+                format_astichi_error(
+                    "materialize",
+                    f"identifier-arg resolution for `{key}` must be a valid "
+                    f"Python identifier, got {value!r}",
+                    hint="resolve each slot to a plain identifier string",
+                )
             )
     return resolved
 

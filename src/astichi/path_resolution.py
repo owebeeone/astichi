@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.shell_refs import (
     RefPath,
@@ -56,8 +57,15 @@ def is_astichi_insert_shell(
     return False
 
 
-def extract_block_insert_shell(stmt: ast.stmt) -> BlockInsertShell | None:
-    """Return block-insert metadata for an ``astichi_insert``-decorated def."""
+def extract_block_insert_shell(
+    stmt: ast.stmt, *, phase: str = "build"
+) -> BlockInsertShell | None:
+    """Return block-insert metadata for an ``astichi_insert``-decorated def.
+
+    ``phase`` selects the diagnostic prefix for validation failures (e.g.
+    ``\"compile\"`` during snippet compile, ``\"build\"`` when indexing shells
+    for the builder graph, ``\"materialize\"`` when validating merged trees).
+    """
     if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     for decorator in stmt.decorator_list:
@@ -79,12 +87,18 @@ def extract_block_insert_shell(stmt: ast.stmt) -> BlockInsertShell | None:
             if not isinstance(keyword.value, ast.Constant) or not isinstance(
                 keyword.value.value, int
             ):
-                raise ValueError("astichi_insert order must be an integer constant")
+                raise ValueError(
+                    format_astichi_error(
+                        phase,
+                        "astichi_insert order must be an integer constant",
+                        hint="use `order=0` with a literal int in the decorator",
+                    )
+                )
             order = keyword.value.value
         return BlockInsertShell(
             target_name=first_arg.id,
             order=order,
-            ref_path=extract_insert_ref(decorator),
+            ref_path=extract_insert_ref(decorator, phase=phase),
         )
     return None
 
@@ -123,8 +137,14 @@ class UnknownShellPath(ShellPathResolution):
     ref_path: RefPath
 
     def require(self, *, instance_name: str, role: str) -> AddressableShell:
+        addr = format_instance_ref(instance_name, self.ref_path)
         raise ValueError(
-            f"unknown {role} `{format_instance_ref(instance_name, self.ref_path)}`"
+            format_astichi_error(
+                "build",
+                f"unknown {role} `{addr}`",
+                context=f"instance {instance_name!r}",
+                hint=default_build_path_hint(),
+            )
         )
 
 
@@ -134,9 +154,14 @@ class AmbiguousShellPath(ShellPathResolution):
     match_count: int
 
     def require(self, *, instance_name: str, role: str) -> AddressableShell:
+        addr = format_instance_ref(instance_name, self.ref_path)
         raise ValueError(
-            f"ambiguous {role} `{format_instance_ref(instance_name, self.ref_path)}` "
-            f"({self.match_count} matches)"
+            format_astichi_error(
+                "build",
+                f"ambiguous {role} `{addr}` ({self.match_count} matches)",
+                context=f"instance {instance_name!r}",
+                hint="make each `ref=` path on insert shells uniquely addressable",
+            )
         )
 
 
@@ -154,7 +179,7 @@ class ShellIndex:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            info = extract_block_insert_shell(node)
+            info = extract_block_insert_shell(node, phase="build")
             if info is None or info.ref_path is None:
                 continue
             ref_path = normalize_ref_path(info.ref_path)
@@ -200,10 +225,14 @@ class ShellIndex:
             if not ref_path or len(matches) == 1:
                 continue
             raise ValueError(
-                "instance "
-                f"`{instance_name}` exposes ambiguous descendant ref "
-                f"`{format_instance_ref(instance_name, ref_path)}` "
-                f"({len(matches)} matches); reused build refs must be unique"
+                format_astichi_error(
+                    "build",
+                    "instance "
+                    f"`{instance_name}` exposes ambiguous descendant ref "
+                    f"`{format_instance_ref(instance_name, ref_path)}` "
+                    f"({len(matches)} matches); reused build refs must be unique",
+                    hint="give each `@astichi_insert(..., ref=...)` shell a distinct fluent path",
+                )
             )
 
 

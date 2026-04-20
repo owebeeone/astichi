@@ -664,7 +664,7 @@ def test_6c_assign_surface_rejects_conflicting_rebind_of_same_demand() -> None:
     builder.add.Step1(astichi.compile(_accum_step_src(1)))
     builder.assign.Step1.total.to().Root.total
 
-    with pytest.raises(ValueError, match=r"conflicting assign for `Step1\.total`"):
+    with pytest.raises(ValueError, match=r"build: conflicting assign for `Step1\.total`"):
         builder.assign.Step1.total.to().Other.accumulator
 
 
@@ -677,7 +677,9 @@ def test_6c_assign_surface_rejects_unknown_source_at_build() -> None:
     )
     builder.assign.Missing.total.to().Root.total
 
-    with pytest.raises(ValueError, match=r"unknown source instance `Missing`"):
+    with pytest.raises(
+        ValueError, match=r"materialize: builder.assign refers to unknown source instance `Missing`"
+    ):
         builder.build()
 
 
@@ -690,7 +692,7 @@ def test_6c_assign_surface_rejects_unknown_target_at_build() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"unknown target instance `Missing` \(from Step1\.total\)",
+        match=r"materialize: builder.assign refers to unknown target instance `Missing` \(from Step1\.total\)",
     ):
         builder.build()
 
@@ -707,7 +709,7 @@ def test_6c_assign_surface_rejects_unknown_inner_demand_slot_at_build() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            r"no __astichi_arg__ / astichi_import slot named "
+            r"build: no __astichi_arg__ / astichi_import slot named "
             r"`nonexistent`"
         ),
     ):

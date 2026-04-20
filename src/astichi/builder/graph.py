@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from astichi.diagnostics import format_astichi_error
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
 from astichi.path_resolution import ShellIndex
@@ -80,9 +81,21 @@ class BuilderGraph:
     def add_instance(self, name: str, composable: Composable) -> InstanceRecord:
         """Register a named composable instance."""
         if not name.isidentifier():
-            raise ValueError(f"instance name must be a valid identifier: {name!r}")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"instance name must be a valid identifier: {name!r}",
+                    hint="use a valid Python identifier for `builder.add.<Name>`",
+                )
+            )
         if name in self._instances:
-            raise ValueError(f"duplicate instance name: {name}")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"duplicate instance name: {name}",
+                    hint="choose a unique instance name for each `builder.add`",
+                )
+            )
         self._validate_instance_composable(name, composable)
         record = InstanceRecord(name=name, composable=composable)
         self._instances[name] = record
@@ -102,7 +115,13 @@ class BuilderGraph:
         bindings raise.
         """
         if name not in self._instances:
-            raise ValueError(f"unknown instance: {name}")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"unknown instance: {name}",
+                    hint="register the instance first with `builder.add.<Name>(...)`",
+                )
+            )
         self._validate_instance_composable(name, composable)
         record = InstanceRecord(name=name, composable=composable)
         self._instances[name] = record
@@ -117,9 +136,21 @@ class BuilderGraph:
     ) -> AdditiveEdge:
         """Register an additive edge from a source instance into a target."""
         if target.root_instance not in self._instances:
-            raise ValueError(f"unknown target root instance: {target.root_instance}")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"unknown target root instance: {target.root_instance}",
+                    hint="register the target root with `builder.add` before wiring edges",
+                )
+            )
         if source_instance not in self._instances:
-            raise ValueError(f"unknown source instance: {source_instance}")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"unknown source instance: {source_instance}",
+                    hint="register the source instance with `builder.add` before wiring edges",
+                )
+            )
         edge = AdditiveEdge(
             target=target,
             source_instance=source_instance,
@@ -146,8 +177,12 @@ class BuilderGraph:
         ):
             if not isinstance(name, str) or not name.isidentifier():
                 raise ValueError(
-                    "assign binding names must be valid Python "
-                    f"identifiers; got {name!r}"
+                    format_astichi_error(
+                        "build",
+                        "assign binding names must be valid Python "
+                        f"identifiers; got {name!r}",
+                        hint="use identifier tokens for source/target/inner/outer names in `assign`",
+                    )
                 )
         for existing in self._assigns:
             if (
@@ -158,11 +193,15 @@ class BuilderGraph:
                 if existing == binding:
                     return existing
                 raise ValueError(
-                    f"conflicting assign for `{binding.source_instance}"
-                    f".{binding.inner_name}`: already bound to "
-                    f"`{existing.target_instance}.{existing.outer_name}`, "
-                    f"cannot rebind to `{binding.target_instance}"
-                    f".{binding.outer_name}`"
+                    format_astichi_error(
+                        "build",
+                        f"conflicting assign for `{binding.source_instance}"
+                        f".{binding.inner_name}`: already bound to "
+                        f"`{existing.target_instance}.{existing.outer_name}`, "
+                        f"cannot rebind to `{binding.target_instance}"
+                        f".{binding.outer_name}`",
+                        hint="remove or reconcile duplicate `builder.assign` declarations",
+                    )
                 )
         self._assigns.append(binding)
         return binding

@@ -35,6 +35,7 @@ import copy
 import re
 from typing import Iterable
 
+from astichi.diagnostics import format_astichi_error
 from astichi.lowering.markers import FOR, MARKERS_BY_NAME
 from astichi.lowering.unroll_domain import DomainValue, resolve_domain
 
@@ -63,14 +64,22 @@ class _UnrollTransformer(ast.NodeTransformer):
             return node
         if node.orelse:
             raise ValueError(
-                "astichi_for loops may not have an `else` clause"
+                format_astichi_error(
+                    "unroll",
+                    "astichi_for loops may not have an `else` clause",
+                    hint="remove the `else` branch (reserved for a future Astichi shape)",
+                )
             )
         return self._expand(node)
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AST:
         if _is_astichi_for_iter(node.iter):
             raise ValueError(
-                "astichi_for may not be used with `async for`"
+                format_astichi_error(
+                    "unroll",
+                    "astichi_for may not be used with `async for`",
+                    hint="use a plain `for` with `astichi_for(...)` as the iterable",
+                )
             )
         self.generic_visit(node)
         return node
@@ -79,7 +88,11 @@ class _UnrollTransformer(ast.NodeTransformer):
         assert isinstance(node.iter, ast.Call)
         if len(node.iter.args) != 1 or node.iter.keywords:
             raise ValueError(
-                "astichi_for takes exactly one positional argument (the domain)"
+                format_astichi_error(
+                    "unroll",
+                    "astichi_for takes exactly one positional argument (the domain)",
+                    hint="write `for x in astichi_for((1, 2, 3)):` with the domain as a single tuple/list/range literal",
+                )
             )
         domain = resolve_domain(node.iter.args[0])
         loop_vars = _collect_target_names(node.target)
@@ -123,8 +136,12 @@ def _collect_into(target: ast.expr, names: set[str]) -> None:
         _collect_into(target.value, names)
     else:
         raise ValueError(
-            f"astichi_for target must be a name or tuple of names; "
-            f"got {type(target).__name__}"
+            format_astichi_error(
+                "unroll",
+                f"astichi_for target must be a name or tuple of names; "
+                f"got {type(target).__name__}",
+                hint="use `for x in ...` or `for a, b in ...` with simple names",
+            )
         )
 
 
@@ -143,20 +160,32 @@ def _bind_into(
     if isinstance(target, (ast.Tuple, ast.List)):
         if not isinstance(value, tuple):
             raise ValueError(
-                f"astichi_for target {ast.unparse(target)} expects a tuple "
-                f"per iteration, got {value!r}"
+                format_astichi_error(
+                    "unroll",
+                    f"astichi_for target {ast.unparse(target)} expects a tuple "
+                    f"per iteration, got {value!r}",
+                    hint="match the tuple unpack arity to each domain element",
+                )
             )
         if len(value) != len(target.elts):
             raise ValueError(
-                f"astichi_for target arity {len(target.elts)} does not match "
-                f"iteration arity {len(value)} (value={value!r})"
+                format_astichi_error(
+                    "unroll",
+                    f"astichi_for target arity {len(target.elts)} does not match "
+                    f"iteration arity {len(value)} (value={value!r})",
+                    hint="ensure each domain element has the same tuple shape as the loop target",
+                )
             )
         for elt, v in zip(target.elts, value):
             _bind_into(elt, v, bindings)
         return
     raise ValueError(
-        f"astichi_for target must be a name or tuple of names; "
-        f"got {type(target).__name__}"
+        format_astichi_error(
+            "unroll",
+            f"astichi_for target must be a name or tuple of names; "
+            f"got {type(target).__name__}",
+            hint="use `for x in ...` or `for a, b in ...` with simple names",
+        )
     )
 
 
@@ -179,7 +208,21 @@ class _BodyValidator(ast.NodeVisitor):
         for stmt in body:
             self.visit(stmt)
         if self._errors:
-            raise ValueError("; ".join(self._errors))
+            # Use " | " so sub-messages are not confused with `; `-separated
+            # `format_astichi_error` fields (context / hint / …).
+            joined = " | ".join(self._errors)
+            raise ValueError(
+                format_astichi_error(
+                    "unroll",
+                    "astichi_for body validation failed",
+                    context=joined,
+                    hint=(
+                        "hoist boundary/import/bind/insert markers before the loop, "
+                        "or use a static marker name and vary values via `bind(...)` "
+                        "on the composable; rename loop variables instead of rebinding"
+                    ),
+                )
+            )
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if self._depth == 0:

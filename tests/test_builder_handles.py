@@ -161,7 +161,10 @@ def test_builder_add_keep_names_pins_identifier_through_merge() -> None:
 def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
     piece = astichi.compile("value = 1\n")
     builder = astichi.build()
-    with pytest.raises(ValueError, match=r"no __astichi_arg__ / astichi_import slot named `missing`"):
+    with pytest.raises(
+        ValueError,
+        match=r"materialize: no __astichi_arg__ / astichi_import slot named `missing`",
+    ):
         builder.add.A(piece, arg_names={"missing": "x"})
 
 
@@ -211,7 +214,7 @@ def test_descendant_target_handle_rejects_unknown_registered_path() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"unknown descendant path `Pipeline\.Missing`",
+        match=r"build: unknown descendant path `Pipeline\.Missing`",
     ):
         _ = stage2.Pipeline.Missing.body
 
@@ -229,7 +232,7 @@ def test_deep_target_add_rejects_unknown_leaf_in_registered_shell() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"unknown target site `Pipeline\.Inner\.missing`",
+        match=r"build: unknown target site `Pipeline\.Inner\.missing`",
     ):
         stage2.Pipeline.Inner.missing.add.Step()
 
@@ -243,7 +246,9 @@ def test_builder_add_rejects_duplicate_descendant_refs_in_reused_build() -> None
     built = stage1.build()
 
     stage2 = astichi.build()
-    with pytest.raises(ValueError, match=r"reused build refs must be unique"):
+    with pytest.raises(
+        ValueError, match=r"build: instance .* ambiguous descendant ref"
+    ):
         stage2.add.Pipeline(built)
 
 

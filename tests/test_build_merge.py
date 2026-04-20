@@ -151,7 +151,7 @@ def test_build_merge_raw_graph_rejects_unknown_descendant_target_path() -> None:
         source_instance="Step",
     )
 
-    with pytest.raises(ValueError, match=r"unknown target path `Pipeline\.Missing`"):
+    with pytest.raises(ValueError, match=r"build: unknown target path `Pipeline\.Missing`"):
         build_merge(raw)
 
 
@@ -210,7 +210,7 @@ def test_build_updates_demand_and_supply_ports() -> None:
 def test_build_empty_graph_raises() -> None:
     builder = astichi.build()
 
-    with pytest.raises(ValueError, match="cannot build from empty graph"):
+    with pytest.raises(ValueError, match=r"build: cannot build from empty graph"):
         builder.build()
 
 
@@ -328,7 +328,7 @@ def test_unroll_false_with_indexed_edges_raises() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"unroll=False conflicts with indexed target edges.*A\.slot\[0\]",
+        match=r"build: unroll=False conflicts with indexed target edges.*A\.slot\[0\]",
     ):
         builder.build(unroll=False)
 
@@ -394,7 +394,7 @@ def test_invalid_unroll_value_raises() -> None:
     builder = astichi.build()
     builder.add.A(astichi.compile("x = 1\n"))
 
-    with pytest.raises(ValueError, match="unroll must be True, False, or 'auto'"):
+    with pytest.raises(ValueError, match=r"build: unroll must be True, False, or 'auto'"):
         builder.build(unroll="always")
 
 
@@ -496,7 +496,7 @@ def test_bind_fed_domain_unbound_rejected_by_unroll() -> None:
     builder.A.slot[0].add.B()
     with pytest.raises(
         ValueError,
-        match=r"astichi_for domain must be a literal tuple/list or range",
+        match=r"unroll: astichi_for domain must be a literal tuple/list or range",
     ):
         builder.build()
 

@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 
 from astichi.ast_provenance import propagate_ast_source_locations
+from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.builder.graph import (
     AdditiveEdge,
     AssignBinding,
@@ -203,9 +204,13 @@ def _validate_indexed_targets(
             continue
         addr = _format_target_address(origin_edge)
         raise ValueError(
-            f"indexed target {addr} has no matching astichi_hole "
-            f"(expected synthetic name {root}.{effective_name}); "
-            "index may be out of range or target was not unrolled"
+            format_astichi_error(
+                "materialize",
+                f"indexed target {addr} has no matching astichi_hole "
+                f"(expected synthetic name {root}.{effective_name}); "
+                "index may be out of range or target was not unrolled",
+                hint="enable unroll for indexed edges or fix the hole name / index",
+            )
         )
 
 
@@ -223,15 +228,23 @@ def _apply_assign_bindings(
         src = instance_records.get(binding.source_instance)
         if src is None:
             raise ValueError(
-                f"builder.assign refers to unknown source instance "
-                f"`{binding.source_instance}`"
+                format_astichi_error(
+                    "materialize",
+                    f"builder.assign refers to unknown source instance "
+                    f"`{binding.source_instance}`",
+                    hint="register the source instance with `builder.add` before `assign`",
+                )
             )
         dst = instance_records.get(binding.target_instance)
         if dst is None:
             raise ValueError(
-                f"builder.assign refers to unknown target instance "
-                f"`{binding.target_instance}` "
-                f"(from {binding.source_instance}.{binding.inner_name})"
+                format_astichi_error(
+                    "materialize",
+                    f"builder.assign refers to unknown target instance "
+                    f"`{binding.target_instance}` "
+                    f"(from {binding.source_instance}.{binding.inner_name})",
+                    hint="register the target instance with `builder.add` before resolving assign",
+                )
             )
         piece = src.composable
         if not isinstance(piece, BasicComposable):
@@ -256,9 +269,13 @@ def _apply_assign_bindings(
             binding.outer_name not in collect_identifier_suppliers_in_body(target_body)
         ):
             raise ValueError(
-                "no readable supplier named "
-                f"`{binding.outer_name}` at "
-                f"`{format_instance_leaf(binding.target_instance, target_ref_path, binding.outer_name)}`"
+                format_astichi_error(
+                    "materialize",
+                    "no readable supplier named "
+                    f"`{binding.outer_name}` at "
+                    f"`{format_instance_leaf(binding.target_instance, target_ref_path, binding.outer_name)}`",
+                    hint="publish the name with `astichi_export` or an assignable value at that path",
+                )
             )
         if target_ref_path:
             alias_key = (
@@ -298,9 +315,13 @@ def _apply_assign_bindings(
         local_demands = collect_identifier_demands_in_body(source_body)
         if binding.inner_name not in local_demands:
             raise ValueError(
-                f"no __astichi_arg__ / astichi_import slot named "
-                f"`{binding.inner_name}` at "
-                f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`"
+                format_astichi_error(
+                    "materialize",
+                    f"no __astichi_arg__ / astichi_import slot named "
+                    f"`{binding.inner_name}` at "
+                    f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`",
+                    hint="declare the slot in the source snippet or fix the path on `assign`",
+                )
             )
         _rewrite_identifier_demands_in_body(
             source_body,
@@ -418,10 +439,20 @@ def build_merge(
     - ``False``: do not unroll; reject if any edge has a non-empty path.
     """
     if not graph.instances:
-        raise ValueError("cannot build from empty graph")
+        raise ValueError(
+            format_astichi_error(
+                "build",
+                "cannot build from empty graph",
+                hint="register at least one instance with `builder.add.<Name>(...)`",
+            )
+        )
     if unroll not in (True, False, "auto"):
         raise ValueError(
-            f"unroll must be True, False, or 'auto'; got {unroll!r}"
+            format_astichi_error(
+                "build",
+                f"unroll must be True, False, or 'auto'; got {unroll!r}",
+                hint="pass `unroll=True`, `unroll=False`, or use the default `unroll='auto'`",
+            )
         )
 
     has_indexed_edges = any(e.target.path for e in graph.edges)
@@ -434,8 +465,12 @@ def build_merge(
             }
         )
         raise ValueError(
-            "unroll=False conflicts with indexed target edges: "
-            + ", ".join(offenders)
+            format_astichi_error(
+                "build",
+                "unroll=False conflicts with indexed target edges: "
+                + ", ".join(offenders),
+                hint="use `unroll=True` or `'auto'` when wiring indexed `slot[i]` targets",
+            )
         )
     do_unroll = (unroll is True) or (unroll == "auto" and has_indexed_edges)
 
@@ -511,8 +546,13 @@ def build_merge(
                 not in collect_hole_names_in_body(target_shell.body)
             ):
                 raise ValueError(
-                    f"unknown target site "
-                    f"`{format_instance_leaf(inst_name, target_ref_path, effective_target_name)}`"
+                    format_astichi_error(
+                        "materialize",
+                        f"unknown target site "
+                        f"`{format_instance_leaf(inst_name, target_ref_path, effective_target_name)}`",
+                        context=f"instance {inst_name!r}",
+                        hint=default_build_path_hint(),
+                    )
                 )
             target_record = instance_records[inst_name]
             target_port = _lookup_demand_port(
@@ -544,17 +584,25 @@ def build_merge(
                         and _has_authored_expression_insert_source(source_tree, raw_target_name)
                     ):
                         raise ValueError(
-                            "legacy user-authored astichi_insert(target, expr) "
-                            "is not supported for call-argument targets; use "
-                            "astichi_funcargs(...)"
+                            format_astichi_error(
+                                "materialize",
+                                "legacy user-authored astichi_insert(target, expr) "
+                                "is not supported for call-argument targets; use "
+                                "astichi_funcargs(...)",
+                                hint="wrap payload items with `astichi_funcargs(...)` for call-argument holes",
+                            )
                         )
                     expr_source_ok = (
                         source_port is not None and source_port.placement == "expr"
                     ) or (source_port is None and implicit_expr_supply)
                     if not expr_source_ok:
                         raise ValueError(
-                            f"source instance {edge.source_instance} cannot satisfy "
-                            f"expression target {inst_name}.{effective_target_name}"
+                            format_astichi_error(
+                                "materialize",
+                                f"source instance {edge.source_instance} cannot satisfy "
+                                f"expression target {inst_name}.{effective_target_name}",
+                                hint="supply an expression-shaped source or an implicit expression after boundary markers",
+                            )
                         )
                     inserts.extend(
                         _extract_expression_inserts(
@@ -647,9 +695,13 @@ def build_merge(
         for key, value in record.composable.arg_bindings:
             if key in merged_arg_bindings and merged_arg_bindings[key] != value:
                 raise ValueError(
-                    f"conflicting identifier-arg resolutions for `{key}`: "
-                    f"`{merged_arg_bindings[key]}` vs `{value}` across "
-                    "merged instances"
+                    format_astichi_error(
+                        "materialize",
+                        f"conflicting identifier-arg resolutions for `{key}`: "
+                        f"`{merged_arg_bindings[key]}` vs `{value}` across "
+                        "merged instances",
+                        hint="use consistent `bind_identifier` / compile `arg_names` across merged roots",
+                    )
                 )
             merged_arg_bindings[key] = value
         merged_keep_names.update(record.composable.keep_names)
@@ -773,7 +825,7 @@ def _make_block_insert_shell(
         keywords=keywords,
     )
     if ref_path is not None:
-        set_insert_ref(decorator, ref_path)
+        set_insert_ref(decorator, ref_path, phase="materialize")
     shell = ast.FunctionDef(
         name=shell_name,
         args=ast.arguments(
@@ -931,7 +983,7 @@ def _synthetic_root_scope_shell(
     shell = body[1]
     if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
-    info = extract_block_insert_shell(shell)
+    info = extract_block_insert_shell(shell, phase="materialize")
     if info is None or info.target_name != hole_name:
         return None
     return shell
@@ -1027,8 +1079,12 @@ def _extract_expression_inserts(
         if not isinstance(stmt, ast.Expr):
             if _contains_top_level_expression_insert(stmt):
                 raise ValueError(
-                    f"source instance {source_instance} has non-expression-statement "
-                    "insert wrappers at top level"
+                    format_astichi_error(
+                        "materialize",
+                        f"source instance {source_instance} has non-expression-statement "
+                        "insert wrappers at top level",
+                        hint="use only expression-level `astichi_insert` for expression targets",
+                    )
                 )
             continue
         if not isinstance(stmt.value, ast.Call):
@@ -1064,8 +1120,12 @@ def _extract_expression_inserts(
         ]
 
     raise ValueError(
-        f"source instance {source_instance} cannot satisfy expression target "
-        f"{target_name}: no matching astichi_insert(...) wrappers found"
+        format_astichi_error(
+            "materialize",
+            f"source instance {source_instance} cannot satisfy expression target "
+            f"{target_name}: no matching astichi_insert(...) wrappers found",
+            hint="add `astichi_insert({target_name}, expr)` (or implicit expression) in the source body",
+        )
     )
 
 
@@ -1137,7 +1197,13 @@ def _extract_insert_order(node: ast.Call) -> int:
         if not isinstance(keyword.value, ast.Constant) or not isinstance(
             keyword.value.value, int
         ):
-            raise ValueError("astichi_insert order must be an integer constant")
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    "astichi_insert order must be an integer constant",
+                    hint="use `order=0` with a literal int",
+                )
+            )
         return keyword.value.value
     return 0
 
@@ -1199,7 +1265,11 @@ def _validate_dstar_region_inserts(
         if insert.payload is None:
             if not isinstance(insert.expr, ast.Dict):
                 raise ValueError(
-                    f"named variadic target {hole_name} requires dict-display expression inserts"
+                    format_astichi_error(
+                        "materialize",
+                        f"named variadic target {hole_name} requires dict-display expression inserts",
+                        hint="use `astichi_insert(hole, {{...}})` with a dict literal payload",
+                    )
                 )
             continue
         validate_payload_for_region(
@@ -1282,7 +1352,11 @@ class _HoleReplacementTransformer(
             inserts = self.expr_replacements[hole_name]
             if len(inserts) != 1:
                 raise ValueError(
-                    f"scalar expression target {hole_name} accepts at most one insert"
+                    format_astichi_error(
+                        "materialize",
+                        f"scalar expression target {hole_name} accepts at most one insert",
+                        hint="wire only one edge into a scalar expression hole",
+                    )
                 )
             return _make_expression_insert_call(
                 hole_name, inserts[0].expr, location_donor=node
@@ -1386,7 +1460,11 @@ class _HoleReplacementTransformer(
             for insert in self.expr_replacements[hole_name]:
                 if not isinstance(insert.expr, ast.Dict):
                     raise ValueError(
-                        f"named variadic target {hole_name} requires dict-display expression inserts"
+                        format_astichi_error(
+                            "materialize",
+                            f"named variadic target {hole_name} requires dict-display expression inserts",
+                            hint="use `astichi_insert(hole, {{...}})` with a dict literal payload",
+                        )
                     )
                 expanded.append(
                     ast.keyword(
@@ -1408,7 +1486,11 @@ class _HoleReplacementTransformer(
                 for insert in self.expr_replacements[hole_name]:
                     if not isinstance(insert.expr, ast.Dict):
                         raise ValueError(
-                            f"named variadic target {hole_name} requires dict-display expression inserts"
+                            format_astichi_error(
+                                "materialize",
+                                f"named variadic target {hole_name} requires dict-display expression inserts",
+                                hint="use `astichi_insert(hole, {{...}})` with a dict literal payload",
+                            )
                         )
                     new_keys.append(None)
                     new_values.append(
@@ -1456,8 +1538,12 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
             payload_expr = node.args[1]
             if is_astichi_funcargs_call(payload_expr):
                 raise ValueError(
-                    "astichi_funcargs payload wrapper must be realized in a call "
-                    "argument position"
+                    format_astichi_error(
+                        "materialize",
+                        "astichi_funcargs payload wrapper must be realized in a call "
+                        "argument position",
+                        hint="keep `astichi_funcargs` inside a call's arg list, not a bare statement",
+                    )
                 )
             return self.visit(copy.deepcopy(payload_expr))
 
@@ -1545,13 +1631,21 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
             expr = copy.deepcopy(node.value.args[1])
             if not isinstance(expr, ast.Dict):
                 raise ValueError(
-                    "named variadic expression inserts require dict-display payloads"
+                    format_astichi_error(
+                        "materialize",
+                        "named variadic expression inserts require dict-display payloads",
+                        hint="use a dict display `{k: v, ...}` as the insert payload",
+                    )
                 )
             expanded: list[ast.keyword] = []
             for key, value in zip(expr.keys, expr.values, strict=True):
                 if key is None or not isinstance(key, ast.Name):
                     raise ValueError(
-                        "named variadic keyword expansion requires identifier keys"
+                        format_astichi_error(
+                            "materialize",
+                            "named variadic keyword expansion requires identifier keys",
+                            hint="use `{{name: expr}}` with bare identifier keys",
+                        )
                     )
                 expanded.append(
                     ast.keyword(
@@ -1574,7 +1668,11 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 expr = copy.deepcopy(value.args[1])
                 if not isinstance(expr, ast.Dict):
                     raise ValueError(
-                        "named variadic dict expansion requires dict-display payloads"
+                        format_astichi_error(
+                            "materialize",
+                            "named variadic dict expansion requires dict-display payloads",
+                            hint="use a dict literal inside the insert for `**` expansion",
+                        )
                     )
                 for insert_key, insert_value in zip(expr.keys, expr.values, strict=True):
                     new_keys.append(
@@ -1634,7 +1732,13 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     ]
     if mandatory_holes:
         names = ", ".join(port.name for port in mandatory_holes)
-        raise ValueError(f"mandatory holes remain unresolved: {names}")
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                f"mandatory holes remain unresolved: {names}",
+                hint="wire each hole with `builder` edges or fill `astichi_hole` targets before materialize",
+            )
+        )
     mandatory_binds = [
         port for port in composable.demand_ports if "bind_external" in port.sources
     ]
@@ -1642,13 +1746,21 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         if len(mandatory_binds) == 1:
             name = mandatory_binds[0].name
             raise ValueError(
-                f"external binding for `{name}` was not supplied; "
-                f"call composable.bind({name}=...) before materializing."
+                format_astichi_error(
+                    "materialize",
+                    f"external binding for `{name}` was not supplied; "
+                    f"call composable.bind({name}=...) before materializing.",
+                    hint="use `composable.bind(...)` to supply `astichi_bind_external` values",
+                )
             )
         names = ", ".join(port.name for port in mandatory_binds)
         raise ValueError(
-            "external bindings were not supplied: "
-            f"{names}; call composable.bind(...) before materializing."
+            format_astichi_error(
+                "materialize",
+                "external bindings were not supplied: "
+                f"{names}; call composable.bind(...) before materializing.",
+                hint="pass every required `astichi_bind_external` name to `bind(...)`",
+            )
         )
 
     arg_bindings = dict(composable.arg_bindings)
@@ -1669,8 +1781,12 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
                 f"{name}__astichi_arg__ at line(s) {rendered_lines}"
             )
         raise ValueError(
-            "unresolved identifier-arg slots (call .bind_identifier(...) "
-            "or wire the arg before materialize): " + "; ".join(parts)
+            format_astichi_error(
+                "materialize",
+                "unresolved identifier-arg slots (call .bind_identifier(...) "
+                "or wire the arg before materialize): " + "; ".join(parts),
+                hint="use `bind_identifier` or compile-time `arg_names=` for each `__astichi_arg__` slot",
+            )
         )
 
     unmatched_block_shells = _find_unmatched_block_insert_shells(composable.tree)
@@ -1688,9 +1804,13 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
                 f"matching astichi_hole({name}) expression in the tree"
             )
         raise ValueError(
-            "unmatched astichi_insert supplies; every insert must point "
-            "at an extant hole before materialize runs hygiene: "
-            + "; ".join(parts)
+            format_astichi_error(
+                "materialize",
+                "unmatched astichi_insert supplies; every insert must point "
+                "at an extant hole before materialize runs hygiene: "
+                + "; ".join(parts),
+                hint="add a matching `astichi_hole(name)` for each `astichi_insert(name, ...)`",
+            )
         )
 
     tree = copy.deepcopy(composable.tree)
@@ -1800,7 +1920,7 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
         def _prefix_node(
             self, node: ast.FunctionDef | ast.AsyncFunctionDef
         ) -> None:
-            info = extract_block_insert_shell(node)
+            info = extract_block_insert_shell(node, phase="materialize")
             if info is None or info.ref_path is None:
                 return
             for decorator in node.decorator_list:
@@ -1809,7 +1929,7 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
                     and isinstance(decorator.func, ast.Name)
                     and decorator.func.id == "astichi_insert"
                 ):
-                    prefix_insert_ref(decorator, prefix)
+                    prefix_insert_ref(decorator, prefix, phase="materialize")
                     return
 
     prefixer = _ShellRefPrefixer()
@@ -1843,7 +1963,7 @@ def _replace_targets_in_tree(
                 expr_replacements=local_expr,
             )
         for stmt in body:
-            info = extract_block_insert_shell(stmt)
+            info = extract_block_insert_shell(stmt, phase="materialize")
             if info is None or not isinstance(
                 stmt, (ast.FunctionDef, ast.AsyncFunctionDef)
             ):
@@ -1880,7 +2000,7 @@ def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
                 hole_name = _extract_hole_name(stmt)
                 if hole_name is not None:
                     holes.add(hole_name)
-                info = extract_block_insert_shell(stmt)
+                info = extract_block_insert_shell(stmt, phase="materialize")
                 if info is not None:
                     lineno = getattr(stmt, "lineno", 0) or 0
                     shells.append((info.target_name, lineno))
@@ -1958,7 +2078,7 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                 hole_name = _extract_hole_name(stmt)
                 if hole_name is not None:
                     holes.add(hole_name)
-                info = extract_block_insert_shell(stmt)
+                info = extract_block_insert_shell(stmt, phase="materialize")
                 if info is not None:
                     shells.add(info.target_name)
             matched.update(holes & shells)
@@ -2423,7 +2543,7 @@ def _flatten_body_splices(body: list[ast.stmt]) -> list[ast.stmt]:
     """Splice sibling `astichi_insert` shells into their matching hole positions."""
     shells_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]] = {}
     for index, stmt in enumerate(body):
-        info = extract_block_insert_shell(stmt)
+        info = extract_block_insert_shell(stmt, phase="materialize")
         if info is None:
             continue
         target = info.target_name

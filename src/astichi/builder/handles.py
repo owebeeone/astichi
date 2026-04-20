@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.builder.graph import (
     AdditiveEdge,
     AssignBinding,
@@ -210,7 +211,11 @@ class _NamedTargetAdder:
             record = self.graph._instances.get(self.source_instance)
             if record is None:
                 raise ValueError(
-                    f"unknown source instance: {self.source_instance}"
+                    format_astichi_error(
+                        "build",
+                        f"unknown source instance: {self.source_instance}",
+                        hint="register the instance with `builder.add.<Name>(...)` before wiring edges",
+                    )
                 )
             piece = record.composable
             if not isinstance(piece, BasicComposable):
@@ -304,7 +309,14 @@ def _validate_registered_target_site(
     )
     if target.target_name in collect_hole_names_in_body(shell.body):
         return
-    raise ValueError(f"unknown target site `{_format_target_address(target)}`")
+    raise ValueError(
+        format_astichi_error(
+            "build",
+            f"unknown target site `{_format_target_address(target)}`",
+            context=f"root instance {target.root_instance!r}",
+            hint=default_build_path_hint(),
+        )
+    )
 
 
 def _validate_registered_identifier_demand(
@@ -324,9 +336,13 @@ def _validate_registered_identifier_demand(
     if inner_name in collect_identifier_demands_in_body(shell.body):
         return
     raise ValueError(
-        "no __astichi_arg__ / astichi_import slot named "
-        f"`{inner_name}` at "
-        f"`{format_instance_leaf(instance_name, ref_path, inner_name)}`"
+        format_astichi_error(
+            "build",
+            "no __astichi_arg__ / astichi_import slot named "
+            f"`{inner_name}` at "
+            f"`{format_instance_leaf(instance_name, ref_path, inner_name)}`",
+            hint="declare the slot in the source snippet or fix the descendant path",
+        )
     )
 
 
@@ -349,9 +365,13 @@ def _validate_registered_identifier_supplier(
     if outer_name in collect_identifier_suppliers_in_body(shell.body):
         return
     raise ValueError(
-        "no readable supplier named "
-        f"`{outer_name}` at "
-        f"`{format_instance_leaf(instance_name, ref_path, outer_name)}`"
+        format_astichi_error(
+            "build",
+            "no readable supplier named "
+            f"`{outer_name}` at "
+            f"`{format_instance_leaf(instance_name, ref_path, outer_name)}`",
+            hint="publish the name with `astichi_export(...)` or an assignable slot at that path",
+        )
     )
 
 
@@ -368,17 +388,25 @@ class _CommittedAssignBinding:
             raise AttributeError(name)
         self._rollback_if_needed()
         raise ValueError(
-            "assign target path cannot continue after final outer name "
-            f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`"
+            format_astichi_error(
+                "build",
+                "assign target path cannot continue after final outer name "
+                f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`",
+                hint="stop chaining after the published outer identifier name",
+            )
         )
 
     def __getitem__(self, key: int | tuple[int, ...]) -> None:
         del key
         self._rollback_if_needed()
         raise ValueError(
-            "assign target identifier paths may not continue with index segments "
-            "after final outer name "
-            f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`"
+            format_astichi_error(
+                "build",
+                "assign target identifier paths may not continue with index segments "
+                "after final outer name "
+                f"`{format_instance_leaf(self.binding.target_instance, self.binding.target_ref_path, self.binding.outer_name)}`",
+                hint="use only further name segments after the outer identifier in `assign` paths",
+            )
         )
 
     def _rollback_if_needed(self) -> None:
@@ -410,7 +438,11 @@ class _AssignTargetHandle:
             raise TypeError("target path indexes must be integers")
         if not self.target_ref_path:
             raise ValueError(
-                "assign target descendant paths may not start with index segments"
+                format_astichi_error(
+                    "build",
+                    "assign target descendant paths may not start with index segments",
+                    hint="name the first shell segment before indexing (e.g. `to().Foo[0].bar`)",
+                )
             )
         candidate_ref = normalize_ref_path(self.target_ref_path + items)
         shell_index = _registered_shell_index(self.graph, self.target_instance)
@@ -551,7 +583,13 @@ class _AssignSourceReady:
             inner_name=self.inner_name,
         )
         if self.leaf_path:
-            raise ValueError("assign identifier paths may not end with index segments")
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    "assign identifier paths may not end with index segments",
+                    hint="end the path on the outer identifier name, not `[i]`",
+                )
+            )
         return _AssignTargetPicker(
             graph=self.graph,
             source_instance=self.source_instance,

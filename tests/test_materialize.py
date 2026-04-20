@@ -20,7 +20,9 @@ def test_materialize_produces_valid_composable() -> None:
 def test_materialize_rejects_unresolved_holes() -> None:
     compiled = astichi.compile("astichi_hole(body)\n")
 
-    with pytest.raises(ValueError, match="mandatory holes remain unresolved: body"):
+    with pytest.raises(
+        ValueError, match=r"materialize: mandatory holes remain unresolved: body"
+    ):
         compiled.materialize()
 
 
@@ -29,7 +31,7 @@ def test_materialize_rejects_unresolved_bind_external_demands() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"external binding for `fields` was not supplied; call composable.bind\(fields=\.\.\.\) before materializing\.",
+        match=r"materialize: external binding for `fields` was not supplied; call composable.bind\(fields=\.\.\.\) before materializing\.",
     ):
         compiled.materialize()
 
@@ -314,7 +316,10 @@ def step__astichi_arg__():
     return 1
 """,
     )
-    with pytest.raises(ValueError, match=r"no __astichi_arg__ / astichi_import slot named `missing`"):
+    with pytest.raises(
+        ValueError,
+        match=r"materialize: no __astichi_arg__ / astichi_import slot named `missing`",
+    ):
         compiled.bind_identifier(missing="x")
 
 
@@ -325,7 +330,9 @@ def step__astichi_arg__():
     return 1
 """,
     ).bind_identifier(step="first")
-    with pytest.raises(ValueError, match=r"cannot re-bind identifier arg `step`"):
+    with pytest.raises(
+        ValueError, match=r"materialize: cannot re-bind identifier arg `step`"
+    ):
         compiled.bind_identifier(step="second")
 
 

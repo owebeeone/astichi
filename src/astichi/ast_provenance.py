@@ -19,13 +19,16 @@ import ast
 from collections.abc import Iterator
 from typing import TypeGuard
 
-_AST_LOCATION_TYPES: tuple[type, ...] = (
+# `ast.type_param` exists on Python 3.12+; omit when absent (e.g. older runtimes).
+_located: list[type] = [
     ast.stmt,
     ast.expr,
     ast.excepthandler,
     ast.pattern,
-    ast.type_param,
-)
+]
+if hasattr(ast, "type_param"):
+    _located.append(ast.type_param)
+_AST_LOCATION_TYPES: tuple[type, ...] = tuple(_located)
 
 
 def requires_ast_source_location(node: ast.AST) -> bool:

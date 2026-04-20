@@ -7,6 +7,8 @@ import base64
 import pickle
 import zlib
 
+from astichi.diagnostics import format_astichi_error
+
 PROVENANCE_PREFIX = "# astichi-provenance: "
 
 
@@ -55,7 +57,14 @@ def verify_round_trip(source: str) -> None:
     """Verify emitted source re-parses to match its embedded provenance."""
     provenance_tree = extract_provenance(source)
     if provenance_tree is None:
-        raise RoundTripError("source has no embedded provenance comment")
+        raise RoundTripError(
+            format_astichi_error(
+                "emit",
+                "source has no embedded provenance comment",
+                provenance="append `# astichi-provenance:` with `emit(provenance=True)`",
+                hint="use `from astichi.emit import extract_provenance` to inspect the trailer",
+            )
+        )
 
     source_lines = [
         line
@@ -69,6 +78,10 @@ def verify_round_trip(source: str) -> None:
     actual = ast.dump(reparsed)
     if expected != actual:
         raise RoundTripError(
-            f"round-trip mismatch:\n  expected: {expected[:200]}\n"
-            f"  actual:   {actual[:200]}"
+            format_astichi_error(
+                "emit",
+                "round-trip mismatch between emitted source and embedded provenance AST",
+                provenance="compare `extract_provenance(source)` with `ast.parse` of the emitted body",
+                hint=f"expected dump prefix: {expected[:200]!r}; actual: {actual[:200]!r}",
+            )
         )
