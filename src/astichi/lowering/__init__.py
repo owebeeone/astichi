@@ -24,6 +24,11 @@ from astichi.lowering.boundaries import (
     validate_boundary_marker_placement,
 )
 from astichi.lowering.external_bind import apply_external_bindings
+from astichi.lowering.external_ref import (
+    apply_external_ref_lowering,
+    desugar_external_ref_kwargs,
+    validate_external_ref_surface,
+)
 from astichi.lowering.markers import (
     MARKERS_BY_NAME,
     MarkerSpec,
@@ -46,7 +51,9 @@ __all__ = [
     "RecognizedMarker",
     "StarredFuncArgItem",
     "apply_external_bindings",
+    "apply_external_ref_lowering",
     "collect_payload_local_directives",
+    "desugar_external_ref_kwargs",
     "direct_funcargs_directive_calls",
     "extract_funcargs_payload",
     "group_markers_by_astichi_scope",
@@ -57,5 +64,6 @@ __all__ = [
     "validate_call_argument_payload_surface",
     "validate_boundary_interaction_matrix",
     "validate_boundary_marker_placement",
+    "validate_external_ref_surface",
     "validate_payload_for_region",
 ]

@@ -8,7 +8,9 @@ from collections.abc import Iterable, Mapping
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
 from astichi.lowering import (
+    desugar_external_ref_kwargs,
     validate_call_argument_payload_surface,
+    validate_external_ref_surface,
     recognize_markers,
     validate_boundary_interaction_matrix,
     validate_boundary_marker_placement,
@@ -94,6 +96,8 @@ def compile(
     # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
     validate_call_argument_payload_surface(tree)
+    desugar_external_ref_kwargs(tree)
+    validate_external_ref_surface(tree)
     markers = recognize_markers(tree)
     # Issue 006 6b: reject forbidden per-scope marker combinations
     # (e.g. `import + pass` on the same name) before continuing.

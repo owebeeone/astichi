@@ -1,6 +1,23 @@
 # Astichi V3 addendum: external reference bind
 
-Status: design addendum for V3.
+Status: implemented.
+
+Implementation:
+
+- `astichi/src/astichi/lowering/external_ref.py`
+  — desugar (`desugar_external_ref_kwargs`), surface validation
+    (`validate_external_ref_surface`), and the materialize-time pass
+    (`apply_external_ref_lowering`).
+- `astichi/src/astichi/lowering/markers.py` — registers the `REF`
+  marker and validates the call shape at recognition time.
+- `astichi/src/astichi/frontend/api.py` — runs the desugar +
+  surface validator at `compile()` time so the inner
+  `astichi_bind_external` site flows through the normal port
+  machinery.
+- `astichi/src/astichi/materialize/api.py` — invokes
+  `apply_external_ref_lowering` after `bind()` substitutions and
+  unroll have run, before hygiene.
+- Tests: `astichi/tests/test_external_ref.py`.
 
 This note defines a small expression-only surface for supplying Python
 references, including dotted references, from external bind values or other

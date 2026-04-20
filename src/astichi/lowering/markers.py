@@ -351,6 +351,55 @@ class _FuncArgsMarker(MarkerSpec):
             raise TypeError("astichi_funcargs must be recognized from an ast.Call")
 
 
+class _RefMarker(MarkerSpec):
+    """`astichi_ref(value)` — value-form reference path lowering.
+
+    See `AstichiV3ExternalRefBind.m4` and `apply_external_ref_lowering`
+    in `lowering.external_ref` for the lowering pass.
+    """
+
+    source_name = "astichi_ref"
+
+    def is_payload_carrier(self) -> bool:
+        return True
+
+    def is_permitted_in_unroll_body(self) -> bool:
+        return True
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError("astichi_ref must be recognized from an ast.Call")
+        positional = len(node.args)
+        keywords = list(node.keywords)
+        if positional == 0 and not keywords:
+            raise ValueError("astichi_ref(...) requires either a positional value or external=name")
+        if positional > 1:
+            raise ValueError("astichi_ref(...) accepts at most one positional argument")
+        # Only `external=` is recognised as a keyword; reject other kwargs.
+        for keyword in keywords:
+            if keyword.arg != "external":
+                raise ValueError(
+                    f"astichi_ref(...) does not accept keyword `{keyword.arg}`; "
+                    "only `external=name` is allowed"
+                )
+        if any(kw.arg is None for kw in keywords):
+            raise ValueError("astichi_ref(...) does not accept **kwargs")
+        if positional == 1 and any(kw.arg == "external" for kw in keywords):
+            raise ValueError(
+                "astichi_ref(...) accepts either a positional argument or "
+                "`external=name`, not both"
+            )
+        # `external=` must point at a bare identifier.
+        for keyword in keywords:
+            if keyword.arg == "external":
+                if not isinstance(keyword.value, ast.Name):
+                    raise ValueError(
+                        "astichi_ref(external=...) must reference a bare "
+                        "identifier (the name of an external bind slot); "
+                        f"got {type(keyword.value).__name__}"
+                    )
+
+
 HOLE = _HoleMarker()
 BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
 BIND_SHARED = _SimpleMarker(
@@ -384,6 +433,7 @@ EXPORT = _SimpleMarker(
 FOR = _SimpleMarker("astichi_for", positional_args=1)
 FUNCARGS = _FuncArgsMarker()
 INSERT = _InsertMarker()
+REF = _RefMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
 # Issue 006 §9.2: `astichi_import(name)` imports an outer-scope
@@ -426,6 +476,7 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     FOR,
     FUNCARGS,
     INSERT,
+    REF,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,
     IMPORT,

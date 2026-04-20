@@ -24,6 +24,8 @@ astichi_keep(name)
 astichi_export(name)
 astichi_for(domain)
 astichi_funcargs(...)
+astichi_ref(value)
+astichi_ref(external=name)
 @astichi_insert(target, order=…, ref=…)
 ```
 
@@ -35,6 +37,17 @@ Call-argument note:
   or `(value := 2, value)`; build/merge normalizes it internally
 - expression-form `astichi_insert(target, expr)` is internal normalization
   metadata, not an authored user surface
+
+Reference-path note:
+
+- `astichi_ref(value)` is the authored value-form reference surface; it lowers
+  a compile-time path string (e.g. `"self.f0"` or `"pkg.mod.attr"`) into the
+  corresponding `Name` / `Attribute` AST at materialize time
+- `astichi_ref(external=name)` is sugar for
+  `astichi_ref(astichi_bind_external(name))` and surfaces the inner bind site
+  as a normal demand port
+- `astichi_ref(...).astichi_v` (or the `._` shorthand) wraps the value form so
+  it is grammatically legal as an `Assign` / `AugAssign` / `Delete` target
 
 ## Identifier arguments
 
@@ -49,6 +62,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Holes, `*`, `**`, block position | [marker-holes.md](marker-holes.md) |
 | Binds and exports | [marker-binds-and-exports.md](marker-binds-and-exports.md) |
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
+| Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
 
 Unsupported starred / double-starred contexts are **hard errors** in V1.

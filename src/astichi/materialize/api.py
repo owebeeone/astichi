@@ -39,6 +39,7 @@ from astichi.lowering.markers import (
     KEEP_IDENTIFIER,
     strip_identifier_suffix,
 )
+from astichi.lowering.external_ref import apply_external_ref_lowering
 from astichi.lowering.unroll import iter_target_name, unroll_tree
 from astichi.model.basic import BasicComposable
 from astichi.model.origin import CompileOrigin
@@ -1670,6 +1671,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         # still have matched `__astichi_arg__` above, or they may
         # surface as a validation error at compile-time).
         _resolve_boundary_imports(tree, arg_bindings)
+    apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
     pinned_targets = frozenset(arg_bindings.values())
     marker_keep_names = frozenset(
