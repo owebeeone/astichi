@@ -11,7 +11,7 @@
 | [marker-overview.md](marker-overview.md) | Marker list + links |
 | [marker-holes.md](marker-holes.md) | `astichi_hole`, `*`, `**`, block sites |
 | [marker-binds-and-exports.md](marker-binds-and-exports.md) | `bind_*`, `export` |
-| [marker-for-and-insert.md](marker-for-and-insert.md) | `astichi_for`, `astichi_funcargs`, `@astichi_insert` |
+| [marker-for-and-insert.md](marker-for-and-insert.md) | `astichi_for`, `astichi_funcargs`, internal insert metadata |
 | [marker-ref.md](marker-ref.md) | `astichi_ref` (reference-path values + §3a sentinel LHS) |
 | [marker-keep.md](marker-keep.md) | `astichi_keep` |
 | [materialize-and-emit.md](materialize-and-emit.md) | `materialize`, `emit`, provenance |

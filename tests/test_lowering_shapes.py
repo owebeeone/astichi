@@ -81,7 +81,8 @@ def test_decorator_marker_shape_is_not_inferred_as_call_site_shape() -> None:
 @astichi_insert(target_slot)
 def insert_block():
     return 1
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     insert_marker = compiled.markers[0]
@@ -94,7 +95,8 @@ def test_expression_insert_is_recognized_as_call_context() -> None:
     compiled = astichi.compile(
         """
 value = astichi_insert(target_slot, 42)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
@@ -109,7 +111,8 @@ def test_expression_insert_with_order_keyword() -> None:
     compiled = astichi.compile(
         """
 value = astichi_insert(target_slot, some_expr, order=10)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
@@ -122,7 +125,8 @@ def test_expression_insert_standalone_statement_is_scalar_not_block() -> None:
     compiled = astichi.compile(
         """
 astichi_insert(target_slot, some_expr)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]
@@ -141,7 +145,8 @@ def inject_block():
     return 1
 
 value = astichi_insert(expr_target, 42)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     inserts = [m for m in compiled.markers if m.source_name == "astichi_insert"]

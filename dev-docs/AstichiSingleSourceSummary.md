@@ -38,7 +38,8 @@ items.
     materialize (runs after the gate, before hygiene) atomically
     substitutes every occurrence of a resolved slot; post-strip invariant
     asserts no `__astichi_arg__` survives. Public surface includes
-    `astichi.compile(source, *, arg_names=..., keep_names=...)`,
+    `astichi.compile(source, *, arg_names=..., keep_names=...,
+    source_kind=...)`,
     `BasicComposable.bind_identifier(**names)`,
     `BasicComposable.with_keep_names(...)`, and
     `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`; merge
@@ -202,15 +203,15 @@ There is still a docs/code drift on this format; see §9.4.
 | Marker / surface | Status | Notes |
 |---|---|---|
 | `astichi_hole(name)` | implemented | Demand port. Shape inferred from AST position. |
-| `@astichi_insert(name, order=...)` | implemented | Block-form supply. Must match a hole. |
+| `@astichi_insert(name, order=...)` | internal/emitted | Block-form supply metadata. Must match a hole. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
 | `astichi_funcargs(...)` | implemented | Authored call-argument payload surface. Lowered through generated internal placement wrappers. |
-| `astichi_insert(name, expr)` | legacy/internal | Rejected for call-argument targets. Still exists for non-call expression targets and as generated internal wrapper metadata. |
+| `astichi_insert(name, expr)` | internal/emitted | Generated placement metadata for expression targets. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
 | `astichi_keep(name)` | implemented | Pins lexical spelling; stripped during materialize. |
 | `astichi_export(name)` | implemented | Supply-side export; stripped during materialize. |
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
 | `astichi_for(domain)` | recognized only | Loop-unroll semantics not implemented yet. |
-| `astichi_bind_once(name, expr)` | recognized only | No active semantic owner in current V2 work. |
-| `astichi_bind_shared(name, expr)` | recognized only | No active semantic owner in current V2 work. |
+| `astichi_bind_once(name, expr)` | rejected | Reserved and obsolete; use ordinary Python assignment for single-evaluation reuse. |
+| `astichi_bind_shared(name, expr)` | rejected | Reserved and obsolete; use enclosing Python state plus boundary wiring for shared state. |
 | `name__astichi__` / `astichi_definitional_name` | legacy/incomplete | Current code recognizes it, but the real identifier-shape model is not done; see §9.2. |
 
 Important distinction:
@@ -288,8 +289,10 @@ Current materialize behavior that is already in place:
 - unresolved `astichi_bind_external(...)` rejects
 - unmatched block-form `@astichi_insert(name)` rejects
 - unmatched bare statement `astichi_insert(name, expr)` rejects
-- user-authored `astichi_insert(name, expr)` rejects when used to satisfy a
-  call-argument target; `astichi_funcargs(...)` is required there
+- user-authored `astichi_insert(...)` rejects in default
+  `source_kind="authored"` compile mode; `astichi_hole(...)` plus builder
+  wiring is the public composition surface, and `astichi_funcargs(...)` is the
+  authored call-argument payload surface
 - authored `astichi_funcargs(...)` lowers through generated internal
   `astichi_insert(...)` wrappers before realization
 - matched source-level inserts flatten into hole positions
@@ -610,8 +613,10 @@ This is low priority but should be resolved once, then left alone.
 
 ### 9.5 Recognized-only markers are a trap
 
-`astichi_bind_once`, `astichi_bind_shared`, `astichi_for`, and the legacy
-identifier marker surface are currently easy to over-read as “supported”.
+`astichi_for` and the legacy identifier marker surface are currently easy to
+over-read as “supported”. `astichi_bind_once` and `astichi_bind_shared` now
+reject at compile time because their old intended roles are covered by ordinary
+Python assignment and explicit boundary wiring.
 
 Do not silently expand semantics around them unless the summary document is
 updated and the new owner step is added to the plan.

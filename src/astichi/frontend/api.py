@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable, Mapping
+from typing import Literal
 
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
@@ -22,6 +23,9 @@ from astichi.model import (
     extract_demand_ports,
     extract_supply_ports,
 )
+
+
+SourceKind = Literal["authored", "astichi-emitted"]
 
 
 def _single_line_source(source: str) -> bool:
@@ -51,6 +55,7 @@ def compile(
     *,
     arg_names: Mapping[str, str] | None = None,
     keep_names: Iterable[str] | None = None,
+    source_kind: SourceKind = "authored",
 ) -> Composable:
     """Compile marker-bearing source into a composable.
 
@@ -63,7 +68,13 @@ def compile(
     `keep_names`: names the user pins as hygiene-preserved without
     rewriting source. Additive to any `__astichi_keep__` suffix sites
     found in `source`.
+
+    `source_kind`: defaults to `"authored"` for user-authored snippets.
+    The `"astichi-emitted"` mode is reserved for re-ingesting source emitted
+    by Astichi itself; it enables internal marker metadata such as
+    `astichi_insert(...)`.
     """
+    _validate_source_kind(source_kind)
     origin = CompileOrigin(
         file_name=file_name or "<astichi>",
         line_number=line_number,
@@ -92,6 +103,7 @@ def compile(
             ),
             filename=origin.file_name,
         )
+    _validate_authored_marker_surface(tree, source_kind=source_kind)
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
@@ -128,6 +140,37 @@ def compile(
     if validated_arg_bindings:
         return compiled.bind_identifier(dict(validated_arg_bindings))
     return compiled
+
+
+def _validate_source_kind(source_kind: str) -> None:
+    if source_kind not in {"authored", "astichi-emitted"}:
+        raise ValueError(
+            "source_kind must be 'authored' or 'astichi-emitted'; "
+            f"got {source_kind!r}"
+        )
+
+
+def _validate_authored_marker_surface(
+    tree: ast.AST,
+    *,
+    source_kind: SourceKind,
+) -> None:
+    if source_kind == "astichi-emitted":
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "astichi_insert":
+            continue
+        lineno = getattr(node, "lineno", "?")
+        raise ValueError(
+            "astichi_insert(...) is internal emitted-source metadata and "
+            f"cannot be authored directly at line {lineno}; use astichi.build() "
+            "to add snippets into astichi_hole(...) and only compile emitted "
+            "Astichi source with source_kind='astichi-emitted'"
+        )
 
 
 def _validate_keep_names(names: Iterable[str] | None) -> frozenset[str]:

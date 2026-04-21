@@ -7,6 +7,7 @@ categories below follow **[§15](../../dev-docs/AstichiApiDesignV1.md)**.
 | Situation | Typical outcome |
 |-----------|-----------------|
 | Invalid marker placement | Error at compile / lowering |
+| Reserved / obsolete marker name such as `astichi_bind_once(...)` or `astichi_bind_shared(...)` | Error at compile / lowering |
 | Unsupported `*` / `**` marker context | Error (fail early) |
 | Invalid `astichi_keep(...)` argument (not bare identifier) | Error |
 | Unresolved free identifier in **strict** mode | Error |

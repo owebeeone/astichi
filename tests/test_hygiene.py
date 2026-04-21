@@ -153,7 +153,8 @@ value = 1
 def inner():
     temp = astichi_keep(value) + outer_name
     return temp
-"""
+""",
+        source_kind="astichi-emitted",
     )
     function_node = compiled.tree.body[2]
     assert isinstance(function_node, ast.FunctionDef)
@@ -221,7 +222,8 @@ def inner():
     return value
 
 result = astichi_keep(value)
-"""
+""",
+        source_kind="astichi-emitted",
     )
     function_node = compiled.tree.body[1]
     assert isinstance(function_node, ast.FunctionDef)
@@ -240,7 +242,8 @@ def test_expression_insert_receives_fresh_scope_for_internal_bindings() -> None:
         """
 value = 1
 result = astichi_insert(target, (x := 2, x + value))
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     analysis = assign_scope_identity(compiled)
@@ -269,7 +272,8 @@ def test_expression_insert_free_names_retain_outer_scope() -> None:
         """
 outer = 1
 result = astichi_insert(target, outer + 1)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     analysis = assign_scope_identity(compiled)
@@ -289,7 +293,8 @@ def test_multiple_expression_inserts_get_distinct_scopes() -> None:
         """
 a = astichi_insert(slot_a, (x := 1, x))
 b = astichi_insert(slot_b, (x := 2, x))
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     analysis = assign_scope_identity(compiled)
@@ -307,7 +312,8 @@ def test_expression_insert_collision_renaming() -> None:
 value = 1
 result = astichi_insert(target, (value := 2, value))
 outcome = astichi_keep(value)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     analysis = assign_scope_identity(compiled)
@@ -335,7 +341,8 @@ def outer():
     return value
 
 result = astichi_keep(value)
-"""
+""",
+        source_kind="astichi-emitted",
     )
     outer_function = compiled.tree.body[1]
     assert isinstance(outer_function, ast.FunctionDef)

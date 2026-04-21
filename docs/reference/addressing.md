@@ -2,8 +2,8 @@
 
 When you wire child composables into a parent, you **address** a specific
 **hole** (or loop-expanded site) on a named **instance**. The same fluent path
-shape is also used by builder-level identifier wiring and by emitted
-`@astichi_insert(..., ref=...)` shell metadata.
+shape is also used by builder-level identifier wiring and by internal
+emitted-shell metadata.
 
 ## Root-instance-first
 
@@ -41,7 +41,7 @@ This applies to:
 - additive targets such as `builder.Pipeline.Root.Parse.body.add.Step(order=0)`
 - identifier wiring such as
   `builder.assign.Step.total.to().Pipeline.Root.Right.total`
-- emitted shell refs such as
+- internal emitted shell refs such as
   `@astichi_insert(body, ref=Pipeline.Root.Parse[1, 2].Normalize)`
 
 Rules:

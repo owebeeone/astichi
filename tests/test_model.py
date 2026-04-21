@@ -157,7 +157,8 @@ def test_expression_insert_produces_supply_port() -> None:
     compiled = astichi.compile(
         """
 value = astichi_insert(target_slot, 42)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     supply = [p for p in compiled.supply_ports if p.name == "target_slot"]
@@ -174,7 +175,8 @@ def test_decorator_insert_does_not_produce_supply_port() -> None:
 @astichi_insert(block_target)
 def inject():
     return 1
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     supply = [p for p in compiled.supply_ports if p.name == "block_target"]

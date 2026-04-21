@@ -1,4 +1,4 @@
-# Markers: `astichi_for`, `astichi_funcargs`, and `@astichi_insert`
+# Markers: `astichi_for`, `astichi_funcargs`, and internal inserts
 
 ## `astichi_for(domain)`
 
@@ -7,26 +7,48 @@
 - **`build(unroll="auto")`** unrolls only when indexed target paths require it;
   `build(unroll=True)` always unrolls and `build(unroll=False)` never does.
 
-**Supported domains (phase 1):**
+**Supported domains:**
 
 - Literal tuples/lists (constant shapes)
 - `range(...)` with **compile-time constant** arguments
 - Domains tied to **`astichi_bind_external`** values
 
-**Unsupported (phase 1):** arbitrary runtime iterables, arbitrary calls,
+**Unsupported domains:** arbitrary runtime iterables, arbitrary calls,
 comprehensions as the domain expression.
 
 Unpacking in the `for` target follows Python rules at compile time; failure →
 error.
 
-## `@astichi_insert(target, order=…, ref=…)`
+## Internal insert metadata
 
-- Inserts a child `Composable` into the hole named **`target`** (identifier).
-- **Additive only** in phase 1 — no replacement of an already-filled site.
-- **`order`**: lower values run first among inserts into the **same** variadic
-  hole; **equal `order`** ties keep **first-added edge first** order.
-- **`ref`** is an optional **descendant/build path** for decorator-form shells.
-  The public/source form uses the same fluent syntax as builder addressing:
+`astichi_insert(...)` is **not** public authored source.
+
+Authored snippets should declare holes with `astichi_hole(...)` and wire
+children through `astichi.build()`. Build/merge may emit internal insert
+metadata so the built composable can be inspected, emitted, and re-ingested.
+
+Ordinary `astichi.compile(...)` defaults to `source_kind="authored"` and rejects
+`astichi_insert(...)` calls. Only recompile Astichi-emitted source with the
+explicit opt-in:
+
+```python
+astichi.compile(source, source_kind="astichi-emitted")
+```
+
+The emitted metadata forms are:
+
+- `@astichi_insert(target, order=..., ref=...)` for block-shell placement.
+- `astichi_insert(target, expr)` for expression placement.
+
+The metadata has these semantics:
+
+- **`target`** names the hole receiving the child contribution.
+- **Additive only**: composition inserts contributions into holes; it does not
+  replace already-filled sites.
+- **`order`**: lower values run first among inserts into the same variadic hole;
+  equal `order` ties keep first-added edge first order.
+- **`ref`** is optional descendant/build-path metadata for decorator-form
+  shells. It uses the same fluent syntax as builder addressing:
 
 ```python
 @astichi_insert(body, ref=Pipeline.Root.Parse)
@@ -38,7 +60,7 @@ def normalize_shell():
     ...
 ```
 
-- `ref=` is metadata for block shells. Expression-form
+- `ref=` is metadata for block shells. Expression-form metadata
   `astichi_insert(target, expr)` does **not** take `ref=`.
 - Builder-generated shells emit `ref=` automatically so later build stages can
   address descendants with the same fluent path language.
@@ -103,9 +125,9 @@ astichi_import(total, outer_bind=True)
 42
 ```
 
-- Do not author expression-form `astichi_insert(target, expr)` in source.
-  Astichi may emit equivalent internal placement metadata in built state, but
-  that form is not part of the public authored API.
+- Do not author `astichi_insert(...)` in source. Astichi may emit equivalent
+  internal placement metadata in built state, but that form is not part of the
+  public authored API.
 
 ## See also
 

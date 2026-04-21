@@ -20,7 +20,7 @@ Rejects at unroll time:
   (`UnrollRevision.md` §5.5)
 - port-creating or binding name-bearing markers inside a loop body
   (`UnrollRevision.md` §4.3): `astichi_export`, `astichi_bind_external`,
-  `astichi_bind_once`, `astichi_bind_shared`, `astichi_insert`. Hygiene
+  `astichi_insert`. Hygiene
   directives (`astichi_keep`, and the identifier-shape suffixes
   `__astichi_keep__` / `__astichi_arg__` per issue 005) are idempotent
   and permitted; per-iteration refinement of arg semantics inside loops

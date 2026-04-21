@@ -254,6 +254,21 @@ class _SimpleMarker(MarkerSpec):
                 )
 
 
+class _ReservedMarker(MarkerSpec):
+    """Known marker name with no supported user-facing semantics."""
+
+    def __init__(self, source_name: str, *, hint: str) -> None:
+        self.source_name = source_name
+        self._hint = hint
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError(f"{self.source_name} must be recognized from an ast.Call")
+        raise ValueError(
+            f"{self.source_name}(...) is reserved and obsolete; {self._hint}"
+        )
+
+
 class _BoundaryIdentifierMarker(_SimpleMarker):
     """Boundary identifier marker with explicit state keywords."""
 
@@ -488,9 +503,16 @@ class _RefMarker(MarkerSpec):
 
 
 HOLE = _HoleMarker()
-BIND_ONCE = _SimpleMarker("astichi_bind_once", positional_args=2, name_bearing=True)
-BIND_SHARED = _SimpleMarker(
-    "astichi_bind_shared", positional_args=2, name_bearing=True
+BIND_ONCE = _ReservedMarker(
+    "astichi_bind_once",
+    hint="use ordinary Python assignment for single-evaluation reuse",
+)
+BIND_SHARED = _ReservedMarker(
+    "astichi_bind_shared",
+    hint=(
+        "use enclosing Python state plus astichi_import/astichi_pass/"
+        "astichi_export or builder.assign for shared state"
+    ),
 )
 BIND_EXTERNAL = _SimpleMarker(
     "astichi_bind_external",

@@ -8,21 +8,28 @@ from support.golden_case import run_case
 
 
 def build_case() -> astichi.Composable:
-    return astichi.compile(
-        """
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
 value = 1
 astichi_hole(body)
-
-@astichi_insert(body)
-def inner():
-    value = 2
-    result_inner = value
-
-
 result_outer = astichi_keep(value)
 """,
-        file_name="gold_src/hygiene_scope_collision.py",
+            file_name="gold_src/hygiene_scope_collision.py",
+        )
     )
+    builder.add.Inner(
+        astichi.compile(
+            """
+value = 2
+result_inner = value
+""",
+            file_name="gold_src/hygiene_scope_collision.py",
+        )
+    )
+    builder.Root.body.add.Inner(order=0)
+    return builder.build()
 
 
 def validate_case(

@@ -1,21 +1,5 @@
 # Markers: binds and exports
 
-## `astichi_bind_once(name, expr)`
-
-Current status: **recognized only**.
-
-- Astichi currently recognizes the marker during `compile(...)`.
-- The current materialize pipeline does **not** lower or strip it yet.
-- Do **not** rely on this marker as finished user-facing semantics.
-
-## `astichi_bind_shared(name, expr)`
-
-Current status: **recognized only**.
-
-- Astichi currently recognizes the marker during `compile(...)`.
-- The current materialize pipeline does **not** lower or strip it yet.
-- Do **not** rely on this marker as finished user-facing semantics.
-
 ## `astichi_bind_external(name)`
 
 - Declares a **compile-time** input keyed by `name` (identifier).
@@ -37,6 +21,16 @@ Current status: **recognized only**.
 ## Identifier keys
 
 `name` arguments use the same **bare identifier** rule as `astichi_hole`.
+
+## Reserved marker names
+
+`astichi_bind_once(name, expr)` and `astichi_bind_shared(name, expr)` are
+reserved and obsolete marker names. Astichi rejects them during `compile(...)`
+so the names cannot accidentally mean something else.
+
+- For single-evaluation reuse, use ordinary Python assignment.
+- For shared state across composition boundaries, use enclosing Python state
+  plus `astichi_import`, `astichi_pass`, `astichi_export`, or `builder.assign`.
 
 ## See also
 

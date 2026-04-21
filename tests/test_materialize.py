@@ -69,7 +69,8 @@ def inner():
     value = 2
 
 result = astichi_keep(value)
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     materialized = compiled.materialize()
@@ -418,7 +419,7 @@ def test_compose_build_round_trip_is_structurally_stable() -> None:
 
     built = builder.build()
     emitted = built.emit(provenance=False)
-    reingested = astichi.compile(emitted)
+    reingested = astichi.compile(emitted, source_kind="astichi-emitted")
 
     assert ast.dump(reingested.tree) == ast.dump(built.tree)
 
@@ -542,7 +543,8 @@ astichi_hole(slot)
 @astichi_insert(slot)
 def __piece():
     computed = 7
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     materialized = compiled.materialize()
@@ -565,7 +567,8 @@ def __first():
 @astichi_insert(slot, order=1)
 def __second():
     step_b = 2
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     rendered = ast.unparse(compiled.materialize().tree).strip()
@@ -647,7 +650,8 @@ astichi_hole(target_slot)
 @astichi_insert(target_slot)
 def inner():
     value = 2
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
     rendered = ast.unparse(compiled.materialize().tree)
@@ -748,7 +752,8 @@ def test_materialize_rejects_unmatched_block_insert_shell() -> None:
 @astichi_insert(slot)
 def __unmatched():
     leaked = True
-"""
+""",
+        source_kind="astichi-emitted",
     )
     with pytest.raises(
         ValueError, match=r"unmatched astichi_insert supplies"
@@ -763,7 +768,10 @@ def test_materialize_rejects_unmatched_expression_insert() -> None:
     embedded in expression positions by `build()` are legitimate and
     are unwrapped by `_realize_expression_insert_wrappers`; the gate
     only rejects the bare statement shape."""
-    compiled = astichi.compile("astichi_insert(slot, 42)\n")
+    compiled = astichi.compile(
+        "astichi_insert(slot, 42)\n",
+        source_kind="astichi-emitted",
+    )
     with pytest.raises(
         ValueError, match=r"unmatched astichi_insert supplies"
     ):

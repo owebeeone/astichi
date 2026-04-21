@@ -10,15 +10,13 @@ passed to `astichi.compile(...)`.
 **Hole shape** (scalar vs variadic vs block) is inferred from **AST context**,
 not from encoding a “kind” in the hole name.
 
-**Normative list:**
+**Design background:**
 **[AstichiApiDesignV1.md §5](../../dev-docs/AstichiApiDesignV1.md)**.
 
-## Phase-1 marker vocabulary
+## Marker Vocabulary
 
 ```text
 astichi_hole(name)
-astichi_bind_once(name, expr)
-astichi_bind_shared(name, expr)
 astichi_bind_external(name)
 astichi_keep(name)
 astichi_import(name)
@@ -28,13 +26,24 @@ astichi_for(domain)
 astichi_funcargs(...)
 astichi_ref(value)
 astichi_ref(external=name)
-@astichi_insert(target, order=…, ref=…)
 ```
+
+Reserved names:
+
+- `astichi_bind_once(name, expr)` and `astichi_bind_shared(name, expr)` are
+  reserved and obsolete marker names; `compile(...)` rejects them with a
+  diagnostic.
+
+Internal emitted metadata:
+
+- `astichi_insert(...)` is reserved for Astichi-emitted source. Ordinary
+  `astichi.compile(...)` rejects it in the default `source_kind="authored"`
+  mode; only re-ingest Astichi output with
+  `source_kind="astichi-emitted"`.
 
 Call-argument note:
 
 - `astichi_funcargs(...)` is the authored call-argument payload surface
-- decorator-form `@astichi_insert(...)` remains the public block-shell surface
 - for non-call expression holes, author a plain expression source such as `42`
   or `(value := 2, value)`; build/merge normalizes it internally
 - expression-form `astichi_insert(target, expr)` is internal normalization
@@ -83,4 +92,4 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
 
-Unsupported starred / double-starred contexts are **hard errors** in V1.
+Unsupported starred / double-starred contexts are **hard errors**.

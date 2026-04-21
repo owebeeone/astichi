@@ -683,7 +683,7 @@ Helper policy:
 - semantic tests should prefer runtime behavior or localized tree assertions
   over brittle whole-source string matching
 - metadata tests should assert the fluent `ref=...` spelling directly, because
-  public/source syntax is now part of the contract
+  emitted-source metadata syntax is now part of the contract
 - `exec_materialized(comp) -> dict[str, object]`
 - `run_trace(comp) -> list[str]`
 

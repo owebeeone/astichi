@@ -9,57 +9,89 @@ from astichi.lowering import MARKERS_BY_NAME
 def test_marker_registry_exposes_behavior_objects_by_source_name() -> None:
     assert "astichi_hole" in MARKERS_BY_NAME
     assert MARKERS_BY_NAME["astichi_hole"].is_name_bearing() is True
+    assert "astichi_bind_once" in MARKERS_BY_NAME
+    assert "astichi_bind_shared" in MARKERS_BY_NAME
     insert = MARKERS_BY_NAME["astichi_insert"]
     assert insert.is_name_bearing() is True
     assert insert.is_decorator_only() is False
 
 
-def test_compile_recognizes_v1_markers() -> None:
+def test_compile_recognizes_supported_call_markers() -> None:
     compiled = astichi.compile(
         """
 astichi_hole(body)
-astichi_bind_once(temp, value)
-astichi_bind_shared(total, value)
 astichi_bind_external(items)
 astichi_keep(sys)
 astichi_export(result)
 
 for x in astichi_for(items):
     astichi_hole(inner)
-
-@astichi_insert(target_slot)
-def insert_block():
-    return result
 """
     )
 
     names = [marker.source_name for marker in compiled.markers]
     assert names == [
         "astichi_hole",
-        "astichi_bind_once",
-        "astichi_bind_shared",
         "astichi_bind_external",
         "astichi_keep",
         "astichi_export",
         "astichi_for",
         "astichi_hole",
-        "astichi_insert",
     ]
 
     name_ids = [marker.name_id for marker in compiled.markers]
     assert name_ids == [
         "body",
-        "temp",
-        "total",
         "items",
         "sys",
         "result",
         None,
         "inner",
-        "target_slot",
     ]
 
-    assert compiled.markers[-1].context == "decorator"
+    assert compiled.markers[-1].context == "call"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+@astichi_insert(target)
+def insert_block():
+    return 1
+""",
+        "value = astichi_insert(target, 1)\n",
+    ],
+)
+def test_authored_compile_rejects_astichi_insert(source: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_insert\(\.\.\.\) is internal emitted-source metadata",
+    ):
+        astichi.compile(source)
+
+
+def test_compile_rejects_unknown_source_kind() -> None:
+    with pytest.raises(ValueError, match="source_kind must be"):
+        astichi.compile("value = 1\n", source_kind="external")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("source_name", "hint"),
+    [
+        ("astichi_bind_once", "ordinary Python assignment"),
+        ("astichi_bind_shared", "enclosing Python state"),
+    ],
+)
+def test_compile_rejects_reserved_obsolete_bind_markers(
+    source_name: str,
+    hint: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"{source_name}\(\.\.\.\) is reserved and obsolete.*{hint}",
+    ):
+        astichi.compile(f"{source_name}(value, 1)\n")
 
 
 def test_insert_ref_accepts_fluent_descendant_path_syntax() -> None:
@@ -68,7 +100,8 @@ def test_insert_ref_accepts_fluent_descendant_path_syntax() -> None:
 @astichi_insert(target, ref=Foo.Parse[1, 2].Normalize)
 def insert_block():
     return 1
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
 

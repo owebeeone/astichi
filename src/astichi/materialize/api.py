@@ -692,9 +692,8 @@ def build_merge(
             inserts: list[_ExpressionInsert] = []
             for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
-                # Source-side ports and insert wrappers use the raw (pre-
-                # unroll) name — the author writes `astichi_insert(slot, ...)`
-                # in the source; the suffixing happens on the target side.
+                # Source-side ports and generated insert wrappers use the raw
+                # (pre-unroll) name; the suffixing happens on the target side.
                 raw_target_name = edge.target.target_name
                 source_port = _lookup_supply_port(
                     source_record.composable, raw_target_name

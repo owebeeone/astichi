@@ -16,8 +16,11 @@ from astichi import Composable, compile, build
 ## Marker names in compiled source
 
 Astichi recognizes marker names such as `astichi_hole`, `astichi_bind_external`,
-`astichi_for`, and `astichi_insert` from the **source text** passed to
-`astichi.compile(...)`.
+and `astichi_for` from the **source text** passed to `astichi.compile(...)`.
+
+`astichi_insert(...)` is reserved internal metadata. The default
+`astichi.compile(..., source_kind="authored")` rejects it; only re-ingest
+Astichi-emitted source with `source_kind="astichi-emitted"`.
 
 The current package does **not** ship a runtime `astichi.markers` helper module,
 so marker-bearing examples are typically embedded directly in the source string

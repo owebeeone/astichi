@@ -5,16 +5,22 @@ def run() -> str:
 
     import astichi
 
-    compiled = astichi.compile(
-        """
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
 value = 1
 astichi_hole(target_slot)
-
-@astichi_insert(target_slot)
-def inner():
-    value = 2
-
 result = astichi_keep(value)
 """
+        )
     )
-    return ast.unparse(compiled.materialize().tree)
+    builder.add.Inner(
+        astichi.compile(
+            """
+value = 2
+"""
+        )
+    )
+    builder.Root.target_slot.add.Inner()
+    return ast.unparse(builder.build().materialize().tree)

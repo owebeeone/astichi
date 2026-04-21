@@ -95,7 +95,12 @@ def test_build_double_starred_funcargs_rejects_positional_payload() -> None:
 def test_build_rejects_legacy_authored_call_argument_insert_surface() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = func(*astichi_hole(args))\n"))
-    builder.add.Legacy(astichi.compile("astichi_insert(args, first_arg)\n"))
+    builder.add.Legacy(
+        astichi.compile(
+            "astichi_insert(args, first_arg)\n",
+            source_kind="astichi-emitted",
+        )
+    )
     builder.Root.args.add.Legacy()
 
     with pytest.raises(
@@ -111,7 +116,12 @@ def test_build_rejects_legacy_authored_call_argument_insert_surface() -> None:
 def test_build_rejects_expression_insert_for_block_target() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("astichi_hole(body)\n"))
-    builder.add.Bad(astichi.compile("astichi_insert(body, 42)\n"))
+    builder.add.Bad(
+        astichi.compile(
+            "astichi_insert(body, 42)\n",
+            source_kind="astichi-emitted",
+        )
+    )
     builder.Root.body.add.Bad()
 
     with pytest.raises(ValueError, match="incompatible port placement"):
@@ -127,7 +137,8 @@ def test_build_rejects_decorator_insert_for_expression_target() -> None:
 @astichi_insert(value)
 def provide():
     return 42
-"""
+""",
+            source_kind="astichi-emitted",
         )
     )
     builder.Root.value.add.Bad()

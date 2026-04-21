@@ -12,12 +12,12 @@ astichi_hole(slot)       # scalar expression hole (in expr position)
 
 ## Semantics
 
-- The argument **names the hole** for wiring and `@astichi_insert`.
+- The argument **names the hole** for builder wiring and internal emitted
+  insert metadata.
 - It does **not** select hole “kind”; **position in the tree** selects shape:
   - ordinary **expression** position → scalar expression demand
-  - `*` / `**` positions → variadic demands per V1 §5.1
+  - `*` / `**` positions → variadic demands
   - **standalone** statement expression in a block → **block** insertion site
-    (V1 wording)
 
 ## Requirements
 

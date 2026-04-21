@@ -34,7 +34,7 @@ def format_ref_path(path: RefPath) -> str:
 def normalize_ref_path(path: RefPath, *, phase: str = "build") -> RefPath:
     """Canonicalize a ref path to name-first fluent order.
 
-    The V3 public/source form is fluent (`Foo.Parse[1, 2]`), so the
+    The V3 emitted-source form is fluent (`Foo.Parse[1, 2]`), so the
     canonical internal layout is also name-first:
 
     - name segments stay in-order

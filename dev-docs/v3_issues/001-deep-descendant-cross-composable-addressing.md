@@ -284,8 +284,8 @@ or, when indices are part of the build path:
 ```
 
 At runtime the implementation may still decompose that fluent path into a
-structured mixed segment tuple for matching. The public/source form should stay
-fluent.
+structured mixed segment tuple for matching. The emitted-source metadata form
+should stay fluent.
 
 ### Step 1. Base shell/boundary plumbing
 

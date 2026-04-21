@@ -82,7 +82,8 @@ def shell_block():
     nested_out = shared + 1
 
 result = top_result
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
 
@@ -124,7 +125,8 @@ def block():
     astichi_import(ok_prefix)
     ok_prefix
     astichi_import(late_in_shell)
-"""
+""",
+            source_kind="astichi-emitted",
         )
 
 
@@ -419,7 +421,8 @@ widget
 def shell_block():
     class widget__astichi_keep__:
         pass
-"""
+""",
+        source_kind="astichi-emitted",
     )
 
 
@@ -437,7 +440,8 @@ def shell_block():
 
     class widget__astichi_keep__:
         pass
-"""
+""",
+            source_kind="astichi-emitted",
         )
 
 
