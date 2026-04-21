@@ -1,7 +1,7 @@
 # Marker overview
 
-Markers are **valid Python** syntax: calls and decorators your snippet uses so
-astichi can find holes, binds, and composition sites.
+Markers are **valid Python** syntax: calls, decorators, and identifier suffixes
+your snippet uses so astichi can find holes, binds, and composition sites.
 
 The current package does **not** ship an `astichi.markers` runtime shim, so
 marker-bearing examples are typically embedded directly in the source string
@@ -26,6 +26,8 @@ astichi_for(domain)
 astichi_funcargs(...)
 astichi_ref(value)
 astichi_ref(external=name)
+name__astichi_keep__
+name__astichi_arg__
 ```
 
 Reserved names:
@@ -58,9 +60,8 @@ Reference-path note:
   `astichi_ref(astichi_bind_external(name))` and surfaces the inner bind site
   as a normal demand port
 - `astichi_ref(...).astichi_v` (or the `._` shorthand) wraps the value form so
-  it is grammatically legal as an `Assign` / `AugAssign` / `Delete` target
-  and is otherwise a transparent one-shot segment that strips during
-  materialize
+  it is grammatically legal as an `Assign` / `AugAssign` / `Delete` target.
+  Prefer bare `astichi_ref(...)` in ordinary expression chains.
 
 Cross-scope note:
 
@@ -68,13 +69,25 @@ Cross-scope note:
   for a whole Astichi scope
 - `astichi_pass(name)` is the value-form surface and belongs in a real
   expression (`x = astichi_pass(y)`, `call(astichi_pass(y))`,
-  `astichi_pass(obj)._.field = 1`)
+  `astichi_pass(obj).field = 1`)
 - `outer_bind=True` is the explicit convenience form for “bind this marker to
   the same-named identifier in the immediately enclosing Astichi scope”
 - explicit builder / `arg_names=` / `.bind_identifier(...)` wiring now
   round-trips in source as `bound=True` on the rewritten marker call
 - bare statement-form `astichi_pass(name)` is rejected; if you need
   declaration-style scope threading, use `astichi_import(name)`
+
+Identifier-suffix note:
+
+- `name__astichi_keep__` is the identifier-position form of keep. It pins the
+  base spelling `name` through hygiene and strips the suffix during
+  materialize.
+- `name__astichi_arg__` creates an identifier demand named `name`. Resolve it
+  through `arg_names=`, `.bind_identifier(...)`, builder `arg_names=`, or
+  `builder.assign...` before materialize.
+- Use suffix forms when the marker must live inside an identifier slot, such
+  as a class name, function name, parameter name, assignment target, or
+  reference.
 
 ## Identifier arguments
 
@@ -91,5 +104,6 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
+| Identifier suffixes | [classification-modes.md](classification-modes.md) |
 
 Unsupported starred / double-starred contexts are **hard errors**.

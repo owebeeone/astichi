@@ -93,13 +93,13 @@ astichi_funcargs(
 ```
 
 - `astichi_pass(name).astichi_v` (or `._`) follows the same transparent
-  one-shot strip rule as `astichi_ref(...)`:
+  one-shot strip rule as `astichi_ref(...)`. Use it where Python needs an
+  assignable/deleteable target rather than a bare call:
 
 ```python
 astichi_pass(trace).append("leaf")       # -> trace.append("leaf")
-astichi_pass(trace)._.append("leaf")     # -> trace.append("leaf")
 astichi_pass(counter).astichi_v = 1      # -> counter = 1
-astichi_pass(obj)._._                    # -> obj._
+del astichi_pass(cache)._                # -> del cache
 ```
 
 - For a same-name bind to the immediately enclosing Astichi scope, spell it
