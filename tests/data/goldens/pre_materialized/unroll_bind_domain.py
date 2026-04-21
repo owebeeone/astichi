@@ -1,0 +1,15 @@
+astichi_hole(__astichi_root__A__)
+
+@astichi_insert(__astichi_root__A__, ref=A)
+def __astichi_root__A__():
+    astichi_hole(slot__iter_0)
+
+    @astichi_insert(slot__iter_0, ref=A.B0[0])
+    def __astichi_contrib__A__slot__iter_0__0__B0():
+        first = 7
+    astichi_hole(slot__iter_1)
+
+    @astichi_insert(slot__iter_1, ref=A.B1[1])
+    def __astichi_contrib__A__slot__iter_1__0__B1():
+        second = 9
+# astichi-provenance: eNq9lctv00AQh533qy2gqkiAkKDNoZEQNEIckEAoLXAJ+EC5VpZjbzpWHG/kXTfJAQkOwGUPoBqJGxIHxAHunPjbmPUjsZM0qOVhxYp2Z3Z35jfzrV8WPnytKMEjcjrjvig+paZnE//YV9U3/jP/hb8t8h1qjv0DfxsUkX80GrjS+joyFo502yO+NO3pth0sVN/GK7ueYwQ2Ve+nN81api9W8EzLAEsDimeKnMFHgfcTqpvo3ZCuHVG0LYc41G/nRZU4ppYYGtTWaLfLCJfDNWlNTl30OiKvu4cMo4eNyeFwSaxrWny2SynXtJam+XAFroZnwrV2Hq7ju4nvltxHF+UeGQ+pawabzdmDmc1oNpxRRO0x5s8t6jwkXcxnWw0fHsvjSFWgAXX0rWCcXp84nC3wrA0oo449jnOpH2CpjnQXx74qqr1hwihqvaFmkq7u2TwYF3rD0K+cmMX4irKklbiSsArnpqWD9ZRecHlGm2mm53Gn+qy8K8yWolqcuNqO1FWNVl2IVm2gonAjEjIt2/zMrRk54LZoTOtnUIe7VicoYfJYTf528fQ63Jnd4G6oIdxT4T7+PcC3pcJuLAuWo9hizDp00v1c4igk4fPtVOhaLuKDiSqisM+pSybti/lkMR8F88liPgWZ+Cq6lfeow7ju8CQWsNouiXzPckxfjRaWo4UV7OUVPh4QTLgv+2TioUw9dLFmEoO6OoaAnGBIGOnJZRVrsYiWw4jLlxIwV2V4vhSYoLyKKEXYpOjPyYYUORexCMSo7HsdZrjWgKcED20tLuvrcTJrS6WSaaWjz2A4mUCdrbYS3AO4jS+yuzvL/QrMtgykkk3BQNuc37I9Fomx4EIpuYR7rsOwkCNV1ILaDpDp/uSGSWPw71FtSml+/HdUmyGqzTOhaiaUgNnkigxpQJgwLboQx2KII0sSWIFhjFYlcqviYaNZ3qpy7XgpYPDqdET9/D1RYur/Dt5j7McpJj6eSAh8WtqznxGN5lI04EsKisy/gAK+SRjg+6J2I39Z7MYZxD6FoH+eb3Tf42cIPyjhR/vmL+tTS+s=

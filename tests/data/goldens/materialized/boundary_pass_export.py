@@ -1,0 +1,9 @@
+source_a = 10
+source_b = 20
+out = source_a
+__astichi_assign__inst__A__name__out = out
+out__astichi_scoped_1 = source_b
+__astichi_assign__inst__B__name__out = out__astichi_scoped_1
+out_a = __astichi_assign__inst__A__name__out
+out_b = __astichi_assign__inst__B__name__out
+result = (out_a, out_b)

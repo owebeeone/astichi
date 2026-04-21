@@ -16,10 +16,12 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+test = ["pytest>=7.0"]
 
 [tool.hatch.build]
 sources = ["src"]
@@ -32,6 +34,9 @@ include = ["src/astichi", "tests", "dev-docs", "scratch"]
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
 testpaths = ["tests"]
+
+[tool.astichi.test-matrix]
+python = ["3.12", "3.13", "3.14", "3.15"]
 
 # Hatchling uses `src/` layout; Pyright/Basedpyright need the same path so
 # `import astichi` resolves when analyzing files under `docs/` (and from the

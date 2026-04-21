@@ -1,0 +1,16 @@
+astichi_hole(__astichi_root__Root__)
+
+@astichi_insert(__astichi_root__Root__, ref=Root)
+def __astichi_root__Root__():
+    items = []
+    astichi_hole(body)
+
+    @astichi_insert(body, ref=Root.First)
+    def __astichi_contrib__Root__body__0__First():
+        astichi_pass(items, outer_bind=True).append('first')
+
+    @astichi_insert(body, order=1, ref=Root.Second)
+    def __astichi_contrib__Root__body__1__Second():
+        astichi_pass(items, outer_bind=True).append('second')
+    result = items
+# astichi-provenance: eNqtVstu00AUTZvYTZMmiKcECPGqRCoqHqJdIIFQeXRBwAhYR5YTTzpWEk9kjxuyQEJIPBbTFdMFiAWwY8kPsGMFX8JXcMcex8+mjUSkJPLMmXvv3HPOeF4puzvVgv9hRcOlnKmPien1Ef/ANe0tf8Zf8gYrtYk55i3ewAVWevBi6IjZN3JS2Tb6HuJi6p7R7/sLtXfhyq5nd/w5zRgkg85bJmdLkNPqYEvHBHKyYoe+8NGPiGECekVA20ztWzayCW/OswqyTT322CF9nXS7LqK8WWB1MRsfqnhtVjKcLReqx8cnyfFJdkLXw9wOIVTXn/m/HJ/GZ4K0+FxzHp+H74VmAV8UoQxW7qHxiDimHy8z74+IJzEajBRYdRNaQC1i30dd2FJDCz407JAtGoNX8DJgF6FUb4Bs6uYgq0PiErs/Drez3AK2tg0HnrnGKr1RbJJVeyPdRF3D61P/WemNAlw5Ngr1qQGr6obrWlt2krwFCksQzfZOsSgauKJVBaY8p8RBE65SLVCgabjmM2qBuhKiQkERqYZfaJaj9rElOh4iYHQgmsK1nAYvhkKENIei4vHRRMn4VCJNUQYpQpAlCLKc2iFWAb4lgTUJPCz2surzHl9/xGvnjFxNsYdvsEuR4jrEpo7VDkUn7KXr13R903KgSyCF9fTymwHh+JaGb8PfHfhuaPhuyOGUNoCqNqjI5lGU4HdqwyJnDg3XzZIUUpDbvScA35HAmgQeCbtXYAvSRAk5FIU8WYVAlY7etmyT+7op3yO2Sw07oR1ce89KPYEJFXFWZrk4MeGxaMRI1bzsHwrQE/CPMRwikSsqOERdljv7HEvLlG7A0Jcw8apE34jEEQ+yljkU1sQxUjdRhzgGOAfOMogH66ZQUQ+psGwXOZSnpHxeii8QXq6U94QHNe9G+I+s6MA5Bb1/nVBKoqCSkG2yjDmIOyfjFqCMr0yRYk6igkbMSVROPdkhtuAg6jm2C2y3NFb1j4QhnHsDeQofwHuNfbx3XdefAyVCCf/VfK8PaDfMZnfY370cFqcTf4K8cQm/j7Q7q2nwV/wtlneqUVRXtjPjlLV8p6xnnLIugN+nWgP/+N9eaCTNoMAxhRzu93DCMcg3mys7kqDh51RH4V/7mEkN1TmTm1DeJn8LF+E/uc7ZjFX4MP3WVx3kwsVB1PB0UkNJRihBBDV42WeEeiaBXpToOuRraakQdVH0TJynr2AZzlem3uiyhvk5Gzc5IXOG4k1P3WCQvOTA9QsuUsG17Mo/SDDu8Q==

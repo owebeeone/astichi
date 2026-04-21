@@ -8,5 +8,7 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+tests/.uv-venvs/
+tests/actual_test_results/
 scratch/
 *-old.py

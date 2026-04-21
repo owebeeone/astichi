@@ -11,10 +11,16 @@ source = { editable = "." }
 dev = [
     { name = "pytest" },
 ]
+test = [
+    { name = "pytest" },
+]
 
 [package.metadata]
-requires-dist = [{ name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" }]
-provides-extras = ["dev"]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0" },
+]
+provides-extras = ["dev", "test"]
 
 [[package]]
 name = "colorama"
