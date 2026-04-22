@@ -15,6 +15,7 @@
 | [marker-ref.md](marker-ref.md) | `astichi_ref` (reference-path values + §3a sentinel LHS) |
 | [marker-keep.md](marker-keep.md) | `astichi_keep` |
 | [materialize-and-emit.md](materialize-and-emit.md) | `materialize`, `emit`, provenance |
+| [scoping-hygiene.md](scoping-hygiene.md) | Scope isolation, local renaming, intentional identifier wiring |
 | [classification-modes.md](classification-modes.md) | Strict / permissive, preserved names |
 | [errors.md](errors.md) | Hard error categories |
 

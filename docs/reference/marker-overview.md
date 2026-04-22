@@ -105,5 +105,6 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
 | Identifier suffixes | [classification-modes.md](classification-modes.md) |
+| Scoping and hygiene | [scoping-hygiene.md](scoping-hygiene.md) |
 
 Unsupported starred / double-starred contexts are **hard errors**.

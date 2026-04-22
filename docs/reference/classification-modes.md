@@ -82,6 +82,7 @@ hygiene-rename the **local** and its references.
 
 ## See also
 
+- [scoping-hygiene.md](scoping-hygiene.md)
 - [marker-keep.md](marker-keep.md)
 - [marker-ref.md](marker-ref.md)
 - [ReferenceGuide.md](ReferenceGuide.md)
