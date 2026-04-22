@@ -1,0 +1,22 @@
+{
+  "instances": {
+    "Root": "root.py",
+    "SettingsBase": "settings_base.py",
+    "LabelsEnv": "labels_env.py",
+    "LabelsRegion": "labels_region.py",
+    "PrimaryKey": "primary_key.py",
+    "LookupEntries": "lookup_entries.py",
+    "ScopedLeft": "scoped_left.py",
+    "ScopedRight": "scoped_right.py"
+  },
+  "wires": [
+    "builder.Root.settings_entries.add.SettingsBase()",
+    "builder.Root.label_entries.add.LabelsEnv(order=10)",
+    "builder.Root.extra_label_entries.add.LabelsRegion(order=20)",
+    "builder.Root.primary_key.add.PrimaryKey()",
+    "builder.Root.lookup_entries.add.LookupEntries()",
+    "builder.Root.scoped_entries.add.ScopedLeft(order=0)",
+    "builder.Root.scoped_entries.add.ScopedRight(order=1)"
+  ],
+  "unroll": false
+}

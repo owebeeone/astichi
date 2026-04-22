@@ -41,6 +41,14 @@ For Astichi V2 work, use these docs:
 V1 process docs (plan, progress register, deferred-feature list, issue log)
 are archived under `dev-docs/historical/` and should not be edited.
 
+## Design rules
+
+- Do not introduce enums without explicit project-owner approval. Do not work
+  around this with magic strings, magic integers, sentinel strings, or other
+  passive tags when the concept has semantics. Semantic concepts should be
+  represented by objects/classes that can own behavior, validation, lowering,
+  and documentation.
+
 ## Roll-build method
 
 - When the user asks for a phased rollout using the roll-build method, start
