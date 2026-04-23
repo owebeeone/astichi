@@ -45,10 +45,9 @@ def astichi_params(session, limit: int = 10, *, debug=False, **options):
 ```
 
 `async def astichi_params(...): pass` is also accepted. Only the signature is
-used. The body must be empty-equivalent: `pass` or `...`. The first
-implementation supports ordinary parameters, keyword-only
-parameters, defaults, annotations, `*args`, and `**kwargs`. Positional-only
-payload parameters are rejected.
+used. The body must be empty-equivalent: `pass` or `...`. Astichi supports
+ordinary parameters, keyword-only parameters, defaults, annotations, `*args`,
+and `**kwargs`. Positional-only payload parameters are rejected.
 
 Wire the payload through the builder:
 
@@ -139,4 +138,4 @@ astichi.compile(source, source_kind="astichi-emitted")
 - [marker-overview.md](marker-overview.md)
 - [scoping-hygiene.md](scoping-hygiene.md)
 - [ReferenceGuide.md](ReferenceGuide.md)
-- [AstichiV3ParameterHoleSpec.md](../../dev-docs/AstichiV3ParameterHoleSpec.md)
+- [historical AstichiV3ParameterHoleSpec.md](../../dev-docs/historical/AstichiV3ParameterHoleSpec.md)

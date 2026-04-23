@@ -6,10 +6,10 @@ This note captures design space around additional hole/target shapes beyond the
 current V1/V2 model. It is intentionally broad. The goal is not to lock
 semantics now, but to avoid forgetting viable directions.
 
-Parameter holes have since been split into the focused
-`AstichiV3ParameterHoleSpec.md` and implemented as an initial slice. This
-brainstorm keeps parameter mentions as historical context for the broader typed
-list-field design space.
+Parameter holes have since been implemented and documented in
+`../docs/reference/marker-params.md`. The original focused spec is archived as
+`historical/AstichiV3ParameterHoleSpec.md`. This brainstorm keeps parameter
+mentions as historical context for the broader typed list-field design space.
 
 ## 1. Current boundary
 
@@ -155,7 +155,7 @@ Potential future Astichi shapes:
   - one decorator entry
 - `parameter`
   - implemented separately for function signatures; see
-    `AstichiV3ParameterHoleSpec.md`
+    `historical/AstichiV3ParameterHoleSpec.md`
 - `arg_entry`
   - one argument entry
 - `class_base`

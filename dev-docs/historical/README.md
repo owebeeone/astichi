@@ -16,6 +16,15 @@ Closed V1 process docs (frozen at V1 exit):
 - `V1DeferredFeatures.md` — tracker of features deferred from V1. Two entries (bind-external and loop unroll) were later reinstated as V2 scope; the remaining entries stay deferred.
 - `v1_issues/` — V1 issue log (open + resolved).
 
+Closed V3 feature design / implementation notes:
+
+- `AstichiV3ParameterHoleSpec.md` — original parameter-hole feature spec. The
+  implemented user-facing behavior is now documented in
+  `../../docs/reference/marker-params.md`.
+- `AstichiV3ParameterHoleImplementationPlan.md` — original implementation plan
+  for parameter holes. Current status and ownership live in
+  `../AstichiSingleSourceSummary.md`.
+
 These documents are preserved for historical context and to track design rationale, but they do not reflect the current implementation constraints or active API.
 
 Active specifications and process:

@@ -19,14 +19,19 @@ This file defines repository-specific working instructions for `astichi`.
   governing principle for every marker, scope, composition, and
   hygiene decision. Any proposal that does not fit its shape × state
   grid is a design bug, not an implementation detail.
-- Then `dev-docs/V2StartHere.md`.
+- Then `dev-docs/AstichiSingleSourceSummary.md`. It is the active handoff and
+  should be kept complete and accurate.
+- Use `dev-docs/V2StartHere.md` only when the task specifically needs the V2
+  process context.
 
 ## Authoritative docs
 
-For Astichi V2 work, use these docs:
+For active Astichi work, use these docs:
 
 - `dev-docs/AstichiCompositionModel.md` (governing principle —
   required reading before any marker / scope / composition work)
+- `dev-docs/AstichiSingleSourceSummary.md` (active project summary and
+  handoff)
 - `dev-docs/V2StartHere.md`
 - `dev-docs/AstichiCodingRules.md`
 - `dev-docs/AstichiApiDesignV1.md` (base V1 design, still normative)
@@ -38,8 +43,12 @@ For Astichi V2 work, use these docs:
 - `dev-docs/V2Plan.md`
 - `dev-docs/V2ProgressRegister.md`
 
-V1 process docs (plan, progress register, deferred-feature list, issue log)
-are archived under `dev-docs/historical/` and should not be edited.
+Archived docs under `dev-docs/historical/` are not authoritative and should not
+be read or edited during normal work. They exist only for historical context
+when a concrete question requires original rationale. When behavior changes,
+update `dev-docs/AstichiSingleSourceSummary.md`, `docs/`, and tests/goldens;
+do not maintain status, links, or wording inside archived docs unless the user
+explicitly asks.
 
 ## Design rules
 
