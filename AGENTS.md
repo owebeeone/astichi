@@ -90,7 +90,19 @@ are archived under `dev-docs/historical/` and should not be edited.
 - It is not acceptable to quietly redefine semantics to satisfy a convenient
   test expectation.
 
+## Test coverage shape
+
+- Prefer canonical fixture, golden, snapshot, or integration-style coverage for
+  successful end-to-end behavior when the project already has that harness.
+- Keep bespoke unit tests focused on narrow mechanics, recognition/parsing
+  checks, edge-case failures, and diagnostics that the canonical harness cannot
+  express cleanly.
+- Avoid duplicating the same success-path assertions in both bespoke tests and
+  canonical output tests; duplicated coverage increases maintenance cost without
+  improving confidence.
+
 ## Test commands
 
 - Focused tests: `uv run --with pytest pytest <test-path> -q`
 - Full suite: `uv run --with pytest pytest -q`
+- Python-version matrix: `uv run python tests/versioned_test_harness.py run-tests-all --pytest-args -q`

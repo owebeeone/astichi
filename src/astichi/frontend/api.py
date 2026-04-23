@@ -109,8 +109,9 @@ def compile(
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
-    validate_call_argument_payload_surface(tree)
-    validate_parameter_payload_surface(tree)
+    if source_kind == "authored":
+        validate_call_argument_payload_surface(tree)
+        validate_parameter_payload_surface(tree)
     desugar_external_ref_kwargs(tree)
     validate_external_ref_surface(tree)
     markers = recognize_markers(tree)

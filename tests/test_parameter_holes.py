@@ -55,6 +55,18 @@ def astichi_params(value):
         )
 
 
+def test_nested_astichi_params_name_is_reserved() -> None:
+    with pytest.raises(ValueError, match="astichi_params is reserved"):
+        astichi.compile(
+            """
+def helper():
+    def astichi_params(value):
+        return value
+    return astichi_params(1)
+"""
+        )
+
+
 def test_parameter_payload_rejects_non_parameter_target() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("astichi_hole(body)\n"))
@@ -89,98 +101,6 @@ def run(params__astichi_param_hole__):
         builder.build()
 
 
-def test_parameter_insertion_basic_signature_materializes() -> None:
-    builder = astichi.build()
-    builder.add.Root(
-        astichi.compile(
-            """
-def run(params__astichi_param_hole__):
-    return session
-"""
-        )
-    )
-    builder.add.Params(
-        astichi.compile(
-            """
-def astichi_params(session, *, debug=False, **kwds):
-    pass
-"""
-        )
-    )
-    builder.Root.params.add.Params()
-
-    built = builder.build()
-    assert "kind='params'" in built.emit(provenance=False)
-    materialized = built.materialize().emit(provenance=False)
-
-    assert "params__astichi_param_hole__" not in materialized
-    assert "astichi_insert" not in materialized
-    assert "def run(session, *, debug=False, **kwds):" in materialized
-
-
-def test_async_parameter_payload_materializes_into_async_target() -> None:
-    builder = astichi.build()
-    builder.add.Root(
-        astichi.compile(
-            """
-async def run(params__astichi_param_hole__):
-    return session
-"""
-        )
-    )
-    builder.add.Params(
-        astichi.compile(
-            """
-async def astichi_params(session):
-    pass
-"""
-        )
-    )
-    builder.Root.params.add.Params()
-
-    materialized = builder.build().materialize().emit(provenance=False)
-
-    assert "async def run(session):" in materialized
-    assert "return session" in materialized
-
-
-def test_multiple_parameter_holes_preserve_position_around_authored_parameter() -> None:
-    builder = astichi.build()
-    builder.add.Root(
-        astichi.compile(
-            """
-def foo(p1__astichi_param_hole__, user_param, p2__astichi_param_hole__):
-    user_code(user_param)
-    return before, user_param, after
-"""
-        )
-    )
-    builder.add.P1(
-        astichi.compile(
-            """
-def astichi_params(before):
-    pass
-"""
-        )
-    )
-    builder.add.P2(
-        astichi.compile(
-            """
-def astichi_params(after):
-    pass
-"""
-        )
-    )
-    builder.Root.p1.add.P1()
-    builder.Root.p2.add.P2()
-
-    materialized = builder.build().materialize().emit(provenance=False)
-
-    assert "def foo(before, user_param, after):" in materialized
-    assert "user_code(user_param)" in materialized
-    assert "return (before, user_param, after)" in materialized
-
-
 def test_parameter_name_collision_rejects_before_hygiene() -> None:
     builder = astichi.build()
     builder.add.Root(
@@ -202,6 +122,72 @@ def astichi_params(existing):
     builder.Root.params.add.Params()
 
     with pytest.raises(ValueError, match="duplicate final parameter names: existing"):
+        builder.build().materialize()
+
+
+def test_duplicate_inserted_parameter_names_reject_before_hygiene() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__):
+    return total
+"""
+        )
+    )
+    builder.add.First(
+        astichi.compile(
+            """
+def astichi_params(total):
+    pass
+"""
+        )
+    )
+    builder.add.Second(
+        astichi.compile(
+            """
+def astichi_params(total):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.First(order=0)
+    builder.Root.params.add.Second(order=1)
+
+    with pytest.raises(ValueError, match="duplicate final parameter names: total"):
+        builder.build().materialize()
+
+
+def test_inserted_non_default_after_target_default_rejects() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__):
+    return optional, inserted
+"""
+        )
+    )
+    builder.add.Defaulted(
+        astichi.compile(
+            """
+def astichi_params(optional=1):
+    pass
+"""
+        )
+    )
+    builder.add.Required(
+        astichi.compile(
+            """
+def astichi_params(inserted):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.Defaulted(order=0)
+    builder.Root.params.add.Required(order=1)
+
+    with pytest.raises(ValueError, match="non-default parameter after a default"):
         builder.build().materialize()
 
 
@@ -247,6 +233,30 @@ def astichi_params(*more_args):
         builder.build().materialize()
 
 
+def test_inserted_vararg_rejects_when_target_already_has_vararg() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__, *args):
+    pass
+"""
+        )
+    )
+    builder.add.Params(
+        astichi.compile(
+            """
+def astichi_params(*more_args):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.Params()
+
+    with pytest.raises(ValueError, match="multiple \\*args parameters"):
+        builder.build().materialize()
+
+
 def test_parameter_kwarg_duplicates_reject() -> None:
     builder = astichi.build()
     builder.add.Root(
@@ -280,59 +290,28 @@ def astichi_params(**more_kwds):
         builder.build().materialize()
 
 
-def test_parameter_annotation_hole_is_optional_when_unfilled() -> None:
+def test_inserted_kwarg_rejects_when_target_already_has_kwarg() -> None:
     builder = astichi.build()
     builder.add.Root(
         astichi.compile(
             """
-def run(params__astichi_param_hole__):
-    return limit
+def run(params__astichi_param_hole__, **kwds):
+    pass
 """
         )
     )
     builder.add.Params(
         astichi.compile(
             """
-def astichi_params(limit: astichi_hole(limit_type) = 0):
+def astichi_params(**more_kwds):
     pass
 """
         )
     )
     builder.Root.params.add.Params()
 
-    materialized = builder.build().materialize().emit(provenance=False)
-
-    assert "def run(limit=0):" in materialized
-
-
-def test_parameter_annotation_hole_accepts_one_contribution() -> None:
-    params_builder = astichi.build()
-    params_builder.add.Params(
-        astichi.compile(
-            """
-def astichi_params(limit: astichi_hole(limit_type) = 0):
-    pass
-"""
-        )
-    )
-    params_builder.add.Type(astichi.compile("int\n"))
-    params_builder.Params.limit_type.add.Type()
-
-    builder = astichi.build()
-    builder.add.Root(
-        astichi.compile(
-            """
-def run(params__astichi_param_hole__):
-    return limit
-"""
-        )
-    )
-    builder.add.Params(params_builder.build())
-    builder.Root.params.add.Params()
-
-    materialized = builder.build().materialize().emit(provenance=False)
-
-    assert "def run(limit: int=0):" in materialized
+    with pytest.raises(ValueError, match="multiple \\*\\*kwargs parameters"):
+        builder.build().materialize()
 
 
 def test_parameter_annotation_hole_rejects_multiple_contributions() -> None:
@@ -352,3 +331,51 @@ def astichi_params(limit: astichi_hole(limit_type) = 0):
 
     with pytest.raises(ValueError, match="scalar expression target limit_type accepts at most one insert"):
         builder.build()
+
+
+def test_unresolved_arg_identifier_in_parameter_default_rejects() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__):
+    return value
+"""
+        )
+    )
+    builder.add.Params(
+        astichi.compile(
+            """
+def astichi_params(value=default_value__astichi_arg__):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.Params()
+
+    with pytest.raises(ValueError, match="default_value__astichi_arg__"):
+        builder.build().materialize()
+
+
+def test_unresolved_arg_identifier_in_parameter_annotation_rejects() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__):
+    return value
+"""
+        )
+    )
+    builder.add.Params(
+        astichi.compile(
+            """
+def astichi_params(value: value_type__astichi_arg__):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.Params()
+
+    with pytest.raises(ValueError, match="value_type__astichi_arg__"):
+        builder.build().materialize()

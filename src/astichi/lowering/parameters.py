@@ -29,7 +29,8 @@ def validate_parameter_payload_surface(tree: ast.Module) -> None:
     ):
         raise ValueError(
             "def astichi_params(...): pass must be the only top-level statement "
-            "in a parameter payload snippet"
+            "in a parameter payload snippet; astichi_params is reserved in "
+            "authored snippets"
         )
     payload = payloads[0]
     if payload.args.posonlyargs:

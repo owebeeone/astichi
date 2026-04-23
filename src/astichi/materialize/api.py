@@ -1687,9 +1687,6 @@ class _ParamInsertRealizer(ast.NodeTransformer):
                 consumed_shell_ids.update(consumed)
                 result.append(stmt)
                 continue
-            info = extract_param_insert_shell(stmt, phase="materialize")
-            if info is not None and id(stmt) in consumed_shell_ids:
-                continue
             result.append(stmt)
         return result
 

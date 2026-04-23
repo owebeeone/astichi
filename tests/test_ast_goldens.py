@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+import astichi
 from astichi.emit import verify_round_trip
 from tests.versioned_test_harness import (
     actual_results_dir,
@@ -75,6 +76,18 @@ def test_fixture_outputs_match_goldens(case_name: str) -> None:
     verify_round_trip(expected_pre_source)
     ast.parse(pre_source, filename=f"goldens/pre_materialized/{case_name}")
     compile(materialized_source, f"goldens/materialized/{case_name}", "exec")
+    assert (
+        astichi.compile(pre_source, source_kind="astichi-emitted")
+        .materialize()
+        .emit(provenance=False)
+        == expected_materialized_source
+    )
+    assert (
+        astichi.compile(expected_pre_source, source_kind="astichi-emitted")
+        .materialize()
+        .emit(provenance=False)
+        == expected_materialized_source
+    )
 
     assert _normalize_provenance_payload(pre_source) == _normalize_provenance_payload(
         expected_pre_source

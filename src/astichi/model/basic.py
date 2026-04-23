@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
+from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
 from astichi.model.origin import CompileOrigin
@@ -52,7 +53,10 @@ class BasicComposable(Composable):
     def emit(self, *, provenance: bool = True) -> str:
         from astichi.emit import emit_source
 
-        return emit_source(self.tree, provenance=provenance)
+        tree = copy.deepcopy(self.tree)
+        if self.arg_bindings:
+            _apply_emitted_arg_bindings(tree, dict(self.arg_bindings))
+        return emit_source(tree, provenance=provenance)
 
     def materialize(self) -> "BasicComposable":
         from astichi.materialize import materialize_composable
@@ -315,3 +319,38 @@ def _rebuild_composable(
         arg_bindings=arg_bindings,
         keep_names=keep_names,
     )
+
+
+def _apply_emitted_arg_bindings(tree: ast.AST, bindings: dict[str, str]) -> None:
+    """Rewrite resolved ``__astichi_arg__`` slots before source emission."""
+    if not bindings:
+        return
+
+    class _Resolver(ast.NodeTransformer):
+        def _resolve(self, name: str) -> str:
+            base, marker = strip_identifier_suffix(name)
+            if marker is not ARG_IDENTIFIER:
+                return name
+            return bindings.get(base, name)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+            node.name = self._resolve(node.name)
+            return self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            node.name = self._resolve(node.name)
+            return self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+            node.name = self._resolve(node.name)
+            return self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            node.id = self._resolve(node.id)
+            return node
+
+        def visit_arg(self, node: ast.arg) -> ast.AST:
+            node.arg = self._resolve(node.arg)
+            return self.generic_visit(node)
+
+    _Resolver().visit(tree)
