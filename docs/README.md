@@ -1,7 +1,7 @@
 # Astichi user documentation
 
-**astichi** is a library for **ahead-of-time** composition of Python-shaped
-fragments: compile marker-bearing source into a **`Composable`**, wire
+**astichi** is a library for **composing** Python-shaped fragments: compile
+marker-bearing source into a **`Composable`**, wire
 fragments with a **builder**, then **`materialize`** and **`emit`** when you
 need runnable or inspectable Python.
 

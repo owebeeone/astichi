@@ -1,6 +1,6 @@
 # astichi
 
-Ahead-of-time AST stitching for Python code generation.
+AST-level composition and stitching for Python code generation.
 
 Astichi takes small, marker-bearing Python snippets, composes them into one
 coherent program, and emits runnable Python. It is built for generators that

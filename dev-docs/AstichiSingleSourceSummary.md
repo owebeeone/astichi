@@ -15,7 +15,7 @@ items.
 
 ## 1. Current snapshot
 
-- Goal: ahead-of-time composition of Python source snippets via valid-Python
+- Goal: composable assembly of Python source snippets via valid-Python
   marker syntax, additive builder wiring, build-time merge, materialize-time
   hygiene, and emit-time round-trip support.
 - Public package exports today: `astichi.compile`, `astichi.build`,

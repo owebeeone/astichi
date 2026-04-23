@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "astichi"
 version = "0.1.0"
-description = "AST composition helpers: markers, hygiene, lifting, and lowering for ahead-of-time Python codegen"
+description = "AST composition helpers: markers, hygiene, lifting, and lowering for composable Python code generation"
 requires-python = ">=3.12"
 authors = [{ name = "astichi contributors" }]
 keywords = ["ast", "codegen", "composition", "compiler"]
