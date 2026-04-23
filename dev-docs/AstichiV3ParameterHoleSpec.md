@@ -1,6 +1,6 @@
 # Astichi V3 parameter hole spec
 
-Status: draft spec before implementation
+Status: implemented initial slice
 
 This note defines function-definition parameter insertion for Astichi. It
 narrows one item from `AstichiV3TargetAdditionalHoleShapes.md`: adding function
@@ -81,6 +81,10 @@ The function name `astichi_params` is a marker. Its body is ignored and should
 be empty-equivalent (`pass`, `...`, or possibly no meaningful statements after
 formatting decisions are made). Its `ast.arguments` supplies parameter entries
 to a parameter hole.
+
+`async def astichi_params(...): pass` is accepted as an equivalent payload
+carrier. The async flag is not emitted; the carrier still contributes only its
+signature.
 
 The payload may include:
 

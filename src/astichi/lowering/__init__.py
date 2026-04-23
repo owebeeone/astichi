@@ -36,6 +36,15 @@ from astichi.lowering.markers import (
     RecognizedMarker,
     recognize_markers,
 )
+from astichi.lowering.parameters import (
+    PARAMS_PAYLOAD_NAME,
+    extract_params_payload_from_body,
+    has_params_payload,
+    is_astichi_params_def,
+    param_hole_name,
+    validate_parameter_hole_surface,
+    validate_parameter_payload_surface,
+)
 
 __all__ = [
     "MARKERS_BY_NAME",
@@ -46,6 +55,7 @@ __all__ = [
     "KeywordFuncArgItem",
     "MarkerSpec",
     "PayloadLocalDirective",
+    "PARAMS_PAYLOAD_NAME",
     "PortTemplate",
     "PositionalFuncArgItem",
     "RecognizedMarker",
@@ -56,14 +66,20 @@ __all__ = [
     "desugar_external_ref_kwargs",
     "direct_funcargs_directive_calls",
     "extract_funcargs_payload",
+    "extract_params_payload_from_body",
     "group_markers_by_astichi_scope",
+    "has_params_payload",
     "is_astichi_funcargs_call",
+    "is_astichi_params_def",
     "lower_payload_for_region",
+    "param_hole_name",
     "recognize_markers",
     "register_explicit_keyword",
     "validate_call_argument_payload_surface",
     "validate_boundary_interaction_matrix",
     "validate_boundary_marker_placement",
     "validate_external_ref_surface",
+    "validate_parameter_hole_surface",
+    "validate_parameter_payload_surface",
     "validate_payload_for_region",
 ]

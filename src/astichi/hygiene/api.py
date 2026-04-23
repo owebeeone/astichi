@@ -56,6 +56,7 @@ class LexicalOccurrence:
 
     raw_name: str
     scope_id: ScopeId
+    collision_domain: int
     role: LexicalRole
     binding_kind: BindingKind
     ordinal: int
@@ -290,13 +291,15 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
     none is preserved) wins; every other scope is renamed with a
     ``__astichi_scoped_N`` suffix.
     """
-    grouped: dict[str, list[LexicalOccurrence]] = {}
+    grouped: dict[tuple[str, int], list[LexicalOccurrence]] = {}
     for occurrence in scope_analysis.occurrences:
-        grouped.setdefault(occurrence.raw_name, []).append(occurrence)
+        grouped.setdefault(
+            (occurrence.raw_name, occurrence.collision_domain), []
+        ).append(occurrence)
 
     emitted_counter = count(1)
-    for raw_name in sorted(grouped):
-        occurrences = sorted(grouped[raw_name], key=lambda item: item.ordinal)
+    for raw_name, domain in sorted(grouped):
+        occurrences = sorted(grouped[(raw_name, domain)], key=lambda item: item.ordinal)
         by_scope: dict[int, list[LexicalOccurrence]] = {}
         for occurrence in occurrences:
             by_scope.setdefault(occurrence.scope_id.serial, []).append(occurrence)
@@ -787,7 +790,9 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.fresh_scope_imported_names = fresh_scope_imported_names or {}
         self.fresh_scope_trust_declarations = fresh_scope_trust_declarations or {}
         self.scope_counter = count(2)
+        self.collision_domain_counter = count(1)
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
+        self.collision_domain_stack: list[int] = [0]
         self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
         self.astichi_scope_imports_stack: list[frozenset[str]] = []
         # Module scope (serial 1) carries its own trust declarations
@@ -874,6 +879,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             LexicalOccurrence(
                 raw_name=node.id,
                 scope_id=scope_id,
+                collision_domain=self._current_collision_domain(),
                 role=role,
                 binding_kind=binding_kind,
                 ordinal=next(self.ordinal_counter),
@@ -886,6 +892,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             LexicalOccurrence(
                 raw_name=node.arg,
                 scope_id=self._current_scope(),
+                collision_domain=self._current_collision_domain(),
                 role="internal",
                 binding_kind="binding",
                 ordinal=next(self.ordinal_counter),
@@ -900,9 +907,12 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         bindings = self.python_scope_bindings.get(id(node), frozenset())
         self.python_scope_stack.append(bindings)
         pushed_fresh = self._push_fresh_scope_if_needed(node)
+        pushed_collision_domain = self._push_function_collision_domain_if_needed(node)
         try:
             self.generic_visit(node)
         finally:
+            if pushed_collision_domain:
+                self.collision_domain_stack.pop()
             if pushed_fresh:
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
@@ -936,8 +946,19 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.astichi_scope_trusts_stack.append(trusts)
         return True
 
+    def _push_function_collision_domain_if_needed(self, node: ast.AST) -> bool:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        if _has_insert_decorator(node.decorator_list):
+            return False
+        self.collision_domain_stack.append(next(self.collision_domain_counter))
+        return True
+
     def _current_scope(self) -> ScopeId:
         return self.scope_stack[-1]
+
+    def _current_collision_domain(self) -> int:
+        return self.collision_domain_stack[-1]
 
     def _outer_scope(self) -> ScopeId:
         if len(self.scope_stack) >= 2:

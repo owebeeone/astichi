@@ -6,6 +6,11 @@ This note captures design space around additional hole/target shapes beyond the
 current V1/V2 model. It is intentionally broad. The goal is not to lock
 semantics now, but to avoid forgetting viable directions.
 
+Parameter holes have since been split into the focused
+`AstichiV3ParameterHoleSpec.md` and implemented as an initial slice. This
+brainstorm keeps parameter mentions as historical context for the broader typed
+list-field design space.
+
 ## 1. Current boundary
 
 Today Astichi models these insertion families reasonably well:
@@ -44,7 +49,7 @@ But Python has many syntactic units that are neither:
 - `elif` clause
 - `withitem`
 - decorator entry
-- function parameter
+- function parameter (implemented separately as `PARAMETER`)
 - class base / class keyword entry
 - import alias entry
 - comprehension generator
@@ -149,7 +154,8 @@ Potential future Astichi shapes:
 - `decorator`
   - one decorator entry
 - `parameter`
-  - one parameter
+  - implemented separately for function signatures; see
+    `AstichiV3ParameterHoleSpec.md`
 - `arg_entry`
   - one argument entry
 - `class_base`

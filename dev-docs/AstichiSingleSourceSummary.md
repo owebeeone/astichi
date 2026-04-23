@@ -20,6 +20,17 @@ items.
   hygiene, and emit-time round-trip support.
 - Public package exports today: `astichi.compile`, `astichi.build`,
   `astichi.Composable`.
+- Implemented V3 parameter-hole initial slice:
+  - `name__astichi_param_hole__` declares a function-parameter insertion
+    target in an ordinary `FunctionDef.args` parameter slot.
+  - `def astichi_params(...): pass` and
+    `async def astichi_params(...): pass` supply parameter payloads.
+  - Build emits internal `@astichi_insert(name, kind="params", ref=...)`
+    wrappers in pre-materialized source; final materialize consumes them into
+    clean signatures.
+  - Duplicate final parameter names reject instead of being repaired by
+    hygiene; inserted parameters become target-function bindings before body
+    boundary markers and hygiene run.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -206,6 +217,9 @@ There is still a docs/code drift on this format; see §9.4.
 | `@astichi_insert(name, order=...)` | internal/emitted | Block-form supply metadata. Must match a hole. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
 | `astichi_funcargs(...)` | implemented | Authored call-argument payload surface. Lowered through generated internal placement wrappers. |
 | `astichi_insert(name, expr)` | internal/emitted | Generated placement metadata for expression targets. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
+| `name__astichi_param_hole__` | implemented | Function-parameter insertion target. Valid only on ordinary function parameters. |
+| `def astichi_params(...): pass` / `async def astichi_params(...): pass` | implemented | Authored parameter payload surface. Body must be empty-equivalent. |
+| `@astichi_insert(name, kind="params", ref=...)` | internal/emitted | Parameter placement metadata. Rejected by default authored `compile(...)`; consumed before final hygiene. |
 | `astichi_keep(name)` | implemented | Pins lexical spelling; stripped during materialize. |
 | `astichi_export(name)` | implemented | Supply-side export; stripped during materialize. |
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
@@ -227,15 +241,22 @@ Current shape vocabulary in code:
 - `IDENTIFIER`
 - `POSITIONAL_VARIADIC`
 - `NAMED_VARIADIC`
+- `PARAMETER`
+
+Parameter-hole design and implementation notes:
+
+- `dev-docs/AstichiV3ParameterHoleSpec.md`
+- `dev-docs/AstichiV3ParameterHoleImplementationPlan.md`
 
 **Future hole / clause shapes (non-normative):** the current vocabulary covers
-block suites, scalar/`*`/`**` expression sites, and identifier-shaped demands;
-composing **additional `except` / `elif` / `match` `case` clauses**, typed
-`with` items, decorators, parameters, import pieces, and similar **list-field**
-AST targets needs a broader shape inventory (whole-clause supplies, optional
-`stmt` / `stmt_block`, and finer targets only where justified). Design space and
-rationale — including “whole-unit” modeling vs splitting clause headers and bodies
-— live in `dev-docs/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only, not
+block suites, scalar/`*`/`**` expression sites, identifier-shaped demands, and
+function parameter-list targets. Composing **additional `except` / `elif` /
+`match` `case` clauses**, typed `with` items, decorators, import pieces, and
+similar **list-field** AST targets needs a broader shape inventory
+(whole-clause supplies, optional `stmt` / `stmt_block`, and finer targets only
+where justified). Design space and rationale — including “whole-unit” modeling
+vs splitting clause headers and bodies — live in
+`dev-docs/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only, not
 shipped).
 
 ## 5. What is already implemented and working
@@ -289,12 +310,17 @@ Current materialize behavior that is already in place:
 - unresolved `astichi_bind_external(...)` rejects
 - unmatched block-form `@astichi_insert(name)` rejects
 - unmatched bare statement `astichi_insert(name, expr)` rejects
+- unmatched parameter-form `@astichi_insert(name, kind="params")` rejects
 - user-authored `astichi_insert(...)` rejects in default
   `source_kind="authored"` compile mode; `astichi_hole(...)` plus builder
   wiring is the public composition surface, and `astichi_funcargs(...)` is the
-  authored call-argument payload surface
+  authored call-argument payload surface; parameter holes use
+  `name__astichi_param_hole__` plus `def astichi_params(...): pass`
 - authored `astichi_funcargs(...)` lowers through generated internal
   `astichi_insert(...)` wrappers before realization
+- authored `def astichi_params(...): pass` lowers through generated internal
+  `@astichi_insert(..., kind="params")` wrappers and realizes into the target
+  function signature before boundary resolution and hygiene
 - matched source-level inserts flatten into hole positions
 - builder-added contributions become insert shells before materialize, then are
   flattened and hygienically renamed if needed
@@ -357,6 +383,9 @@ These are the active ownership points in the codebase.
 - `src/astichi/lowering/markers.py`
   - marker recognition
   - marker capability objects
+- `src/astichi/lowering/parameters.py`
+  - parameter-hole target validation
+  - `def astichi_params(...): pass` payload validation and extraction
 - `src/astichi/lowering/external_bind.py`
   - Phase 1 bind substitution engine
 - `src/astichi/hygiene/api.py`
@@ -375,10 +404,14 @@ These are the active ownership points in the codebase.
   - raw graph structures
 - `src/astichi/builder/handles.py`
   - fluent builder DSL; indexed paths; `builder.assign` ref-path chains
+- `src/astichi/path_resolution.py`
+  - emitted insert-shell metadata parsing
+  - descendant ref-path resolution
 - `src/astichi/materialize/api.py`
   - `build_merge`
   - materialize gate
   - insert flattening
+  - parameter wrapper realization
   - hygiene closure
 - `src/astichi/emit/api.py`
   - source emission
@@ -409,6 +442,11 @@ Existing high-signal tests:
   - scope-aware external substitution
 - `tests/test_bind_external.py`
   - public `.bind(...)`
+- `tests/test_parameter_holes.py`
+  - parameter-hole marker recognition
+  - parameter payload recognition and shape rejection
+  - signature merge and duplicate-name/cardinality rejection
+  - optional annotation-hole behavior
 - `tests/test_build_merge.py`
   - builder merge behavior
 - `tests/test_materialize.py`
@@ -423,6 +461,7 @@ Focused test commands:
 - typical focused runs:
   - `uv run --with pytest pytest tests/test_unroll_domain.py -q`
   - `uv run --with pytest pytest tests/test_unroll.py -q`
+  - `uv run --with pytest pytest tests/test_parameter_holes.py -q`
   - `uv run --with pytest pytest tests/test_build_merge.py -q`
   - `uv run --with pytest pytest tests/test_materialize.py -q`
 

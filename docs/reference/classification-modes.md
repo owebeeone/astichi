@@ -10,6 +10,7 @@ must follow
 - Explicit **`astichi_keep`**
 - Explicit **`__astichi_keep__`** identifier suffix
 - Explicit **`__astichi_arg__`** identifier suffix
+- Explicit **`__astichi_param_hole__`** parameter-target suffix
 - Explicit **`astichi_bind_external`**
 - Unresolved **free** identifiers
 
@@ -26,6 +27,9 @@ class Client__astichi_keep__:
 
 def step__astichi_arg__(item__astichi_arg__):
     return item__astichi_arg__ + 1
+
+def run(params__astichi_param_hole__):
+    return None
 ```
 
 Use these when the marker must sit in an identifier position, such as a class
@@ -37,9 +41,16 @@ markers like `astichi_keep(Client)` cannot mark a declaration name itself.
 - `name__astichi_arg__` creates an identifier demand named `name`. It must be
   resolved before materialization through `arg_names=`,
   `.bind_identifier(...)`, builder `arg_names=`, or `builder.assign...`.
+- `name__astichi_param_hole__` creates a parameter-list demand target named
+  `name`. It is valid only on an ordinary function parameter and is consumed
+  by parameter materialization.
 
-Both suffix forms classify by their base identifier (`name` above), not by the
+Suffix forms classify by their base identifier (`name` above), not by the
 literal suffixed spelling.
+
+Parameter-hole suffixes are different from arg/keep suffixes. They do not name
+a runtime parameter and they do not participate in hygiene repair. Inserted
+final parameter names are signature API names; duplicate final names reject.
 
 ## Reference-produced identifiers
 
@@ -83,6 +94,7 @@ hygiene-rename the **local** and its references.
 ## See also
 
 - [scoping-hygiene.md](scoping-hygiene.md)
+- [marker-params.md](marker-params.md)
 - [marker-keep.md](marker-keep.md)
 - [marker-ref.md](marker-ref.md)
 - [ReferenceGuide.md](ReferenceGuide.md)

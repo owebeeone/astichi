@@ -19,6 +19,7 @@ from astichi.path_resolution import (
     collect_hole_names_in_body,
     collect_identifier_demands_in_body,
     collect_identifier_suppliers_in_body,
+    collect_param_hole_names_in_body,
     format_instance_leaf,
 )
 from astichi.shell_refs import RefPath, format_ref_path, normalize_ref_path
@@ -305,7 +306,10 @@ def _validate_registered_target_site(
         instance_name=target.root_instance,
         role="target path",
     )
-    if target.target_name in collect_hole_names_in_body(shell.body):
+    if target.target_name in (
+        collect_hole_names_in_body(shell.body)
+        | collect_param_hole_names_in_body(shell.body)
+    ):
         return
     raise ValueError(
         format_astichi_error(

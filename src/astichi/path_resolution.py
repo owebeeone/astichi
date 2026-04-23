@@ -12,6 +12,7 @@ from astichi.lowering.markers import (
     boundary_outer_bind_enabled,
     strip_identifier_suffix,
 )
+from astichi.lowering.parameters import param_hole_name
 from astichi.shell_refs import (
     RefPath,
     RefSegment,
@@ -24,6 +25,15 @@ from astichi.shell_refs import (
 @dataclass(frozen=True)
 class BlockInsertShell:
     """Metadata carried by a decorator-form ``astichi_insert`` shell."""
+
+    target_name: str
+    order: int
+    ref_path: RefPath | None = None
+
+
+@dataclass(frozen=True)
+class ParamInsertShell:
+    """Metadata carried by a parameter ``astichi_insert`` shell."""
 
     target_name: str
     order: int
@@ -82,6 +92,9 @@ def extract_block_insert_shell(
             continue
         if len(decorator.args) != 1:
             continue
+        kind = _extract_insert_kind(decorator, phase=phase)
+        if kind != "block":
+            continue
         first_arg = decorator.args[0]
         if not isinstance(first_arg, ast.Name):
             continue
@@ -106,6 +119,91 @@ def extract_block_insert_shell(
             ref_path=extract_insert_ref(decorator, phase=phase),
         )
     return None
+
+
+def extract_param_insert_shell(
+    stmt: ast.stmt, *, phase: str = "build"
+) -> ParamInsertShell | None:
+    if not isinstance(stmt, ast.FunctionDef):
+        return None
+    for decorator in stmt.decorator_list:
+        if not isinstance(decorator, ast.Call):
+            continue
+        if not isinstance(decorator.func, ast.Name):
+            continue
+        if decorator.func.id != "astichi_insert":
+            continue
+        if len(decorator.args) != 1:
+            continue
+        kind = _extract_insert_kind(decorator, phase=phase)
+        if kind != "params":
+            continue
+        first_arg = decorator.args[0]
+        if not isinstance(first_arg, ast.Name):
+            continue
+        order = _extract_insert_order(decorator, phase=phase)
+        return ParamInsertShell(
+            target_name=first_arg.id,
+            order=order,
+            ref_path=extract_insert_ref(decorator, phase=phase),
+        )
+    return None
+
+
+def _extract_insert_kind(call: ast.Call, *, phase: str) -> str:
+    kind = "block"
+    seen = False
+    for keyword in call.keywords:
+        if keyword.arg != "kind":
+            continue
+        if seen:
+            raise ValueError(
+                format_astichi_error(
+                    phase,
+                    "astichi_insert may not repeat the `kind=` keyword",
+                    hint="use at most one literal kind on internal insert metadata",
+                )
+            )
+        seen = True
+        if not isinstance(keyword.value, ast.Constant) or not isinstance(
+            keyword.value.value, str
+        ):
+            raise ValueError(
+                format_astichi_error(
+                    phase,
+                    "astichi_insert kind must be a string constant",
+                    hint="use `kind=\"params\"` only on parameter insertion metadata",
+                )
+            )
+        kind = keyword.value.value
+        if kind not in {"block", "params"}:
+            raise ValueError(
+                format_astichi_error(
+                    phase,
+                    f"unsupported astichi_insert kind `{kind}`",
+                    hint="supported internal insert kinds are `block` and `params`",
+                )
+            )
+    return kind
+
+
+def _extract_insert_order(call: ast.Call, *, phase: str) -> int:
+    order = 0
+    for keyword in call.keywords:
+        if keyword.arg != "order":
+            continue
+        if not isinstance(keyword.value, ast.Constant) or not isinstance(
+            keyword.value.value, int
+        ):
+            raise ValueError(
+                format_astichi_error(
+                    phase,
+                    "astichi_insert order must be an integer constant",
+                    hint="use `order=0` with a literal int in the decorator",
+                )
+            )
+        order = keyword.value.value
+    return order
 
 
 @dataclass(frozen=True)
@@ -291,6 +389,40 @@ def collect_hole_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
                 and isinstance(node.args[0], ast.Name)
             ):
                 names.add(node.args[0].id)
+            self.generic_visit(node)
+
+    collector = _Collector()
+    for statement in body:
+        collector.visit(statement)
+    return frozenset(names)
+
+
+def collect_param_hole_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
+    """Collect parameter-hole target names in ``body``, excluding insert shells."""
+    names: set[str] = set()
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            for argument in node.args.args:
+                name = param_hole_name(argument)
+                if name is not None:
+                    names.add(name)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            for argument in node.args.args:
+                name = param_hole_name(argument)
+                if name is not None:
+                    names.add(name)
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
             self.generic_visit(node)
 
     collector = _Collector()

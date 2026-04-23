@@ -39,6 +39,8 @@ The emitted metadata forms are:
 
 - `@astichi_insert(target, order=..., ref=...)` for block-shell placement.
 - `astichi_insert(target, expr)` for expression placement.
+- `@astichi_insert(target, kind="params", ref=...)` for function-parameter
+  placement.
 
 The metadata has these semantics:
 
@@ -60,10 +62,12 @@ def normalize_shell():
     ...
 ```
 
-- `ref=` is metadata for block shells. Expression-form metadata
+- `ref=` is metadata for block and parameter shells. Expression-form metadata
   `astichi_insert(target, expr)` does **not** take `ref=`.
 - Builder-generated shells emit `ref=` automatically so later build stages can
   address descendants with the same fluent path language.
+- `kind="params"` shells are consumed by parameter materialization and do not
+  become runtime functions. See [marker-params.md](marker-params.md).
 
 ## `astichi_funcargs(...)`
 

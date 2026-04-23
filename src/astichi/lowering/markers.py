@@ -12,6 +12,7 @@ from astichi.asttools import (
     BLOCK,
     IDENTIFIER,
     NAMED_VARIADIC,
+    PARAMETER,
     POSITIONAL_VARIADIC,
     SCALAR_EXPR,
     MarkerShape,
@@ -368,6 +369,36 @@ class _ArgIdentifierMarker(_SuffixIdentifierMarker):
         )
 
 
+class _ParamHoleIdentifierMarker(_SuffixIdentifierMarker):
+    """`name__astichi_param_hole__` — function parameter-list insertion target."""
+
+    source_name = "astichi_param_hole_identifier"
+    suffix = "__astichi_param_hole__"
+
+    def is_definitional_site(self) -> bool:
+        return False
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.arg):
+            raise TypeError(
+                f"{self.source_name} must be recognized from a function parameter"
+            )
+        if not node.arg.endswith(self.suffix):
+            raise ValueError(
+                f"{self.source_name} requires the reserved {self.suffix} suffix"
+            )
+        base_name = node.arg[: -len(self.suffix)]
+        if not base_name.isidentifier():
+            raise ValueError(
+                f"{self.source_name} requires an identifier prefix before {self.suffix}"
+            )
+
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        return PortTemplate(
+            shape=PARAMETER, mutability="const", source_tag="param_hole"
+        )
+
+
 class _HoleMarker(_SimpleMarker):
     """`astichi_hole(name)` — demand-port with shape inferred at recognition."""
 
@@ -438,6 +469,29 @@ class _InsertMarker(MarkerSpec):
                         "astichi_insert ref= is only valid on decorator-form shells"
                     )
                 parse_ref_path_literal(keyword.value)
+                continue
+            if keyword.arg == "kind":
+                if len(node.args) != 1:
+                    raise ValueError(
+                        "astichi_insert kind= is only valid on decorator-form shells"
+                    )
+                if not isinstance(keyword.value, ast.Constant) or keyword.value.value not in {
+                    "block",
+                    "params",
+                }:
+                    raise ValueError(
+                        "astichi_insert kind= must be the literal string 'block' or 'params'"
+                    )
+                continue
+            if keyword.arg == "order":
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(
+                    keyword.value.value, int
+                ):
+                    raise ValueError("astichi_insert order must be an integer constant")
+                continue
+            raise ValueError(
+                f"astichi_insert does not accept keyword `{keyword.arg}`"
+            )
 
 
 class _FuncArgsMarker(MarkerSpec):
@@ -451,6 +505,35 @@ class _FuncArgsMarker(MarkerSpec):
     def validate_node(self, node: ast.AST) -> None:
         if not isinstance(node, ast.Call):
             raise TypeError("astichi_funcargs must be recognized from an ast.Call")
+
+
+class _ParamsMarker(MarkerSpec):
+    """Authored function-parameter payload surface."""
+
+    source_name = "astichi_params"
+
+    def accepts_call_context(self, node: ast.Call) -> bool:
+        return False
+
+    def accepts_decorator_context(self, node: ast.Call) -> bool:
+        return False
+
+    def is_name_bearing(self) -> bool:
+        return True
+
+    def is_payload_carrier(self) -> bool:
+        return True
+
+    def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        return PortTemplate(
+            shape=PARAMETER, mutability="const", source_tag="params"
+        )
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            raise TypeError("astichi_params must be recognized from a function definition")
+        if node.name != self.source_name:
+            raise ValueError("astichi_params payload function must be named astichi_params")
 
 
 class _RefMarker(MarkerSpec):
@@ -541,10 +624,12 @@ EXPORT = _SimpleMarker(
 )
 FOR = _SimpleMarker("astichi_for", positional_args=1)
 FUNCARGS = _FuncArgsMarker()
+PARAMS = _ParamsMarker()
 INSERT = _InsertMarker()
 REF = _RefMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
+PARAM_HOLE_IDENTIFIER = _ParamHoleIdentifierMarker()
 # Issue 006: `astichi_import(name)` is the declaration-form
 # identifier-threading surface; `astichi_pass(name)` is the value-form
 # surface. Import participates in the top-prefix boundary-declaration
@@ -583,10 +668,12 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     EXPORT,
     FOR,
     FUNCARGS,
+    PARAMS,
     INSERT,
     REF,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,
+    PARAM_HOLE_IDENTIFIER,
     IMPORT,
     PASS,
 )
@@ -687,6 +774,8 @@ class RecognizedMarker:
                 return first_arg.id
             return None
         if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if self.spec is PARAMS and isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return self.node.name
             base, suffix_marker = strip_identifier_suffix(self.node.name)
             if suffix_marker is not None:
                 return base
@@ -753,11 +842,13 @@ class _MarkerVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_params_payload(node)
         self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_params_payload(node)
         self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
@@ -786,11 +877,26 @@ class _MarkerVisitor(ast.NodeVisitor):
         _, suffix_marker = strip_identifier_suffix(name)
         if suffix_marker is None:
             return
+        if suffix_marker is PARAM_HOLE_IDENTIFIER:
+            suffix_marker.validate_node(node)
         self.markers.append(
             RecognizedMarker(
                 spec=suffix_marker,
                 node=node,
                 context="identifier",
+                shape=None,
+            )
+        )
+
+    def _visit_params_payload(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if node.name != PARAMS.source_name:
+            return
+        PARAMS.validate_node(node)
+        self.markers.append(
+            RecognizedMarker(
+                spec=PARAMS,
+                node=node,
+                context="definitional",
                 shape=None,
             )
         )

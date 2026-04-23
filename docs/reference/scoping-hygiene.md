@@ -46,11 +46,62 @@ Astichi tracks composition scopes in addition to ordinary Python scopes.
 The final materialized Python may be a flat block, but Astichi does not treat
 all source snippets as one flat namespace while composing them.
 
+## Function scopes
+
+Real `def` and `async def` bodies keep their normal Python function scope.
+Parameter names and function-local names in one function do not collide with
+same-spelled names in another function:
+
+```python
+def first(value):
+    scratch = value
+    return scratch
+
+def second(value):
+    scratch = value
+    return scratch
+```
+
+Within one function, parameters are still bindings in that function scope. If a
+builder-inserted body snippet binds the same spelling as a parameter, the body
+local can be renamed away from the parameter.
+
+## Inserted parameters
+
+Function parameter holes extend the target function signature before body
+boundary markers and hygiene are resolved:
+
+```python
+def run(params__astichi_param_hole__):
+    astichi_hole(body)
+    return session
+```
+
+If a payload inserts `session`, that name becomes a binding in `run`'s Python
+function scope. Body snippets can intentionally use it with normal expression
+surfaces:
+
+```python
+value = astichi_pass(session, outer_bind=True)
+```
+
+Parameter names are different from ordinary local bindings. They are public
+signature names, so Astichi rejects duplicate final parameter names instead of
+renaming one with `__astichi_scoped_*`. If an inserted body snippet creates a
+local named `session`, that local may be renamed away from the parameter.
+
+See:
+
+- [marker-params.md](marker-params.md)
+- [params/function_signature](snippets/params/function_signature/)
+
 ## Local renaming
 
 Ordinary locals can be renamed when composition would otherwise create a
-collision. Loads, stores, deletes, parameters, class names, and function names
-that belong to the renamed binding are rewritten consistently.
+collision. Loads, stores, and deletes that belong to the renamed binding are
+rewritten consistently. Final names inserted through parameter holes are the
+exception: duplicate signature names reject instead of being renamed into a
+valid signature.
 
 Example: two independent inserted snippets both define `total`; one remains
 `total` and the other becomes `total__astichi_scoped_1`.

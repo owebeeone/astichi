@@ -26,6 +26,9 @@ class MarkerShape(ABC):
     def is_identifier(self) -> bool:
         return False
 
+    def is_parameter(self) -> bool:
+        return False
+
 
 class _ScalarExprShape(MarkerShape):
     def __init__(self) -> None:
@@ -67,8 +70,17 @@ class _IdentifierShape(MarkerShape):
         return True
 
 
+class _ParameterShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("parameter")
+
+    def is_parameter(self) -> bool:
+        return True
+
+
 SCALAR_EXPR = _ScalarExprShape()
 POSITIONAL_VARIADIC = _PositionalVariadicShape()
 NAMED_VARIADIC = _NamedVariadicShape()
 BLOCK = _BlockShape()
 IDENTIFIER = _IdentifierShape()
+PARAMETER = _ParameterShape()

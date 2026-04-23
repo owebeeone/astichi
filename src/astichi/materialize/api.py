@@ -22,8 +22,11 @@ from astichi.lowering import (
     collect_payload_local_directives,
     direct_funcargs_directive_calls,
     extract_funcargs_payload,
+    extract_params_payload_from_body,
+    has_params_payload,
     is_astichi_funcargs_call,
     lower_payload_for_region,
+    param_hole_name,
     register_explicit_keyword,
     recognize_markers,
     validate_payload_for_region,
@@ -62,7 +65,9 @@ from astichi.path_resolution import (
     collect_hole_names_in_body,
     collect_identifier_demands_in_body,
     collect_identifier_suppliers_in_body,
+    collect_param_hole_names_in_body,
     extract_block_insert_shell,
+    extract_param_insert_shell,
     format_instance_leaf,
     is_astichi_insert_shell,
 )
@@ -99,6 +104,16 @@ class _BlockContribution:
     order: int
     edge_index: int
     body: list[ast.stmt]
+    shell_name: str
+    ref_path: RefPath
+
+
+@dataclass(frozen=True)
+class _ParamContribution:
+    source_instance: str
+    order: int
+    edge_index: int
+    args: ast.arguments
     shell_name: str
     ref_path: RefPath
 
@@ -654,6 +669,7 @@ def build_merge(
     for inst_name in resolution_order:
         scoped_block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]] = {}
         scoped_expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]] = {}
+        scoped_param_replacements: dict[tuple[RefPath, str], list[_ParamContribution]] = {}
         for (
             root,
             target_ref_path,
@@ -673,7 +689,10 @@ def build_merge(
             if (
                 target_ref_path
                 and effective_target_name
-                not in collect_hole_names_in_body(target_shell.body)
+                not in (
+                    collect_hole_names_in_body(target_shell.body)
+                    | collect_param_hole_names_in_body(target_shell.body)
+                )
             ):
                 raise ValueError(
                     format_astichi_error(
@@ -690,6 +709,7 @@ def build_merge(
             )
             contributions: list[_BlockContribution] = []
             inserts: list[_ExpressionInsert] = []
+            param_contributions: list[_ParamContribution] = []
             for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
                 # Source-side ports and generated insert wrappers use the raw
@@ -699,14 +719,77 @@ def build_merge(
                     source_record.composable, raw_target_name
                 )
                 source_tree = trees[edge.source_instance]
+                source_effective_body = _effective_root_body(source_tree.body)
+                source_is_param_payload = has_params_payload(source_effective_body)
                 implicit_expr_supply = (
                     _implicit_expression_supply_after_boundary_prefix(
-                        _effective_root_body(source_tree.body)
+                        source_effective_body
                     )
                     is not None
                 )
                 if target_port is not None and source_port is not None:
                     validate_port_pair(target_port, source_port)
+                if (
+                    source_is_param_payload
+                    and (
+                        target_port is None
+                        or target_port.placement != "params"
+                    )
+                ):
+                    raise ValueError(
+                        format_astichi_error(
+                            "materialize",
+                            f"parameter payload source {edge.source_instance} cannot be wired "
+                            f"into non-parameter target {inst_name}.{effective_target_name}",
+                            hint="wire `def astichi_params(...): pass` only into `__astichi_param_hole__` targets",
+                        )
+                    )
+                if target_port is not None and target_port.placement == "params":
+                    param_supply = _lookup_parameter_supply_port(source_record.composable)
+                    if param_supply is None:
+                        raise ValueError(
+                            format_astichi_error(
+                                "materialize",
+                                f"source instance {edge.source_instance} cannot satisfy "
+                                f"parameter target {inst_name}.{effective_target_name}",
+                                hint="supply a `def astichi_params(...): pass` parameter payload",
+                            )
+                        )
+                    validate_port_pair(target_port, param_supply)
+                    payload_args = extract_params_payload_from_body(
+                        source_effective_body
+                    )
+                    if payload_args is None:
+                        raise ValueError(
+                            format_astichi_error(
+                                "materialize",
+                                f"source instance {edge.source_instance} has no parameter payload",
+                                hint="parameter sources must contain only `def astichi_params(...): pass`",
+                            )
+                        )
+                    shell_name = (
+                        f"__astichi_param_contrib__"
+                        f"{_sanitize_for_identifier(inst_name)}"
+                        f"__{_sanitize_for_identifier(effective_target_name)}"
+                        f"__{counter}"
+                        f"__{_sanitize_for_identifier(edge.source_instance)}"
+                    )
+                    inserted_ref_path = normalize_ref_path(
+                        edge.target.ref_path
+                        + (edge.source_instance,)
+                        + edge.target.path
+                    )
+                    param_contributions.append(
+                        _ParamContribution(
+                            source_instance=edge.source_instance,
+                            order=edge.order,
+                            edge_index=_idx,
+                            args=payload_args,
+                            shell_name=shell_name,
+                            ref_path=inserted_ref_path,
+                        )
+                    )
+                    continue
                 if target_port is not None and target_port.placement == "expr":
                     if (
                         _is_call_argument_target_body(target_body, effective_target_name)
@@ -785,11 +868,17 @@ def build_merge(
                     contributions,
                     key=lambda item: (item.order, item.edge_index),
                 )
-        if scoped_block_replacements or scoped_expr_replacements:
+            if param_contributions:
+                scoped_param_replacements[(target_ref_path, effective_target_name)] = sorted(
+                    param_contributions,
+                    key=lambda item: (item.order, item.edge_index),
+                )
+        if scoped_block_replacements or scoped_expr_replacements or scoped_param_replacements:
             _replace_targets_in_tree(
                 trees[inst_name],
                 block_replacements=scoped_block_replacements,
                 expr_replacements=scoped_expr_replacements,
+                param_replacements=scoped_param_replacements,
             )
 
     consumed = {edge.source_instance for edge in graph.edges}
@@ -847,10 +936,17 @@ def build_merge(
     )
     raw_demands = extract_demand_ports(markers, classification)
     satisfied = _locally_satisfied_hole_names(merged_tree)
+    satisfied_params = _locally_satisfied_param_hole_names(merged_tree)
     demand_ports = tuple(
         port
         for port in raw_demands
-        if not (port.sources == frozenset({"hole"}) and port.name in satisfied)
+        if not (
+            (port.sources == frozenset({"hole"}) and port.name in satisfied)
+            or (
+                port.sources == frozenset({"param_hole"})
+                and port.name in satisfied_params
+            )
+        )
     )
 
     return BasicComposable(
@@ -901,6 +997,7 @@ def _replace_targets_in_body(
     *,
     block_replacements: dict[str, list[_BlockContribution]],
     expr_replacements: dict[str, list[_ExpressionInsert]],
+    param_replacements: dict[str, list[_ParamContribution]],
 ) -> list[ast.stmt]:
     """Replace block and expression targets in a statement list.
 
@@ -912,6 +1009,7 @@ def _replace_targets_in_body(
     transformer = _HoleReplacementTransformer(
         block_replacements=block_replacements,
         expr_replacements=expr_replacements,
+        param_replacements=param_replacements,
     )
     result: list[ast.stmt] = []
     for stmt in body:
@@ -974,6 +1072,42 @@ def _make_block_insert_shell(
     )
     donor = location_donor or (shell_body[0] if shell_body else None)
     propagate_ast_source_locations(shell, donor)
+    return shell
+
+
+def _make_param_insert_shell(
+    *,
+    target_name: str,
+    order: int,
+    shell_name: str,
+    args: ast.arguments,
+    ref_path: RefPath | None = None,
+    location_donor: ast.AST | None = None,
+) -> ast.FunctionDef:
+    keywords: list[ast.keyword] = [
+        ast.keyword(arg="kind", value=ast.Constant(value="params"))
+    ]
+    if order != 0:
+        keywords.append(
+            ast.keyword(arg="order", value=ast.Constant(value=order))
+        )
+    decorator = ast.Call(
+        func=ast.Name(id="astichi_insert", ctx=ast.Load()),
+        args=[ast.Name(id=target_name, ctx=ast.Load())],
+        keywords=keywords,
+    )
+    if ref_path is not None:
+        set_insert_ref(decorator, ref_path, phase="materialize")
+    shell = ast.FunctionDef(
+        name=shell_name,
+        args=copy.deepcopy(args),
+        body=[ast.Pass()],
+        decorator_list=[decorator],
+        returns=None,
+        type_comment=None,
+        type_params=[],
+    )
+    propagate_ast_source_locations(shell, location_donor)
     return shell
 
 
@@ -1062,6 +1196,23 @@ def _lookup_supply_port(
         if port.name == name:
             return port
     return None
+
+
+def _lookup_parameter_supply_port(
+    composable: BasicComposable,
+) -> SupplyPort | None:
+    matches = [port for port in composable.supply_ports if port.placement == "params"]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                "parameter payload source exposes multiple parameter supplies",
+                hint="use one `def astichi_params(...): pass` payload per source snippet",
+            )
+        )
+    return matches[0]
 
 
 _BOUNDARY_EXPR_PREFIX_NAMES: frozenset[str] = frozenset(
@@ -1355,6 +1506,36 @@ def _extract_expr_hole_name(node: ast.AST) -> str | None:
     return None
 
 
+def _required_hole_names(tree: ast.AST) -> frozenset[str]:
+    optional_annotation_hole_ids = _direct_annotation_hole_ids(tree)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) in optional_annotation_hole_ids:
+            continue
+        name = _extract_expr_hole_name(node)
+        if name is not None:
+            names.add(name)
+    return frozenset(names)
+
+
+def _direct_annotation_hole_ids(tree: ast.AST) -> frozenset[int]:
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.arg) or node.annotation is None:
+            continue
+        if _extract_expr_hole_name(node.annotation) is not None:
+            ids.add(id(node.annotation))
+    return frozenset(ids)
+
+
+def _remove_optional_annotation_holes(tree: ast.AST) -> None:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.arg) or node.annotation is None:
+            continue
+        if _extract_expr_hole_name(node.annotation) is not None:
+            node.annotation = None
+
+
 def _make_expression_insert_call(
     target_name: str,
     expr: ast.expr,
@@ -1428,6 +1609,239 @@ def _validate_plain_call_region_inserts(
         )
 
 
+def _realize_param_insert_wrappers(tree: ast.Module) -> None:
+    realizer = _ParamInsertRealizer()
+    realizer.visit(tree)
+
+
+class _ParamInsertRealizer(ast.NodeTransformer):
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if all(isinstance(item, ast.stmt) for item in value):
+                    value[:] = self._realize_body([item for item in value if isinstance(item, ast.stmt)])
+                    continue
+                new_items: list[object] = []
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        new_items.append(self.visit(item))
+                    else:
+                        new_items.append(item)
+                value[:] = new_items
+                continue
+            if isinstance(value, ast.AST):
+                setattr(node, field, self.visit(value))
+        return node
+
+    def _realize_body(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        visited_body: list[ast.stmt] = []
+        for stmt in body:
+            if extract_param_insert_shell(stmt, phase="materialize") is not None:
+                visited_body.append(stmt)
+                continue
+            visited = self.visit(stmt)
+            assert isinstance(visited, ast.stmt)
+            visited_body.append(visited)
+
+        wrappers_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]] = {}
+        for index, stmt in enumerate(visited_body):
+            info = extract_param_insert_shell(stmt, phase="materialize")
+            if info is None:
+                continue
+            assert isinstance(stmt, ast.FunctionDef)
+            wrappers_by_target.setdefault(info.target_name, []).append(
+                (info.order, index, stmt)
+            )
+        if not wrappers_by_target:
+            return visited_body
+
+        target_counts: dict[str, int] = {}
+        for stmt in visited_body:
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if is_astichi_insert_shell(stmt):
+                continue
+            for argument in stmt.args.args:
+                name = param_hole_name(argument)
+                if name is not None:
+                    target_counts[name] = target_counts.get(name, 0) + 1
+        for name, count_value in sorted(target_counts.items()):
+            if count_value > 1 and name in wrappers_by_target:
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        f"ambiguous parameter target `{name}` in one statement body",
+                        hint="use distinct parameter-hole names or a more specific build path",
+                    )
+                )
+
+        consumed_shell_ids: set[int] = set()
+        result: list[ast.stmt] = []
+        for stmt in visited_body:
+            if id(stmt) in consumed_shell_ids:
+                continue
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and not is_astichi_insert_shell(stmt):
+                consumed = _apply_param_contributions_to_function(
+                    stmt, wrappers_by_target
+                )
+                consumed_shell_ids.update(consumed)
+                result.append(stmt)
+                continue
+            info = extract_param_insert_shell(stmt, phase="materialize")
+            if info is not None and id(stmt) in consumed_shell_ids:
+                continue
+            result.append(stmt)
+        return result
+
+
+def _apply_param_contributions_to_function(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    wrappers_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]],
+) -> set[int]:
+    consumed: set[int] = set()
+    payloads_by_target: dict[str, list[ast.arguments]] = {}
+    for argument in node.args.args:
+        name = param_hole_name(argument)
+        if name is None or name not in wrappers_by_target:
+            continue
+        ordered = sorted(wrappers_by_target[name], key=lambda item: (item[0], item[1]))
+        payloads_by_target[name] = [copy.deepcopy(shell.args) for _order, _index, shell in ordered]
+        consumed.update(id(shell) for _order, _index, shell in ordered)
+    if not payloads_by_target:
+        return consumed
+    node.args = _merge_params_into_arguments(node.args, payloads_by_target)
+    return consumed
+
+
+def _merge_params_into_arguments(
+    target: ast.arguments,
+    payloads_by_target: dict[str, list[ast.arguments]],
+) -> ast.arguments:
+    positional = list(target.posonlyargs) + list(target.args)
+    target_defaults = _defaults_by_arg(positional, list(target.defaults))
+    new_posonlyargs: list[ast.arg] = []
+    new_args: list[ast.arg] = []
+    new_default_by_id: dict[int, ast.expr | None] = {}
+    ordered_payloads: list[ast.arguments] = []
+
+    for argument in target.posonlyargs:
+        copied = copy.deepcopy(argument)
+        new_posonlyargs.append(copied)
+        new_default_by_id[id(copied)] = copy.deepcopy(target_defaults.get(id(argument)))
+
+    for argument in target.args:
+        name = param_hole_name(argument)
+        if name is None:
+            copied = copy.deepcopy(argument)
+            new_args.append(copied)
+            new_default_by_id[id(copied)] = copy.deepcopy(target_defaults.get(id(argument)))
+            continue
+        for payload in payloads_by_target.get(name, []):
+            ordered_payloads.append(payload)
+            payload_positionals = list(payload.posonlyargs) + list(payload.args)
+            payload_defaults = _defaults_by_arg(payload_positionals, list(payload.defaults))
+            for payload_arg in payload.args:
+                copied = copy.deepcopy(payload_arg)
+                new_args.append(copied)
+                new_default_by_id[id(copied)] = copy.deepcopy(
+                    payload_defaults.get(id(payload_arg))
+                )
+
+    merged = copy.deepcopy(target)
+    merged.posonlyargs = new_posonlyargs
+    merged.args = new_args
+    merged.defaults = _rebuild_defaults(
+        list(merged.posonlyargs) + list(merged.args), new_default_by_id
+    )
+
+    for payload in ordered_payloads:
+        if payload.vararg is not None:
+            if merged.vararg is not None:
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        "parameter insertion would create multiple *args parameters",
+                        hint="only one authored or inserted vararg is allowed per function",
+                    )
+                )
+            merged.vararg = copy.deepcopy(payload.vararg)
+        if payload.kwarg is not None:
+            if merged.kwarg is not None:
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        "parameter insertion would create multiple **kwargs parameters",
+                        hint="only one authored or inserted kwarg is allowed per function",
+                    )
+                )
+            merged.kwarg = copy.deepcopy(payload.kwarg)
+        merged.kwonlyargs.extend(copy.deepcopy(payload.kwonlyargs))
+        merged.kw_defaults.extend(copy.deepcopy(payload.kw_defaults))
+
+    _validate_unique_parameter_names(merged)
+    return merged
+
+
+def _defaults_by_arg(
+    positional: list[ast.arg], defaults: list[ast.expr]
+) -> dict[int, ast.expr | None]:
+    result: dict[int, ast.expr | None] = {id(arg): None for arg in positional}
+    if not defaults:
+        return result
+    for argument, default in zip(positional[-len(defaults):], defaults, strict=True):
+        result[id(argument)] = default
+    return result
+
+
+def _rebuild_defaults(
+    positional: list[ast.arg],
+    defaults_by_id: dict[int, ast.expr | None],
+) -> list[ast.expr]:
+    defaults: list[ast.expr] = []
+    seen_default = False
+    for argument in positional:
+        default = defaults_by_id.get(id(argument))
+        if default is None:
+            if seen_default:
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        "parameter insertion would place a non-default parameter after a default",
+                        hint="ensure inserted ordinary parameters with no default appear before defaulted parameters",
+                    )
+                )
+            continue
+        seen_default = True
+        defaults.append(default)
+    return defaults
+
+
+def _validate_unique_parameter_names(args: ast.arguments) -> None:
+    names: list[str] = []
+    names.extend(argument.arg for argument in args.posonlyargs)
+    names.extend(argument.arg for argument in args.args)
+    names.extend(argument.arg for argument in args.kwonlyargs)
+    if args.vararg is not None:
+        names.append(args.vararg.arg)
+    if args.kwarg is not None:
+        names.append(args.kwarg.arg)
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for name in names:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+    if duplicates:
+        rendered = ", ".join(sorted(duplicates))
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                f"duplicate final parameter names: {rendered}",
+                hint="parameter names are API bindings and are not renamed by hygiene",
+            )
+        )
+
+
 class _HoleReplacementTransformer(
     _SkipInsertShellTransformerMixin, ast.NodeTransformer
 ):
@@ -1436,9 +1850,11 @@ class _HoleReplacementTransformer(
         *,
         block_replacements: dict[str, list[_BlockContribution]],
         expr_replacements: dict[str, list[_ExpressionInsert]],
+        param_replacements: dict[str, list[_ParamContribution]],
     ) -> None:
         self.block_replacements = block_replacements
         self.expr_replacements = expr_replacements
+        self.param_replacements = param_replacements
 
     def generic_visit(self, node: ast.AST) -> ast.AST:
         for field, old_value in ast.iter_fields(node):
@@ -1477,6 +1893,59 @@ class _HoleReplacementTransformer(
                 result.append(shell)
             return result
         return self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST | list[ast.stmt]:
+        if is_astichi_insert_shell(node):
+            return node
+        result: list[ast.stmt] = []
+        wrapped_targets: set[str] = set()
+        for argument in node.args.args:
+            target_name = param_hole_name(argument)
+            if target_name is None or target_name not in self.param_replacements:
+                continue
+            wrapped_targets.add(target_name)
+        visited = self.generic_visit(node)
+        assert isinstance(visited, ast.FunctionDef)
+        result.append(visited)
+        for target_name in sorted(wrapped_targets):
+            for contrib in self.param_replacements[target_name]:
+                result.append(
+                    _make_param_insert_shell(
+                        target_name=target_name,
+                        order=contrib.order,
+                        shell_name=contrib.shell_name,
+                        args=contrib.args,
+                        ref_path=contrib.ref_path,
+                        location_donor=node,
+                    )
+                )
+        return result
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST | list[ast.stmt]:
+        if is_astichi_insert_shell(node):
+            return node
+        result: list[ast.stmt] = []
+        wrapped_targets: set[str] = set()
+        for argument in node.args.args:
+            target_name = param_hole_name(argument)
+            if target_name is None or target_name not in self.param_replacements:
+                continue
+            wrapped_targets.add(target_name)
+        visited = self.generic_visit(node)
+        assert isinstance(visited, ast.AsyncFunctionDef)
+        result.append(visited)
+        for target_name in sorted(wrapped_targets):
+            for contrib in self.param_replacements[target_name]:
+                shell = _make_param_insert_shell(
+                    target_name=target_name,
+                    order=contrib.order,
+                    shell_name=contrib.shell_name,
+                    args=contrib.args,
+                    ref_path=contrib.ref_path,
+                    location_donor=node,
+                )
+                result.append(shell)
+        return result
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         hole_name = _extract_expr_hole_name(node)
@@ -1857,10 +2326,22 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     7. re-recognize markers and re-extract ports.
     """
     satisfied_holes = _locally_satisfied_hole_names(composable.tree)
+    satisfied_param_holes = _locally_satisfied_param_hole_names(composable.tree)
+    required_holes = _required_hole_names(composable.tree)
     mandatory_holes = [
         port
         for port in composable.demand_ports
-        if "hole" in port.sources and port.name not in satisfied_holes
+        if (
+            (
+                "hole" in port.sources
+                and port.name in required_holes
+                and port.name not in satisfied_holes
+            )
+            or (
+                "param_hole" in port.sources
+                and port.name not in satisfied_param_holes
+            )
+        )
     ]
     if mandatory_holes:
         names = ", ".join(port.name for port in mandatory_holes)
@@ -1922,8 +2403,9 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
 
     unmatched_block_shells = _find_unmatched_block_insert_shells(composable.tree)
+    unmatched_param_shells = _find_unmatched_param_insert_shells(composable.tree)
     unmatched_expr_inserts = _find_unmatched_expression_inserts(composable.tree)
-    if unmatched_block_shells or unmatched_expr_inserts:
+    if unmatched_block_shells or unmatched_param_shells or unmatched_expr_inserts:
         parts: list[str] = []
         for name, lineno in unmatched_block_shells:
             parts.append(
@@ -1934,6 +2416,11 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
             parts.append(
                 f"astichi_insert({name}, ...) at line {lineno} has no "
                 f"matching astichi_hole({name}) expression in the tree"
+            )
+        for name, lineno in unmatched_param_shells:
+            parts.append(
+                f"@astichi_insert({name}, kind='params') at line {lineno} has no "
+                f"matching {name}__astichi_param_hole__ parameter in the same body"
             )
         raise ValueError(
             format_astichi_error(
@@ -1962,6 +2449,8 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         # surface as a validation error at compile-time).
         _resolve_boundary_imports(tree, arg_bindings)
         _resolve_boundary_passes(tree, arg_bindings)
+    _realize_param_insert_wrappers(tree)
+    _remove_optional_annotation_holes(tree)
     unresolved_boundaries = _find_unresolved_boundary_demands(tree)
     if unresolved_boundaries:
         parts = [
@@ -2089,6 +2578,7 @@ def _replace_targets_in_tree(
     *,
     block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]],
     expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]],
+    param_replacements: dict[tuple[RefPath, str], list[_ParamContribution]],
 ) -> None:
     """Apply target replacements keyed by ``(shell_ref_path, hole_name)``."""
 
@@ -2103,11 +2593,17 @@ def _replace_targets_in_tree(
             for (ref_path, target_name), inserts in expr_replacements.items()
             if ref_path == current_ref
         }
-        if local_block or local_expr:
+        local_param = {
+            target_name: contributions
+            for (ref_path, target_name), contributions in param_replacements.items()
+            if ref_path == current_ref
+        }
+        if local_block or local_expr or local_param:
             body = _replace_targets_in_body(
                 body,
                 block_replacements=local_block,
                 expr_replacements=local_expr,
+                param_replacements=local_param,
             )
         for stmt in body:
             info = extract_block_insert_shell(stmt, phase="materialize")
@@ -2201,6 +2697,27 @@ def _find_unmatched_expression_inserts(tree: ast.AST) -> list[tuple[str, int]]:
     return unmatched
 
 
+def _find_unmatched_param_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
+    unmatched: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            if not value or not all(isinstance(item, ast.stmt) for item in value):
+                continue
+            holes = _param_holes_in_statement_list(value)
+            for stmt in value:
+                info = extract_param_insert_shell(stmt, phase="materialize")
+                if info is None:
+                    continue
+                if info.target_name not in holes:
+                    unmatched.append((info.target_name, getattr(stmt, "lineno", 0) or 0))
+    return unmatched
+
+
 def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
     """Hole names whose matching `astichi_insert` shell is a body sibling.
 
@@ -2230,6 +2747,56 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                     shells.add(info.target_name)
             matched.update(holes & shells)
     return frozenset(matched)
+
+
+def _locally_satisfied_param_hole_names(tree: ast.AST) -> frozenset[str]:
+    matched: set[str] = set()
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            if not value or not all(isinstance(item, ast.stmt) for item in value):
+                continue
+            holes = _param_holes_in_statement_list(value)
+            shells = {
+                info.target_name
+                for stmt in value
+                if (info := extract_param_insert_shell(stmt, phase="materialize")) is not None
+            }
+            matched.update(holes & shells)
+    return frozenset(matched)
+
+
+def _param_holes_in_statement_list(body: list[ast.stmt]) -> set[str]:
+    names: set[str] = set()
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            for argument in node.args.args:
+                name = param_hole_name(argument)
+                if name is not None:
+                    names.add(name)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            for argument in node.args.args:
+                name = param_hole_name(argument)
+                if name is not None:
+                    names.add(name)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+    collector = _Collector()
+    for statement in body:
+        collector.visit(statement)
+    return names
 
 
 def _flatten_block_inserts(tree: ast.AST) -> None:

@@ -24,10 +24,13 @@ astichi_pass(name)
 astichi_export(name)
 astichi_for(domain)
 astichi_funcargs(...)
+def astichi_params(...): pass
+async def astichi_params(...): pass
 astichi_ref(value)
 astichi_ref(external=name)
 name__astichi_keep__
 name__astichi_arg__
+name__astichi_param_hole__
 ```
 
 Reserved names:
@@ -50,6 +53,16 @@ Call-argument note:
   or `(value := 2, value)`; build/merge normalizes it internally
 - expression-form `astichi_insert(target, expr)` is internal normalization
   metadata, not an authored user surface
+
+Parameter note:
+
+- `name__astichi_param_hole__` declares a function-parameter insertion target
+  in an ordinary parameter slot.
+- `def astichi_params(...): pass` and
+  `async def astichi_params(...): pass` are the authored parameter payload
+  carriers; only the signature is inserted.
+- Astichi may emit internal `@astichi_insert(name, kind="params", ...)`
+  wrappers in pre-materialized source. They are not authored user surface.
 
 Reference-path note:
 
@@ -85,6 +98,9 @@ Identifier-suffix note:
 - `name__astichi_arg__` creates an identifier demand named `name`. Resolve it
   through `arg_names=`, `.bind_identifier(...)`, builder `arg_names=`, or
   `builder.assign...` before materialize.
+- `name__astichi_param_hole__` creates a parameter-list insertion target named
+  `name`. It is stripped by parameter materialization, not by the ordinary
+  identifier arg/keep strip pass.
 - Use suffix forms when the marker must live inside an identifier slot, such
   as a class name, function name, parameter name, assignment target, or
   reference.
@@ -102,6 +118,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Holes, `*`, `**`, block position | [marker-holes.md](marker-holes.md) |
 | Binds and exports | [marker-binds-and-exports.md](marker-binds-and-exports.md) |
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
+| Parameter holes | [marker-params.md](marker-params.md) |
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
 | Identifier suffixes | [classification-modes.md](classification-modes.md) |

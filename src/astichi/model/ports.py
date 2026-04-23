@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING
 
-from astichi.asttools import BLOCK, IDENTIFIER, SCALAR_EXPR, MarkerShape
+from astichi.asttools import BLOCK, IDENTIFIER, PARAMETER, SCALAR_EXPR, MarkerShape
 from astichi.lowering import RecognizedMarker
 
 if TYPE_CHECKING:
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 __all__ = (
     "BLOCK",
     "IDENTIFIER",
+    "PARAMETER",
     "SCALAR_EXPR",
     "DemandPort",
     "SupplyPort",
@@ -190,4 +191,6 @@ def _placement_for_shape(shape: MarkerShape) -> str:
         return "block"
     if shape is IDENTIFIER:
         return "identifier"
+    if shape is PARAMETER:
+        return "params"
     return "expr"

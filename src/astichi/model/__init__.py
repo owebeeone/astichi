@@ -10,6 +10,7 @@ from astichi.model.external_values import (
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     IDENTIFIER,
+    PARAMETER,
     DemandPort,
     SupplyPort,
     extract_demand_ports,
@@ -23,6 +24,7 @@ __all__ = [
     "CompileOrigin",
     "DemandPort",
     "IDENTIFIER",
+    "PARAMETER",
     "MAX_EXTERNAL_VALUE_DEPTH",
     "SupplyPort",
     "extract_demand_ports",
