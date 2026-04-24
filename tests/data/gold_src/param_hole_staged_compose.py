@@ -1,33 +1,11 @@
-"""Bug #2 (addressing): staged param-hole composition across `build()` boundaries.
+"""Staged param-hole composition across ``build()`` boundaries.
 
-Context
--------
-A parameter hole (``name__astichi_param_hole__``) is anchor-preserving at
-``build()`` time: the authored parameter stays in ``node.args.args`` and
-matching ``@astichi_insert(name, kind='params', ref=...)`` shells accumulate
-as siblings of the owning ``FunctionDef``. That means a param hole does not
-suffer the Bug #1 failure mode that bit call-argument holes (which used to
-be replaced wholesale at ``build()``).
-
-However, the builder's target-site resolution still breaks when the root
-composable passed to a *second* builder has already been built. The
-previously-built root ends up as a single outer ``astichi_hole(__astichi_root__Root__)``
-statement whose shell body holds the surviving ``params__astichi_param_hole__``
-parameter, and ``builder.Root.params`` is looked up at ref_path ``()`` —
-which doesn't know about ``params`` (that name lives at ``('Root',)`` inside
-the shell). So the second-stage ``Root.params.add.Stage2(order=1)`` call
-raises::
-
-    build: unknown target site `Root.params`;
-    context: root instance 'Root';
-    hint: check fluent ref spelling and that the instance is registered
-          before deep traversal
-
-This golden case is a **red TDD target**: it is written as the happy-path
-the author wants — two staged contributions into one param hole, merged in
-order — and currently fails at the stage-2 ``add`` call. When Bug #2
-(addressing across previously-built root shells) is fixed, this case should
-pass with the expected stage-2 signature and regenerated goldens.
+Parameter holes are anchor-preserving at ``build()`` time: the authored
+parameter stays in ``node.args.args`` and matching
+``@astichi_insert(name, kind='params', ref=...)`` shells accumulate as
+siblings of the owning ``FunctionDef``. This case pins the contract that
+a second builder stage can address into a previously-built root shell's
+param hole and merge another contribution in order.
 """
 
 from __future__ import annotations

@@ -230,6 +230,8 @@ def extract_hole_name(stmt: ast.stmt) -> str | None:
 
 def synthetic_root_scope_shell(
     body: list[ast.stmt],
+    *,
+    phase: str = "materialize",
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Detect the ``__astichi_root__<inst>__`` wrapper produced by ``build()``.
 
@@ -239,6 +241,11 @@ def synthetic_root_scope_shell(
     lookup code should treat the inner shell body as the "module"
     body for that composable; this helper returns the shell node when
     the pattern matches, otherwise ``None``.
+
+    ``phase`` selects the diagnostic label for any nested validation
+    error raised by ``extract_block_insert_shell``; callers from the
+    build surface should pass ``phase="build"`` so errors are attributed
+    correctly.
     """
     if len(body) != 2:
         return None
@@ -248,18 +255,45 @@ def synthetic_root_scope_shell(
     shell = body[1]
     if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
-    info = extract_block_insert_shell(shell, phase="materialize")
+    info = extract_block_insert_shell(shell, phase=phase)
     if info is None or info.target_name != hole_name:
         return None
     return shell
 
 
-def effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
+def effective_root_body(
+    body: list[ast.stmt], *, phase: str = "materialize"
+) -> list[ast.stmt]:
     """Return the user-authored root body, unwrapping the synthetic root shell."""
-    shell = synthetic_root_scope_shell(body)
+    shell = synthetic_root_scope_shell(body, phase=phase)
     if shell is None:
         return body
     return shell.body
+
+
+def promote_wrapped_root_ref_path(
+    tree: ast.Module, ref_path: RefPath, *, phase: str = "materialize"
+) -> RefPath:
+    """Rewrite ``()`` to the synthetic wrapper's inner ref path, if present.
+
+    When ``tree`` is a previously-built composable whose body is the
+    ``__astichi_root__<inst>__`` hole+shell pair, an edge keyed at ref
+    path ``()`` targets a hole that actually lives inside the shell
+    body; merge-time walks descend into the shell with
+    ``ref_path=(<inst>,)``, so promoting the edge's ``()`` to that
+    inner ref lets the regular walk find the hole. Non-wrapped trees
+    and non-empty ``ref_path`` values are returned unchanged so
+    legacy addressing keeps working.
+    """
+    if ref_path:
+        return ref_path
+    outer_shell = synthetic_root_scope_shell(tree.body, phase=phase)
+    if outer_shell is None:
+        return ref_path
+    info = extract_block_insert_shell(outer_shell, phase=phase)
+    if info is None or info.ref_path is None:
+        return ref_path
+    return info.ref_path
 
 
 @dataclass(frozen=True)
@@ -393,6 +427,37 @@ class ShellIndex:
                     hint="give each `@astichi_insert(..., ref=...)` shell a distinct fluent path",
                 )
             )
+
+    def with_root_body_alias(
+        self, body: list[ast.stmt]
+    ) -> "ShellIndex":
+        """Return a new ShellIndex with ref path ``()`` pointing at ``body``.
+
+        Used to expose the synthetic root wrapper's inner body as the
+        primary ``()`` lookup target while retaining any other indexed
+        ref paths (including the wrapper's own ``(<inst>,)`` synonym).
+        """
+        aliased = dict(self._matches_by_ref)
+        aliased[()] = (AddressableShell(ref_path=(), body=body),)
+        return ShellIndex(_matches_by_ref=aliased)
+
+
+def shell_index_with_root_transparency(
+    tree: ast.Module, *, phase: str = "materialize"
+) -> ShellIndex:
+    """Build a ``ShellIndex`` that treats the synthetic root wrapper as
+    transparent at ref path ``()``.
+
+    Single public entry point for the "a previously-built composable
+    exposes its user body at ``()`` *and* at ``(<inst>,)``" rule. If
+    ``tree`` is not a wrapped composable, the returned index is the
+    plain ``ShellIndex.from_tree`` result.
+    """
+    base = ShellIndex.from_tree(tree)
+    unwrapped = effective_root_body(tree.body, phase=phase)
+    if unwrapped is tree.body:
+        return base
+    return base.with_root_body_alias(unwrapped)
 
 
 def boundary_import_statement(stmt: ast.stmt) -> tuple[str, ast.Call] | None:

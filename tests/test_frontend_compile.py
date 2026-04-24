@@ -29,13 +29,10 @@ def test_compile_returns_frontend_composable_with_origin_and_line_offsets() -> N
 
 
 def test_compile_arg_names_records_identifier_resolutions_eagerly() -> None:
-    # Issue 005 §6 / 5d + Bug #1 follow-up: `arg_names=` on `compile`
-    # validates each key against the IDENTIFIER-shape demand ports
-    # parsed from `source` and records the resolutions in
-    # `arg_bindings`. `__astichi_arg__` suffix slots are also rewritten
-    # into the tree immediately (symmetric with
-    # `astichi_import`/`astichi_pass` resolution) so merge-time
-    # validators never see pre-resolution suffix text.
+    # `arg_names=` validates keys against IDENTIFIER-shape demand ports
+    # and records resolutions in `arg_bindings`. `__astichi_arg__`
+    # suffix slots are rewritten eagerly so merge-time validators never
+    # see pre-resolution suffix text.
     compiled = astichi.compile(
         """
 def wrap(callback__astichi_arg__):

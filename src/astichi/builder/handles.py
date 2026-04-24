@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
@@ -16,14 +15,13 @@ from astichi.builder.graph import (
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
 from astichi.path_resolution import (
-    AddressableShell,
     ShellIndex,
     collect_hole_names_in_body,
     collect_identifier_demands_in_body,
     collect_identifier_suppliers_in_body,
     collect_param_hole_names_in_body,
-    effective_root_body,
     format_instance_leaf,
+    shell_index_with_root_transparency,
 )
 from astichi.shell_refs import RefPath, format_ref_path, normalize_ref_path
 
@@ -267,24 +265,7 @@ def _registered_shell_index(
     piece = record.composable
     if not isinstance(piece, BasicComposable):
         return None
-    tree = piece.tree
-    # Bug #2: a composable produced by a previous ``build()`` wraps the
-    # user-authored body inside a single ``astichi_hole(__astichi_root__<inst>__)``
-    # anchor plus a matching ``@astichi_insert(..., ref=<inst>)`` shell.
-    # The builder address space must treat that wrapper as transparent so
-    # ``stage2.<Inst>.<hole>`` resolves against the user's holes at ref
-    # path ``()``. The inner shell's own ref path (``(<inst>,)``) remains
-    # indexed so legacy addressing that descends through the wrapper
-    # (``stage2.<Inst>.<orig_instance>.<slot>``) still works.
-    # Materialize already applies the same unwrap at its ``()`` lookups
-    # (see ``_effective_root_body`` call sites).
-    unwrapped_body = effective_root_body(tree.body)
-    if unwrapped_body is tree.body:
-        return ShellIndex.from_tree(tree)
-    base_index = ShellIndex.from_tree(tree)
-    aliased = dict(base_index._matches_by_ref)
-    aliased[()] = (AddressableShell(ref_path=(), body=unwrapped_body),)
-    return ShellIndex(_matches_by_ref=aliased)
+    return shell_index_with_root_transparency(piece.tree, phase="build")
 
 
 def _descend_registered_ref(

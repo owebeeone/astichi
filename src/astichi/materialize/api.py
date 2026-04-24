@@ -73,6 +73,7 @@ from astichi.path_resolution import (
     extract_param_insert_shell,
     format_instance_leaf,
     is_astichi_insert_shell,
+    promote_wrapped_root_ref_path,
     synthetic_root_scope_shell as _synthetic_root_scope_shell,
 )
 from astichi.shell_refs import (
@@ -633,18 +634,8 @@ def build_merge(
         tree = copy.deepcopy(record.composable.tree)
         if do_unroll:
             tree = unroll_tree(tree)
-        # Bug #2 (addressing): always refresh ports from the current
-        # tree so a previously-built composable's anchor-preserved
-        # holes (whose ports were stripped by its own `build_merge`
-        # satisfied-holes pass) are re-exposed to this builder stage.
-        # Intermediate `BasicComposable.demand_ports` hide holes the
-        # earlier build considered locally satisfied; the tree still
-        # carries the anchors, so `extract_demand_ports` from markers
-        # re-derives the full open-ended set. Materialize's final gate
-        # cross-checks against `_locally_satisfied_*_hole_names` on
-        # the merged tree, so re-exposing satisfied ports here does
-        # not re-introduce a materialize-time error for untouched
-        # holes.
+        # Re-derive ports from the current tree so anchor-preserved
+        # holes a prior build() marked satisfied remain addressable.
         composable = _refresh_composable(record.composable, tree)
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
@@ -661,33 +652,15 @@ def build_merge(
     # ``AssignBinding`` records on the graph and applied fresh here.
     _apply_assign_bindings(graph.assigns, instance_records, trees, shell_indexes)
 
-    # Bug #2 (addressing): when the target instance is a previously-built
-    # composable whose tree carries the synthetic
-    # ``__astichi_root__<inst>__`` wrapper, an edge keyed at ref path
-    # ``()`` refers to a hole that actually lives inside the wrapper's
-    # shell body (legacy edges keyed at ``('<inst>',)`` already land
-    # there via normal descent). Promote those ``()`` ref paths to the
-    # wrapper's inner ref so merge-time ``_replace_targets_in_tree``
-    # finds the hole during its ordinary walk. The builder-side
-    # ``_registered_shell_index`` aliases ``()`` to the same body for
-    # validation, so both user surfaces agree.
-    wrapper_inner_ref: dict[str, RefPath] = {}
-    for inst_name, tree in trees.items():
-        outer_shell = _synthetic_root_scope_shell(tree.body)
-        if outer_shell is None:
-            continue
-        info = extract_block_insert_shell(outer_shell, phase="materialize")
-        if info is None or info.ref_path is None:
-            continue
-        wrapper_inner_ref[inst_name] = info.ref_path
     edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
         effective_name = iter_target_name(
             edge.target.target_name, edge.target.path
         )
-        ref_path = normalize_ref_path(edge.target.ref_path)
-        if not ref_path and edge.target.root_instance in wrapper_inner_ref:
-            ref_path = wrapper_inner_ref[edge.target.root_instance]
+        ref_path = promote_wrapped_root_ref_path(
+            trees[edge.target.root_instance],
+            normalize_ref_path(edge.target.ref_path),
+        )
         key = (
             edge.target.root_instance,
             ref_path,
@@ -939,17 +912,10 @@ def build_merge(
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
 
-    # Issue 005 §6 / 5d + Bug #1 follow-up: union per-instance
-    # `arg_bindings` and `keep_names` into the merged composable so
-    # the materialize resolver pass and hygiene see everything the
-    # builder accumulated. Since `bind_identifier` now eagerly rewrites
-    # `__astichi_arg__` suffix slots into their resolved identifiers
-    # in each per-instance tree before merge, two instances that both
-    # bound `field` (to `a` and `b` respectively) carry those results
-    # as local tree text — there is no residual suffix slot to conflict
-    # over in the merged tree. Retain all unique (key, value) pairs so
-    # hygiene pins every resolved target through scope collision
-    # rewrites; the tuple shape tolerates duplicate keys by design.
+    # Union per-instance arg_bindings / keep_names so the resolver pass
+    # and hygiene see everything bound before merge. Duplicate keys are
+    # retained as distinct pairs (eagerly-rewritten slots no longer
+    # conflict in the tree).
     merged_arg_binding_pairs: set[tuple[str, str]] = set()
     merged_keep_names: set[str] = set()
     for record in instance_records.values():
@@ -1166,15 +1132,9 @@ def _wrap_in_root_scope(
     purposes. `_flatten_block_inserts` later consumes the hole and
     the shell (after rename-collisions has run), inlining the body
     back at module level — the wrapper exists purely to carry scope
-    identity through the hygiene pass.
-
-    Bug #2: if ``body`` is already shaped like
-    ``[astichi_hole(__astichi_root__X__), @astichi_insert(ref=X, ...) def __astichi_root__X__(): <user>]``
-    — i.e. the instance is itself a previously-built composable — the
-    outer wrapper is stripped first so we don't nest two root-scope
-    shells around the same user body. Stage-1 identities propagate via
-    the merged ``arg_bindings`` / ``keep_names`` union; stage-2's fresh
-    wrapper carries the scope identity for this build.
+    identity through the hygiene pass. If ``body`` already carries a
+    synthetic root wrapper (previously-built composable), it is
+    stripped first to avoid double-nesting.
     """
     outer_shell = _synthetic_root_scope_shell(body)
     if outer_shell is not None:
@@ -1969,14 +1929,10 @@ class _HoleReplacementTransformer(
         for name in authored_explicit_keywords:
             register_explicit_keyword(name, seen_explicit_keywords)
 
-        # Bug #1 contract: `astichi_hole(name)` is an *anchor* through
-        # build/emit and is only removed by `materialize()` (see
-        # `AstichiApiDesignV1-CompositionUnification.md §2.2`). Build
-        # therefore keeps the authored hole arg/keyword in place and
-        # *appends* sibling `astichi_insert(name, expr)` entries in the
-        # same call position, mirroring the block-hole anchor pattern
-        # in `visit_Expr`. Staged composition can then keep wiring into
-        # the same target across multiple `build()` calls.
+        # `astichi_hole(name)` is an anchor through build/emit and is
+        # only removed by `materialize()` (§2.2). Keep the authored
+        # hole arg/keyword and append sibling `astichi_insert(name,
+        # expr)` entries, mirroring the block-hole anchor pattern.
         new_args: list[ast.expr] = []
         for arg in node.args:
             hole_name = _extract_expr_hole_name(arg)
@@ -2158,10 +2114,8 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
         node.func = self.visit(node.func)
 
-        # Bug #1 contract: `astichi_hole(name)` is a build-time anchor
-        # preserved through emit; materialize is the single pass that
-        # strips the anchor and keeps only the sibling
-        # `astichi_insert(...)` entries that were wired against it.
+        # Materialize strips the `astichi_hole(name)` anchor and keeps
+        # only the sibling `astichi_insert(...)` entries wired to it.
         new_args: list[ast.expr] = []
         suffix_keywords: list[ast.keyword] = []
         for arg in node.args:
@@ -2772,7 +2726,7 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
     """Hole names whose matching `astichi_insert` shell is a body sibling.
 
     A hole whose insert shell lives in the same statement list — or,
-    for Bug #1 call-arg anchors, in the same call's ``args`` /
+    for call-argument anchors, in the same call's ``args`` /
     ``keywords`` list — is "locally satisfied": the materialize pass
     will consume both. Demand gates therefore exclude these holes from
     the unresolved set.
@@ -2803,7 +2757,7 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
 
 
 def _call_region_locally_satisfied(call: ast.Call) -> frozenset[str]:
-    """Bug #1: hole anchor + sibling insert pairs in call arg/kwarg lists."""
+    """Hole anchor + sibling insert pairs in call arg/kwarg lists."""
     holes: set[str] = set()
     inserts: set[str] = set()
     for arg in call.args:

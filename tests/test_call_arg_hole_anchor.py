@@ -1,29 +1,13 @@
 """Call-argument holes are anchor-preserved through ``build()``.
 
-Bug #1: ``_HoleReplacementTransformer.visit_Call`` previously *replaced*
-the authored ``astichi_hole(name)`` slot with the single ``astichi_insert``
-call it built. That violates the published contract:
+Per ``AstichiApiDesignV1-CompositionUnification.md §2.2`` the authored
+``astichi_hole(name)`` slot is only removed at materialize, mirroring the
+block-hole pattern in ``_HoleReplacementTransformer.visit_Expr``:
 
-    "the originating `astichi_hole(...)` statement is removed"
-    only at materialize (``AstichiApiDesignV1-CompositionUnification.md §2.2``).
-
-Because the anchor was consumed at build-time, call-arg holes behaved
-differently from block holes and could not accumulate additional
-ordered inserts through subsequent wiring passes.
-
-These tests pin the corrected contract:
-
-  * build() keeps the authored ``astichi_hole(name)`` in place
+  * ``build()`` keeps the authored ``astichi_hole(name)`` in place
   * wired ``astichi_insert(name, payload)`` entries land as siblings
-    next to the anchor, mirroring the block-hole pattern in
-    ``_HoleReplacementTransformer.visit_Expr``
   * multiple ordered inserts against the same call-arg hole survive
-  * ``materialize()`` is the single pass that collapses the anchor +
-    siblings into the final call shape.
-
-Cross-stage composition (wiring into a target inside a previously-built
-root shell) is a *separate* addressing bug shared by block and call-arg
-holes alike; tracked as Bug #2 and out of scope here.
+  * ``materialize()`` collapses the anchor + siblings into the final call
 """
 
 from __future__ import annotations
