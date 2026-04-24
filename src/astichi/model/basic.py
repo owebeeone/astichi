@@ -166,10 +166,16 @@ class BasicComposable(Composable):
 
         Issue 005 §6 / 5d. Keys must be IDENTIFIER-shape demand-port
         names on this composable; values must be valid Python
-        identifiers. `__astichi_arg__` resolutions remain recorded for
-        materialize-time substitution; `astichi_import(...)` /
-        `astichi_pass(...)` bindings are also rewritten into the source
-        tree so explicit boundary wiring survives `emit()` -> `compile()`.
+        identifiers. All three surfaces — `__astichi_arg__` suffix
+        slots, `astichi_import(...)` declarations, and
+        `astichi_pass(...)` sites — are rewritten into the source tree
+        eagerly so later merge-time validators (e.g. the call-argument
+        payload duplicate-keyword check in
+        `lowering/call_argument_payloads.py`) see the resolved names
+        rather than the pre-resolution suffix text. Resolutions are
+        also retained in `arg_bindings` metadata so the same name can
+        be pinned through hygiene and so `emit()` -> `compile()` round
+        trips preserve the binding.
         """
         resolved = _resolve_identifier_bindings(mapping, names)
         if not resolved:
@@ -186,6 +192,22 @@ class BasicComposable(Composable):
         }
         existing = dict(self.arg_bindings)
         for key, value in resolved.items():
+            # Re-bind detection must precede the demand-port check:
+            # eager `__astichi_arg__` rewrite removes the suffix slot
+            # from the tree after the first bind, so a second bind of
+            # the same name would otherwise surface as "unknown slot"
+            # instead of the (more useful) "cannot re-bind" error.
+            if key in existing:
+                if existing[key] != value:
+                    raise ValueError(
+                        format_astichi_error(
+                            "materialize",
+                            f"cannot re-bind identifier arg `{key}`: already "
+                            f"resolved to `{existing[key]}`",
+                            hint="use one resolution per slot; remove conflicting `bind_identifier`",
+                        )
+                    )
+                continue
             if key not in arg_demand_names:
                 known = tuple(sorted(arg_demand_names))
                 raise ValueError(
@@ -199,24 +221,25 @@ class BasicComposable(Composable):
                         "`astichi_import(...)`, or `astichi_pass(...)`",
                     )
                 )
-            if key in existing and existing[key] != value:
-                raise ValueError(
-                    format_astichi_error(
-                        "materialize",
-                        f"cannot re-bind identifier arg `{key}`: already "
-                        f"resolved to `{existing[key]}`",
-                        hint="use one resolution per slot; remove conflicting `bind_identifier`",
-                    )
-                )
             existing[key] = value
 
         merged = tuple(sorted(existing.items()))
         rebound_tree = copy.deepcopy(self.tree)
         from astichi.materialize.api import (
+            _resolve_arg_identifiers,
             _resolve_boundary_imports,
             _resolve_boundary_passes,
         )
 
+        # Eagerly rewrite `__astichi_arg__` suffix slots into their
+        # resolved identifiers. Previously these were left in the tree
+        # and only substituted at materialize time via `arg_bindings`;
+        # that lazy form broke merge-time validators that read the raw
+        # kwarg text (e.g. repeatedly instantiating a parameterized
+        # `astichi_funcargs(field__astichi_arg__=...)` payload for
+        # distinct fields collided on `field__astichi_arg__` in the
+        # duplicate-keyword check before resolution was consulted).
+        _resolve_arg_identifiers(rebound_tree, resolved)
         _resolve_boundary_imports(rebound_tree, resolved)
         _resolve_boundary_passes(rebound_tree, resolved)
         return _rebuild_composable(
@@ -351,6 +374,14 @@ def _apply_emitted_arg_bindings(tree: ast.AST, bindings: dict[str, str]) -> None
 
         def visit_arg(self, node: ast.arg) -> ast.AST:
             node.arg = self._resolve(node.arg)
+            return self.generic_visit(node)
+
+        def visit_keyword(self, node: ast.keyword) -> ast.AST:
+            # Issue 005 §1 extension: call-site keyword-argument names
+            # are identifier positions too. `keyword.arg is None` is the
+            # `**mapping` splat, which has no identifier to resolve.
+            if node.arg is not None:
+                node.arg = self._resolve(node.arg)
             return self.generic_visit(node)
 
     _Resolver().visit(tree)

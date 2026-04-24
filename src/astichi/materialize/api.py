@@ -904,24 +904,21 @@ def build_merge(
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
 
-    # Issue 005 §6 / 5d: union per-instance `arg_bindings` and
-    # `keep_names` into the merged composable so the materialize
-    # resolver pass and hygiene see everything the builder accumulated.
-    merged_arg_bindings: dict[str, str] = {}
+    # Issue 005 §6 / 5d + Bug #1 follow-up: union per-instance
+    # `arg_bindings` and `keep_names` into the merged composable so
+    # the materialize resolver pass and hygiene see everything the
+    # builder accumulated. Since `bind_identifier` now eagerly rewrites
+    # `__astichi_arg__` suffix slots into their resolved identifiers
+    # in each per-instance tree before merge, two instances that both
+    # bound `field` (to `a` and `b` respectively) carry those results
+    # as local tree text — there is no residual suffix slot to conflict
+    # over in the merged tree. Retain all unique (key, value) pairs so
+    # hygiene pins every resolved target through scope collision
+    # rewrites; the tuple shape tolerates duplicate keys by design.
+    merged_arg_binding_pairs: set[tuple[str, str]] = set()
     merged_keep_names: set[str] = set()
     for record in instance_records.values():
-        for key, value in record.composable.arg_bindings:
-            if key in merged_arg_bindings and merged_arg_bindings[key] != value:
-                raise ValueError(
-                    format_astichi_error(
-                        "materialize",
-                        f"conflicting identifier-arg resolutions for `{key}`: "
-                        f"`{merged_arg_bindings[key]}` vs `{value}` across "
-                        "merged instances",
-                        hint="use consistent `bind_identifier` / compile `arg_names` across merged roots",
-                    )
-                )
-            merged_arg_bindings[key] = value
+        merged_arg_binding_pairs.update(record.composable.arg_bindings)
         merged_keep_names.update(record.composable.keep_names)
 
     markers = recognize_markers(merged_tree)
@@ -956,7 +953,7 @@ def build_merge(
         classification=classification,
         demand_ports=demand_ports,
         supply_ports=extract_supply_ports(markers),
-        arg_bindings=tuple(sorted(merged_arg_bindings.items())),
+        arg_bindings=tuple(sorted(merged_arg_binding_pairs)),
         keep_names=frozenset(merged_keep_names),
     )
 
@@ -1969,6 +1966,14 @@ class _HoleReplacementTransformer(
         for name in authored_explicit_keywords:
             register_explicit_keyword(name, seen_explicit_keywords)
 
+        # Bug #1 contract: `astichi_hole(name)` is an *anchor* through
+        # build/emit and is only removed by `materialize()` (see
+        # `AstichiApiDesignV1-CompositionUnification.md §2.2`). Build
+        # therefore keeps the authored hole arg/keyword in place and
+        # *appends* sibling `astichi_insert(name, expr)` entries in the
+        # same call position, mirroring the block-hole anchor pattern
+        # in `visit_Expr`. Staged composition can then keep wiring into
+        # the same target across multiple `build()` calls.
         new_args: list[ast.expr] = []
         for arg in node.args:
             hole_name = _extract_expr_hole_name(arg)
@@ -1977,6 +1982,7 @@ class _HoleReplacementTransformer(
                 _validate_plain_call_region_inserts(
                     inserts, seen_explicit_keywords=seen_explicit_keywords
                 )
+                new_args.append(arg)
                 new_args.extend(
                     _make_expression_insert_call(
                         hole_name, insert.expr, location_donor=arg
@@ -1991,6 +1997,7 @@ class _HoleReplacementTransformer(
             ):
                 inserts = self.expr_replacements[hole_name]
                 _validate_star_region_inserts(hole_name, inserts)
+                new_args.append(arg)
                 new_args.extend(
                     ast.Starred(
                         value=_make_expression_insert_call(
@@ -2017,6 +2024,7 @@ class _HoleReplacementTransformer(
                     inserts,
                     seen_explicit_keywords=seen_explicit_keywords,
                 )
+                new_keywords.append(keyword)
                 new_keywords.extend(
                     ast.keyword(
                         arg=None,
@@ -2147,9 +2155,20 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
         node.func = self.visit(node.func)
 
+        # Bug #1 contract: `astichi_hole(name)` is a build-time anchor
+        # preserved through emit; materialize is the single pass that
+        # strips the anchor and keeps only the sibling
+        # `astichi_insert(...)` entries that were wired against it.
         new_args: list[ast.expr] = []
         suffix_keywords: list[ast.keyword] = []
         for arg in node.args:
+            if _extract_expr_hole_name(arg) is not None:
+                continue
+            if (
+                isinstance(arg, ast.Starred)
+                and _extract_expr_hole_name(arg.value) is not None
+            ):
+                continue
             if (
                 isinstance(arg, ast.Call)
                 and _is_expression_insert_call(arg)
@@ -2188,6 +2207,11 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
         new_keywords: list[ast.keyword] = []
         for keyword in node.keywords:
+            if (
+                keyword.arg is None
+                and _extract_expr_hole_name(keyword.value) is not None
+            ):
+                continue
             if (
                 keyword.arg is None
                 and isinstance(keyword.value, ast.Call)
@@ -2464,7 +2488,33 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
     apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
-    pinned_targets = frozenset(arg_bindings.values()) | _collect_explicitly_bound_boundary_targets(tree)
+    # Hygiene pinning is only meaningful for names that actually sit
+    # at a hygiene-relevant position in the tree — `ast.Name`,
+    # `ast.arg`, or a def/class name. Callsite `ast.keyword.arg`
+    # labels are not lexical bindings in any scope; "pinning" such a
+    # name is vacuous for itself and could incorrectly shield an
+    # unrelated same-named scope binding elsewhere in the merged tree
+    # from being renamed on collision. The candidate pin set (every
+    # `arg_bindings` value plus explicitly-bound boundary targets) is
+    # therefore intersected with the set of names that appear at a
+    # scope-relevant position. This also handles the merge case where
+    # multiple same-key `arg_bindings` pairs contribute distinct
+    # target names (e.g. two payloads bound `slot` to `x` and `y`
+    # respectively before merge) — both are pinned if both land as
+    # real identifier occurrences.
+    hygiene_relevant_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            hygiene_relevant_names.add(node.id)
+        elif isinstance(node, ast.arg):
+            hygiene_relevant_names.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            hygiene_relevant_names.add(node.name)
+
+    pin_candidates = {value for _, value in composable.arg_bindings} | (
+        _collect_explicitly_bound_boundary_targets(tree)
+    )
+    pinned_targets = frozenset(pin_candidates & hygiene_relevant_names)
     marker_keep_names = frozenset(
         marker.name_id
         for marker in markers
@@ -2718,10 +2768,11 @@ def _find_unmatched_param_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
 def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
     """Hole names whose matching `astichi_insert` shell is a body sibling.
 
-    A hole whose insert shell lives in the same statement list is
-    "locally satisfied" — the flatten pass in
-    `materialize_composable` will consume both. Demand gates therefore
-    exclude these holes from the unresolved set.
+    A hole whose insert shell lives in the same statement list — or,
+    for Bug #1 call-arg anchors, in the same call's ``args`` /
+    ``keywords`` list — is "locally satisfied": the materialize pass
+    will consume both. Demand gates therefore exclude these holes from
+    the unresolved set.
     """
     matched: set[str] = set()
     for node in ast.walk(tree):
@@ -2743,7 +2794,48 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                 if info is not None:
                     shells.add(info.target_name)
             matched.update(holes & shells)
+        if isinstance(node, ast.Call):
+            matched.update(_call_region_locally_satisfied(node))
     return frozenset(matched)
+
+
+def _call_region_locally_satisfied(call: ast.Call) -> frozenset[str]:
+    """Bug #1: hole anchor + sibling insert pairs in call arg/kwarg lists."""
+    holes: set[str] = set()
+    inserts: set[str] = set()
+    for arg in call.args:
+        name = _extract_expr_hole_name(arg)
+        if name is not None:
+            holes.add(name)
+            continue
+        if isinstance(arg, ast.Starred):
+            name = _extract_expr_hole_name(arg.value)
+            if name is not None:
+                holes.add(name)
+                continue
+            if isinstance(arg.value, ast.Call) and _is_expression_insert_call(arg.value):
+                target = _insert_target_name(arg.value)
+                if target is not None:
+                    inserts.add(target)
+            continue
+        if isinstance(arg, ast.Call) and _is_expression_insert_call(arg):
+            target = _insert_target_name(arg)
+            if target is not None:
+                inserts.add(target)
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            name = _extract_expr_hole_name(keyword.value)
+            if name is not None:
+                holes.add(name)
+                continue
+            if (
+                isinstance(keyword.value, ast.Call)
+                and _is_expression_insert_call(keyword.value)
+            ):
+                target = _insert_target_name(keyword.value)
+                if target is not None:
+                    inserts.add(target)
+    return frozenset(holes & inserts)
 
 
 def _locally_satisfied_param_hole_names(tree: ast.AST) -> frozenset[str]:
@@ -3019,6 +3111,11 @@ def _find_unresolved_arg_identifiers(
             _check(node.id, lineno)
         elif isinstance(node, ast.arg):
             _check(node.arg, lineno)
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            # Issue 005 §1 extension: call-site keyword-argument names
+            # are identifier positions. `keyword.arg is None` is the
+            # `**mapping` splat and carries no identifier.
+            _check(node.arg, lineno)
     return [
         (name, tuple(sorted(set(lines))))
         for name, lines in sorted(by_name.items())
@@ -3249,6 +3346,14 @@ class _ArgIdentifierResolver(ast.NodeTransformer):
         node.arg = self._resolve(node.arg)
         return self.generic_visit(node)
 
+    def visit_keyword(self, node: ast.keyword) -> ast.AST:
+        # Issue 005 §1 extension: rewrite suffixed call-keyword names.
+        # `keyword.arg is None` is the `**mapping` splat and has no
+        # identifier to resolve.
+        if node.arg is not None:
+            node.arg = self._resolve(node.arg)
+        return self.generic_visit(node)
+
 
 def _resolve_boundary_imports(
     tree: ast.AST, bindings: dict[str, str]
@@ -3447,6 +3552,10 @@ def _assert_no_arg_suffix_remains(tree: ast.AST) -> None:
         elif isinstance(node, ast.Name):
             name = node.id
         elif isinstance(node, ast.arg):
+            name = node.arg
+        elif isinstance(node, ast.keyword):
+            # Issue 005 §1 extension: `keyword.arg is None` is the
+            # `**mapping` splat and carries no identifier.
             name = node.arg
         if name is None:
             continue

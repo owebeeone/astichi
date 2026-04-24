@@ -790,6 +790,13 @@ class RecognizedMarker:
             base, suffix_marker = strip_identifier_suffix(self.node.arg)
             if suffix_marker is not None:
                 return base
+        if isinstance(self.node, ast.keyword) and self.node.arg is not None:
+            # Issue 005 §1 extension: call-site keyword-argument names
+            # are identifier positions too. `keyword.arg is None` is the
+            # `**mapping` splat form, which carries no identifier slot.
+            base, suffix_marker = strip_identifier_suffix(self.node.arg)
+            if suffix_marker is not None:
+                return base
         return None
 
 
@@ -869,6 +876,14 @@ class _MarkerVisitor(ast.NodeVisitor):
         # Issue 005 §1: parameter-position suffixed names are slot
         # occurrences too.
         self._visit_identifier_occurrence(node, node.arg)
+        self.generic_visit(node)
+
+    def visit_keyword(self, node: ast.keyword) -> None:
+        # Issue 005 §1 extension: call-site keyword-argument names are
+        # identifier positions. `keyword.arg is None` is the `**mapping`
+        # splat form and carries no identifier; skip it.
+        if node.arg is not None:
+            self._visit_identifier_occurrence(node, node.arg)
         self.generic_visit(node)
 
     def _visit_identifier_occurrence(
