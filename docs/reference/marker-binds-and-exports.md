@@ -36,4 +36,4 @@ so the names cannot accidentally mean something else.
 
 - [scoping-hygiene.md](scoping-hygiene.md)
 - [public-api.md](public-api.md)
-- **[§5.2–5.6](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§5.2–5.6](../../dev-docs/historical/AstichiApiDesignV1.md)**

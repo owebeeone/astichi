@@ -1,7 +1,7 @@
 # Glossary
 
 Short definitions. Design background:
-**[`../../dev-docs/AstichiApiDesignV1.md`](../../dev-docs/AstichiApiDesignV1.md)**.
+**[`../../dev-docs/historical/AstichiApiDesignV1.md`](../../dev-docs/historical/AstichiApiDesignV1.md)**.
 
 | Term | Meaning |
 |------|---------|

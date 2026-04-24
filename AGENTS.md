@@ -15,33 +15,16 @@ This file defines repository-specific working instructions for `astichi`.
 
 ## Start here
 
-- **Read `dev-docs/AstichiCompositionModel.md` first.** It is the
-  governing principle for every marker, scope, composition, and
-  hygiene decision. Any proposal that does not fit its shape × state
-  grid is a design bug, not an implementation detail.
-- Then `dev-docs/AstichiSingleSourceSummary.md`. It is the active handoff and
-  should be kept complete and accurate.
-- Use `dev-docs/V2StartHere.md` only when the task specifically needs the V2
-  process context.
+- **Read `dev-docs/AstichiSingleSourceSummary.md` first.** It is the active
+  handoff and the authoritative project document.
+- Then `dev-docs/AstichiCodingRules.md` for repository-specific coding rules.
 
 ## Authoritative docs
 
 For active Astichi work, use these docs:
 
-- `dev-docs/AstichiCompositionModel.md` (governing principle —
-  required reading before any marker / scope / composition work)
-- `dev-docs/AstichiSingleSourceSummary.md` (active project summary and
-  handoff)
-- `dev-docs/V2StartHere.md`
 - `dev-docs/AstichiCodingRules.md`
-- `dev-docs/AstichiApiDesignV1.md` (base V1 design, still normative)
-- `dev-docs/AstichiApiDesignV1-InsertExpression.md` (V1 addendum)
-- `dev-docs/AstichiApiDesignV1-BindExternal.md` (V2 scope)
-- `dev-docs/AstichiApiDesignV1-UnrollRevision.md` (V2 scope)
-- `dev-docs/AstichiApiDesignV1-MarkerPreservingEmit.md` (V2 scope)
-- `dev-docs/AstichiImplementationBoundaries.md`
-- `dev-docs/V2Plan.md`
-- `dev-docs/V2ProgressRegister.md`
+- `dev-docs/AstichiSingleSourceSummary.md`
 
 Archived docs under `dev-docs/historical/` are not authoritative and should not
 be read or edited during normal work. They exist only for historical context

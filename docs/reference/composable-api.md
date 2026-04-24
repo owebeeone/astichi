@@ -32,7 +32,7 @@ Renders **Python source** for this composable.
 | `False` | Emit source **without** that tail. |
 
 Marker and program semantics are always recoverable from the **emitted text
-before** the provenance tail by reparsing. See **[§11](../../dev-docs/AstichiApiDesignV1.md)**.
+before** the provenance tail by reparsing. See **[§11](../../dev-docs/historical/AstichiApiDesignV1.md)**.
 
 ## `materialize() -> Composable`
 
@@ -44,7 +44,7 @@ Validates and **closes** the composable for a **runnable / emittable** target:
 
 On failure, raises with a clear diagnostic. Hygiene is enforced critically here
 so symbolic composition becomes a concrete, valid Python naming layout
-(**[§10.2](../../dev-docs/AstichiApiDesignV1.md)**).
+(**[§10.2](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
 ## Introspection
 

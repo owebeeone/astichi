@@ -13,7 +13,7 @@ It **requires**:
 - **legal** shape for the target  
 
 On violation it **raises**; it never returns a value that violates the contract
-(**[§10.2](../../dev-docs/AstichiApiDesignV1.md)**).
+(**[§10.2](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
 ## `emit(*, provenance: bool = True) -> str`
 
@@ -26,7 +26,7 @@ Renders **source text** for debugging, tests, inspection, or downstream codegen.
 
 **Semantics of the tail:** holes, binds, inserts, exports, and related meaning
 are always recovered by **reparsing** the emitted Python before the tail. The
-payload is **not** a second source of truth for markers (**[§11.2](../../dev-docs/AstichiApiDesignV1.md)**).
+payload is **not** a second source of truth for markers (**[§11.2](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
 ### Edited files
 
@@ -54,4 +54,4 @@ full Python or skeleton is a **documented policy** of the emit mode.
 
 - [Composable API](composable-api.md)
 - [Compile API](compile-api.md)
-- **[§10–13](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§10–13](../../dev-docs/historical/AstichiApiDesignV1.md)**

@@ -6,12 +6,10 @@ Use this first. It is intentionally self-contained. It should be enough for a
 new AI or engineer to continue the project without reading the rest of
 `dev-docs/`.
 
-Historical design/progress material exists under `dev-docs/historical/`, but it
-is frozen and not required for active work.
-
-Detailed issue write-ups live in `dev-docs/v2_issues/`. This summary is the
-active handoff; the issue files are the deeper design notes behind the open
-items.
+`dev-docs/AstichiSingleSourceSummary.md` and `dev-docs/AstichiCodingRules.md`
+are the only active dev-docs. Everything else under `dev-docs/historical/` is
+archival context only: frozen, non-authoritative, and not required for active
+work.
 
 ## 1. Current snapshot
 
@@ -169,12 +167,19 @@ locations.
 `astichi.build() -> BuilderHandle`
 
 - `builder.add.A(comp)` registers root instance `A`.
+- `builder.add.Step[i](comp)` registers indexed family members such as
+  `Step[0]`, `Step[1]`, ... as distinct root instances under one stem.
 - `builder.A` returns a handle for a registered root; **`A` is the stable graph
   id** (not a hygiene output name from inside a piece).
+- If a stem has indexed family members and no base instance of the same stem,
+  `builder.Step[i]` selects that family member for later wiring; after
+  selection it behaves like an ordinary root instance handle.
 - `builder.A.slot.add.B(order=0)`, `builder.A.slot[i, ...]` — additive wiring and
   indexed hole paths. On the target-adder surface, `arg_names=` /
   `keep_names=` / `bind=` are edge-local overlays, not mutations of the
   registered source instance.
+- `builder.Root.slot.add.Step[i](...)` wires one indexed family member as the
+  source instance for that edge.
 - `builder.assign.<Src>… .to().<Dst>…` — cross-instance boundary wiring. The
   fluent chain can carry **ref paths** into nested insert shells (`AssignBinding`
   `source_ref_path` / `target_ref_path`), not only `Src` / `Dst` at the root.
@@ -182,6 +187,10 @@ locations.
 
 **Merge ordering:** lower `order` inserts first; equal `order` uses first-registered
 edge first.
+
+**Indexed family rule:** a stem is either a base instance (`Step`) or an
+indexed family (`Step[i]`), never both. Mixing the two rejects so `builder.Step`
+and `builder.Step[i]` stay unambiguous.
 
 **Names vs graph identity:** ref paths key off **composition structure** in the
 graph. **Lexical** names in emitted Python can still be renamed by hygiene. For
@@ -266,8 +275,8 @@ similar **list-field** AST targets needs a broader shape inventory
 (whole-clause supplies, optional `stmt` / `stmt_block`, and finer targets only
 where justified). Design space and rationale — including “whole-unit” modeling
 vs splitting clause headers and bodies — live in
-`dev-docs/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only, not
-shipped).
+`dev-docs/historical/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only,
+not shipped).
 
 ## 5. What is already implemented and working
 
@@ -584,8 +593,8 @@ Soft implementation rule:
 
 Do this, in order:
 
-1. Read `dev-docs/AstichiCompositionModel.md`.
-2. Read this file.
+1. Read this file.
+2. Read `dev-docs/AstichiCodingRules.md`.
 3. Confirm the current suite still passes:
    `uv run --with pytest pytest -q`.
 4. For version-sensitive or emitted-source work, run:

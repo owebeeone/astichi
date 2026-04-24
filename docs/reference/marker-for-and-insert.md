@@ -136,4 +136,4 @@ astichi_import(total, outer_bind=True)
 ## See also
 
 - [marker-holes.md](marker-holes.md)
-- **[§5.7–5.8](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§5.7–5.8](../../dev-docs/historical/AstichiApiDesignV1.md)**

@@ -46,6 +46,53 @@ def test_builder_root_instance_lookup_returns_instance_handle() -> None:
     assert instance == InstanceHandle(graph=builder.graph, root_instance="A")
 
 
+def test_builder_add_indexed_instance_family_member_registers_distinct_instance() -> None:
+    builder = astichi.build()
+    comp = astichi.compile("value = 1\n")
+
+    instance = builder.add.Step[1](comp)
+
+    assert isinstance(instance, InstanceHandle)
+    assert instance.root_instance == "Step[1]"
+    assert [record.name for record in builder.graph.instances] == ["Step[1]"]
+
+
+def test_builder_root_instance_lookup_can_select_indexed_family_member() -> None:
+    builder = astichi.build()
+    builder.add.Step[1](astichi.compile("astichi_hole(extra)\n"))
+
+    instance = builder.Step[1]
+
+    assert isinstance(instance, InstanceHandle)
+    assert instance == InstanceHandle(graph=builder.graph, root_instance="Step[1]")
+
+
+def test_builder_unknown_indexed_family_member_fails_immediately() -> None:
+    builder = astichi.build()
+    builder.add.Step[1](astichi.compile("value = 1\n"))
+
+    with pytest.raises(AttributeError, match=r"unknown builder instance: Step\[2\]"):
+        _ = builder.Step[2]
+
+
+def test_builder_rejects_mixing_base_and_indexed_family_same_stem() -> None:
+    builder = astichi.build()
+    builder.add.Step[1](astichi.compile("value = 1\n"))
+
+    with pytest.raises(
+        ValueError,
+        match=r"cannot mix base instance `Step` with indexed family members `Step\[\.\.\.\]`",
+    ):
+        builder.add.Step(astichi.compile("value = 2\n"))
+
+
+def test_builder_indexed_instance_family_indexes_must_be_integers() -> None:
+    builder = astichi.build()
+
+    with pytest.raises(TypeError, match="instance family indexes must be integers"):
+        _ = builder.add.Step["bad"]
+
+
 def test_builder_unknown_root_instance_fails_immediately() -> None:
     builder = astichi.build()
 
@@ -92,6 +139,20 @@ def test_target_handle_exposes_fluent_add_proxy() -> None:
         order=10,
     )
     assert builder.graph.edges == (edge,)
+
+
+def test_target_add_can_source_indexed_family_member() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(slot)\n"))
+    builder.add.Step[1](astichi.compile("value = 1\n"))
+
+    edge = builder.Root.slot.add.Step[1](order=10)
+
+    assert edge == AdditiveEdge(
+        target=TargetRef(root_instance="Root", target_name="slot"),
+        source_instance="Step[1]",
+        order=10,
+    )
 
 
 def test_fluent_and_raw_builder_operations_produce_equivalent_graph_state() -> None:

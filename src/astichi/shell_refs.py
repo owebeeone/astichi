@@ -73,7 +73,9 @@ def ref_path_to_ast(
 
     When ``location_donor`` is provided (typically the existing ``ref=`` value
     or the enclosing ``astichi_insert`` call), line/column metadata is copied
-    onto the synthesized fluent expression.
+    onto the synthesized fluent expression. If any name segment is not a valid
+    Python identifier, fall back to the tuple-literal `ref=(...)` form so the
+    path remains round-trippable.
     """
     path = normalize_ref_path(path, phase=phase)
     if not path:
@@ -84,6 +86,15 @@ def ref_path_to_ast(
                 hint="use a non-empty fluent path like `Foo.Bar` in `ref=`",
             )
         )
+    if any(
+        isinstance(segment, str) and not segment.isidentifier() for segment in path
+    ):
+        expr = ast.Tuple(
+            elts=[ast.Constant(value=segment) for segment in path],
+            ctx=ast.Load(),
+        )
+        propagate_ast_source_locations(expr, location_donor)
+        return expr
     expr: ast.expr | None = None
     index_run: list[int] = []
     for segment in path:

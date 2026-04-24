@@ -8,7 +8,7 @@ template needs to point at an externally chosen attribute path
 text.
 
 **Normative spec:**
-[`AstichiV3ExternalRefBind.m4`](../../dev-docs/AstichiV3ExternalRefBind.m4).
+[`AstichiV3ExternalRefBind.m4`](../../dev-docs/historical/AstichiV3ExternalRefBind.m4).
 
 ## Surface
 
@@ -181,5 +181,5 @@ expressions.
 - [`marker-overview.md`](marker-overview.md) — full marker vocabulary
 - [`marker-for-and-insert.md`](marker-for-and-insert.md) — `astichi_for` and
   `astichi_funcargs`
-- [`AstichiV3ExternalRefBind.m4`](../../dev-docs/AstichiV3ExternalRefBind.m4) —
+- [`AstichiV3ExternalRefBind.m4`](../../dev-docs/historical/AstichiV3ExternalRefBind.m4) —
   normative spec

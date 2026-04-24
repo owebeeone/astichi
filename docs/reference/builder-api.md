@@ -28,6 +28,19 @@ builder.A.third.add.B(order=10)
 result = builder.build()
 ```
 
+Indexed instance families are also supported:
+
+```python
+builder = build()
+builder.add.Step[0](step0)
+builder.add.Step[1](step1)
+builder.add.Helper(helper)
+
+builder.Root.body.add.Step[0](order=0)
+builder.Root.body.add.Step[1](order=1)
+builder.Step[1].extra.add.Helper(order=0)
+```
+
 Descendant addressing uses the same fluent path shape:
 
 ```python
@@ -43,6 +56,18 @@ On the target-adder surface, specialization is **edge-local**:
 - `builder.Target.hole.add.Source(bind={...})` applies `astichi_bind_external`
   values only for that edge
 - the registered `Source` instance is not mutated by those edge-local overlays
+- `builder.add.Source[i](piece)` registers a distinct indexed family member,
+  and `builder.Target.hole.add.Source[i](...)` selects that member as the
+  source instance for one edge
+
+Indexed family rule:
+
+- a stem is either a base instance (`Step`) or an indexed family
+  (`Step[i]`), never both
+- if a family exists and no base instance of the same stem exists,
+  `builder.Step[i]` selects that family member for later wiring
+- after selection, `builder.Step[i]` behaves like an ordinary instance handle,
+  so descendant addressing continues as usual
 
 Named descendant hops come from shells preserved across earlier `build()`
 stages. A stage-built composable exposes its preserved build root name as the
@@ -75,7 +100,7 @@ a.third.add.B(order=10)
 result = b.build()
 ```
 
-Fluent and handle styles **must** behave identically (**[§8](../../dev-docs/AstichiApiDesignV1.md)**).
+Fluent and handle styles **must** behave identically (**[§8](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
 ## Raw / assembler layer
 
@@ -108,4 +133,4 @@ When multiple inserts target the same variadic hole, each edge carries an
 ## See also
 
 - [Addressing](addressing.md)
-- **[§8 — Builder API](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§8 — Builder API](../../dev-docs/historical/AstichiApiDesignV1.md)**

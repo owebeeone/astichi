@@ -27,4 +27,4 @@ astichi_hole(slot)       # scalar expression hole (in expr position)
 ## See also
 
 - [marker-overview.md](marker-overview.md)
-- **[§5.1](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§5.1](../../dev-docs/historical/AstichiApiDesignV1.md)**

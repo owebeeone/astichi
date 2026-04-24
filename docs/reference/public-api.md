@@ -27,7 +27,7 @@ so marker-bearing examples are typically embedded directly in the source string
 that Astichi parses.
 
 Exact export list matches
-**[`AstichiApiDesignV1.md` §5](../../dev-docs/AstichiApiDesignV1.md)**.
+**[`AstichiApiDesignV1.md` §5](../../dev-docs/historical/AstichiApiDesignV1.md)**.
 
 ## Submodule: `astichi.frontend`
 

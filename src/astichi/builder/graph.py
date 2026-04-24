@@ -3,12 +3,57 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 from astichi.diagnostics import format_astichi_error
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
 from astichi.path_resolution import ShellIndex
 from astichi.shell_refs import RefPath
+
+
+_INDEXED_INSTANCE_NAME_RE = re.compile(
+    r"^(?P<stem>[A-Za-z_][A-Za-z0-9_]*)\[(?P<indexes>-?\d+(?:,-?\d+)*)\]$"
+)
+
+
+def parse_indexed_instance_name(name: str) -> tuple[str, tuple[int, ...]] | None:
+    """Return ``(stem, indexes)`` for ``Stem[1,2]`` family members."""
+    match = _INDEXED_INSTANCE_NAME_RE.fullmatch(name)
+    if match is None:
+        return None
+    indexes = tuple(int(part) for part in match.group("indexes").split(","))
+    return match.group("stem"), indexes
+
+
+def format_indexed_instance_name(stem: str, indexes: tuple[int, ...]) -> str:
+    """Render a builder instance family member name."""
+    if not stem.isidentifier():
+        raise ValueError(
+            format_astichi_error(
+                "build",
+                f"instance family stem must be a valid identifier: {stem!r}",
+                hint="use a valid Python identifier before `[i]` in `builder.add.<Name>[i]`",
+            )
+        )
+    if not indexes or any(not isinstance(index, int) for index in indexes):
+        raise TypeError("instance family indexes must be integers")
+    return f"{stem}[{','.join(str(index) for index in indexes)}]"
+
+
+def instance_family_stem(name: str) -> str:
+    parsed = parse_indexed_instance_name(name)
+    if parsed is not None:
+        return parsed[0]
+    return name
+
+
+def instance_name_sort_key(name: str) -> tuple[str, int, tuple[int, ...]]:
+    parsed = parse_indexed_instance_name(name)
+    if parsed is None:
+        return name, 0, ()
+    stem, indexes = parsed
+    return stem, 1, indexes
 
 
 @dataclass(frozen=True)
@@ -96,12 +141,13 @@ class BuilderGraph:
 
     def add_instance(self, name: str, composable: Composable) -> InstanceRecord:
         """Register a named composable instance."""
-        if not name.isidentifier():
+        parsed = parse_indexed_instance_name(name)
+        if not name.isidentifier() and parsed is None:
             raise ValueError(
                 format_astichi_error(
                     "build",
                     f"instance name must be a valid identifier: {name!r}",
-                    hint="use a valid Python identifier for `builder.add.<Name>`",
+                    hint="use `builder.add.<Name>(...)` or `builder.add.<Name>[i](...)` with integer indexes",
                 )
             )
         if name in self._instances:
@@ -112,6 +158,20 @@ class BuilderGraph:
                     hint="choose a unique instance name for each `builder.add`",
                 )
             )
+        new_stem = instance_family_stem(name)
+        new_is_family = parsed is not None
+        for existing_name in self._instances:
+            existing_is_family = parse_indexed_instance_name(existing_name) is not None
+            if instance_family_stem(existing_name) != new_stem:
+                continue
+            if existing_is_family != new_is_family:
+                raise ValueError(
+                    format_astichi_error(
+                        "build",
+                        f"cannot mix base instance `{new_stem}` with indexed family members `{new_stem}[...]`",
+                        hint="choose either `builder.add.<Name>(...)` or `builder.add.<Name>[i](...)` for a given stem",
+                    )
+                )
         self._validate_instance_composable(name, composable)
         record = InstanceRecord(name=name, composable=composable)
         self._instances[name] = record
@@ -227,7 +287,10 @@ class BuilderGraph:
     @property
     def instances(self) -> tuple[InstanceRecord, ...]:
         """Inspectable named instances."""
-        return tuple(self._instances[name] for name in sorted(self._instances))
+        return tuple(
+            self._instances[name]
+            for name in sorted(self._instances, key=instance_name_sort_key)
+        )
 
     @property
     def edges(self) -> tuple[AdditiveEdge, ...]:

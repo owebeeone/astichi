@@ -1,4 +1,4 @@
-"""Tests for `astichi_ref(...)` per dev-docs/AstichiV3ExternalRefBind.m4.
+"""Tests for `astichi_ref(...)` per dev-docs/historical/AstichiV3ExternalRefBind.m4.
 
 Covers the full lowered surface:
 

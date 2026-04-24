@@ -746,7 +746,7 @@ def test_materialize_rejects_unmatched_block_insert_shell() -> None:
     """Per CompositionUnification.md \u00a72.5(c): an unmatched
     `@astichi_insert(slot)` shell (no sibling `astichi_hole(slot)`) is
     refused at the materialize gate before hygiene runs. Previously
-    tracked as Gap 4 in dev-docs/v2_issues/004."""
+    tracked as Gap 4 in dev-docs/historical/v2_issues/004."""
     compiled = astichi.compile(
         """
 @astichi_insert(slot)

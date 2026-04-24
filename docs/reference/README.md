@@ -24,4 +24,4 @@ Current implementation snapshot:
 **[`../../dev-docs/AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)**.
 
 Historical V1 design detail:
-**[`../../dev-docs/AstichiApiDesignV1.md`](../../dev-docs/AstichiApiDesignV1.md)**.
+**[`../../dev-docs/historical/AstichiApiDesignV1.md`](../../dev-docs/historical/AstichiApiDesignV1.md)**.

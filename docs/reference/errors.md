@@ -2,7 +2,7 @@
 
 Hard errors the implementation raises when rules are violated. Exception
 types and messages are part of the **stable user contract** for each release;
-categories below follow **[§15](../../dev-docs/AstichiApiDesignV1.md)**.
+categories below follow **[§15](../../dev-docs/historical/AstichiApiDesignV1.md)**.
 
 | Situation | Typical outcome |
 |-----------|-----------------|

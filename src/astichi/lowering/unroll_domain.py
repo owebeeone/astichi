@@ -3,7 +3,7 @@
 Given the AST of a domain expression (the sole argument to `astichi_for(...)`),
 `resolve_domain` returns the concrete sequence of iteration values or raises
 `ValueError` with a descriptive message when the domain is not literal-
-resolvable. See `dev-docs/AstichiApiDesignV1-UnrollRevision.md` §7.
+resolvable. See `dev-docs/historical/AstichiApiDesignV1-UnrollRevision.md` §7.
 """
 
 from __future__ import annotations

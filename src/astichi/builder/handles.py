@@ -12,6 +12,9 @@ from astichi.builder.graph import (
     BuilderGraph,
     EdgeSourceOverlay,
     TargetRef,
+    format_indexed_instance_name,
+    instance_family_stem,
+    parse_indexed_instance_name,
 )
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable, apply_source_overlay
@@ -25,6 +28,33 @@ from astichi.path_resolution import (
     shell_index_with_root_transparency,
 )
 from astichi.shell_refs import RefPath, format_ref_path, normalize_ref_path
+
+
+def _normalize_instance_family_indexes(
+    key: int | tuple[int, ...]
+) -> tuple[int, ...]:
+    if isinstance(key, tuple):
+        items = key
+    else:
+        items = (key,)
+    if any(not isinstance(item, int) for item in items):
+        raise TypeError("instance family indexes must be integers")
+    return items
+
+
+def _family_instance_name(stem: str, key: int | tuple[int, ...]) -> str:
+    return format_indexed_instance_name(
+        stem, _normalize_instance_family_indexes(key)
+    )
+
+
+def _indexed_family_members(graph: BuilderGraph, stem: str) -> tuple[str, ...]:
+    return tuple(
+        record.name
+        for record in graph.instances
+        if instance_family_stem(record.name) == stem
+        and parse_indexed_instance_name(record.name) is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -165,6 +195,17 @@ class _NamedAdder:
         self.graph.add_instance(self.instance_name, piece)
         return InstanceHandle(graph=self.graph, root_instance=self.instance_name)
 
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_NamedAdder":
+        parsed = parse_indexed_instance_name(self.instance_name)
+        if parsed is not None:
+            raise TypeError(
+                "indexed builder instance families do not support nested family indexes"
+            )
+        return _NamedAdder(
+            graph=self.graph,
+            instance_name=_family_instance_name(self.instance_name, key),
+        )
+
 
 @dataclass(frozen=True)
 class AddProxy:
@@ -248,6 +289,18 @@ class _NamedTargetAdder:
             overlay=overlay,
         )
 
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_NamedTargetAdder":
+        parsed = parse_indexed_instance_name(self.source_instance)
+        if parsed is not None:
+            raise TypeError(
+                "indexed builder instance families do not support nested family indexes"
+            )
+        return _NamedTargetAdder(
+            graph=self.graph,
+            target=self.target,
+            source_instance=_family_instance_name(self.source_instance, key),
+        )
+
 
 @dataclass(frozen=True)
 class AddToTargetProxy:
@@ -263,6 +316,27 @@ class AddToTargetProxy:
             graph=self.graph,
             target=self.target,
             source_instance=name,
+        )
+
+
+@dataclass(frozen=True)
+class _IndexedInstanceFamilyHandle:
+    """Picker for registered family members under one instance stem."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+    stem: str
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> InstanceHandle:
+        instance_name = _family_instance_name(self.stem, key)
+        if instance_name not in {record.name for record in self.graph.instances}:
+            raise AttributeError(f"unknown builder instance: {instance_name}")
+        return InstanceHandle(graph=self.graph, root_instance=instance_name)
+
+    def __getattr__(self, name: str) -> None:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        raise AttributeError(
+            f"unknown builder instance: {self.stem} (indexed family exists; select a member first with `{self.stem}[i]`)"
         )
 
 
@@ -697,6 +771,9 @@ class BuilderHandle:
     def __getattr__(self, name: str) -> InstanceHandle:
         if name.startswith("_"):
             raise AttributeError(name)
-        if name not in {record.name for record in self.graph.instances}:
-            raise AttributeError(f"unknown builder instance: {name}")
-        return InstanceHandle(graph=self.graph, root_instance=name)
+        instance_names = {record.name for record in self.graph.instances}
+        if name in instance_names:
+            return InstanceHandle(graph=self.graph, root_instance=name)
+        if _indexed_family_members(self.graph, name):
+            return _IndexedInstanceFamilyHandle(graph=self.graph, stem=name)
+        raise AttributeError(f"unknown builder instance: {name}")

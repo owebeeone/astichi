@@ -26,4 +26,4 @@ same subtree (V1 §6).
 
 - [scoping-hygiene.md](scoping-hygiene.md)
 - [classification-modes.md](classification-modes.md)
-- **[§5.5](../../dev-docs/AstichiApiDesignV1.md)**
+- **[§5.5](../../dev-docs/historical/AstichiApiDesignV1.md)**

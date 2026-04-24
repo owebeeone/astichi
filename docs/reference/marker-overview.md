@@ -11,7 +11,7 @@ passed to `astichi.compile(...)`.
 not from encoding a “kind” in the hole name.
 
 **Design background:**
-**[AstichiApiDesignV1.md §5](../../dev-docs/AstichiApiDesignV1.md)**.
+**[AstichiApiDesignV1.md §5](../../dev-docs/historical/AstichiApiDesignV1.md)**.
 
 ## Marker Vocabulary
 
