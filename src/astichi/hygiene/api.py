@@ -1079,12 +1079,12 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # scope. Function parameters are the exception; they are
             # stable bindings of the enclosing function and remain
             # visible within inserted children of that function body.
-            if raw_name in self._current_python_bindings():
-                return "internal"
             if raw_name in self._current_python_parameters():
                 if self._current_scope() == self._current_python_scope_owner():
                     return "internal"
                 return "external"
+            if raw_name in self._current_python_bindings():
+                return "internal"
             if raw_name in self.preserved_names:
                 return "preserved"
             if raw_name in self.external_names:
