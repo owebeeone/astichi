@@ -140,7 +140,7 @@ value = print + outer_name
     assert {occurrence.role for occurrence in print_occurrences} == {"internal"}
     assert {occurrence.scope_id.serial for occurrence in print_occurrences} == {1}
     assert [occurrence.role for occurrence in outer_occurrences] == ["preserved"]
-    assert [occurrence.scope_id.serial for occurrence in outer_occurrences] == [0]
+    assert [occurrence.scope_id.serial for occurrence in outer_occurrences] == [1]
 
 
 def test_fresh_scope_boundaries_give_internal_names_new_scope_but_preserve_outer_names() -> None:
@@ -264,10 +264,10 @@ result = astichi_insert(target, (x := 2, x + value))
     assert len(store_values) == 1
     assert store_values[0].scope_id.serial == 1
     assert len(load_values) == 1
-    assert load_values[0].scope_id.serial != 2
+    assert load_values[0].scope_id.serial == 2
+    assert load_values[0].role == "internal"
 
-
-def test_expression_insert_free_names_retain_outer_scope() -> None:
+def test_expression_insert_free_names_stay_local_to_the_insert_scope() -> None:
     compiled = astichi.compile(
         """
 outer = 1
@@ -285,7 +285,8 @@ result = astichi_insert(target, outer + 1)
     store_outer = [o for o in outer_occurrences if o.binding_kind == "binding"]
     load_outer = [o for o in outer_occurrences if o.binding_kind == "reference"]
     assert store_outer[0].scope_id.serial == 1
-    assert load_outer[0].scope_id.serial != 2
+    assert load_outer[0].scope_id.serial == 2
+    assert load_outer[0].role == "internal"
 
 
 def test_multiple_expression_inserts_get_distinct_scopes() -> None:

@@ -41,7 +41,9 @@ def astichi_params(name__astichi_arg__=1):
     builder.add.Body(
         astichi.compile(
             """
-values.append(astichi_pass(name, outer_bind=True))
+astichi_pass(values, outer_bind=True).append(
+    astichi_pass(name, outer_bind=True)
+)
 pinned = astichi_pass(name, outer_bind=True)
 """,
             file_name="gold_src/edge_multibind.py",

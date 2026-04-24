@@ -214,7 +214,6 @@ def assign_scope_identity(
     marker_preserved_names = (
         kept_preserved
         | _collect_identifier_suffix_preserved(composable.markers)
-        | _collect_boundary_preserved(composable.markers)
     )
     # Issue 006 6c (trust model): the effective trust set unions the
     # caller-supplied `trust_names` with trust-declaring markers
@@ -695,21 +694,30 @@ def _collect_expression_bindings(node: ast.AST) -> frozenset[str]:
 class _ScopeBindingCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         self.bindings_by_scope: dict[int, frozenset[str]] = {}
+        self.parameter_bindings_by_scope: dict[int, frozenset[str]] = {}
 
     def visit_Module(self, node: ast.Module) -> None:
         self.bindings_by_scope[id(node)] = frozenset(self._collect_scope_bindings(node))
+        self.parameter_bindings_by_scope[id(node)] = frozenset()
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.bindings_by_scope[id(node)] = frozenset(self._collect_scope_bindings(node))
+        self.parameter_bindings_by_scope[id(node)] = frozenset(
+            self._collect_parameter_bindings(node)
+        )
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self.bindings_by_scope[id(node)] = frozenset(self._collect_scope_bindings(node))
+        self.parameter_bindings_by_scope[id(node)] = frozenset(
+            self._collect_parameter_bindings(node)
+        )
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.bindings_by_scope[id(node)] = frozenset(self._collect_scope_bindings(node))
+        self.parameter_bindings_by_scope[id(node)] = frozenset()
         self.generic_visit(node)
 
     def _collect_scope_bindings(
@@ -733,6 +741,23 @@ class _ScopeBindingCollector(ast.NodeVisitor):
             for statement in node.body:
                 collector.visit(statement)
         return collector.bindings
+
+    def _collect_parameter_bindings(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> set[str]:
+        bindings: set[str] = {
+            argument.arg
+            for argument in (
+                list(node.args.posonlyargs)
+                + list(node.args.args)
+                + list(node.args.kwonlyargs)
+            )
+        }
+        if node.args.vararg is not None:
+            bindings.add(node.args.vararg.arg)
+        if node.args.kwarg is not None:
+            bindings.add(node.args.kwarg.arg)
+        return bindings
 
 
 class _SingleScopeBindingCollector(ast.NodeVisitor):
@@ -807,6 +832,9 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.python_bindings = _ScopeBindingCollector().bindings_by_scope
         self.python_scope_bindings: dict[int, frozenset[str]] = {}
         self.python_scope_stack: list[frozenset[str]] = []
+        self.python_parameter_bindings: dict[int, frozenset[str]] = {}
+        self.python_parameter_stack: list[frozenset[str]] = []
+        self.python_scope_owner_stack: list[ScopeId] = []
         self.occurrences: list[LexicalOccurrence] = []
         self.ordinal_counter = count()
 
@@ -815,6 +843,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             collector = _ScopeBindingCollector()
             collector.visit(node)
             self.python_scope_bindings = collector.bindings_by_scope
+            self.python_parameter_bindings = collector.parameter_bindings_by_scope
         return super().visit(node)
 
     def visit_Module(self, node: ast.Module) -> None:
@@ -859,7 +888,9 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         elif isinstance(node.ctx, ast.Load):
             role = self._load_role(node.id)
             binding_kind = "reference"
-            scope_id = self._outer_scope() if role != "internal" else self._current_scope()
+            scope_id = (
+                self._outer_scope() if role == "external" else self._current_scope()
+            )
         else:
             # Issue 006 6c: a Store is `preserved` only when the
             # *current* Astichi scope explicitly declares trust on the
@@ -905,8 +936,13 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
     ) -> None:
         bindings = self.python_scope_bindings.get(id(node), frozenset())
+        parameter_bindings = self.python_parameter_bindings.get(
+            id(node), frozenset()
+        )
         self.python_scope_stack.append(bindings)
+        self.python_parameter_stack.append(parameter_bindings)
         pushed_fresh = self._push_fresh_scope_if_needed(node)
+        self.python_scope_owner_stack.append(self._current_scope())
         pushed_collision_domain = self._push_function_collision_domain_if_needed(node)
         try:
             self.generic_visit(node)
@@ -919,6 +955,8 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 self.astichi_scope_imports_stack.pop()
                 self.astichi_scope_trusts_stack.pop()
             self.python_scope_stack.pop()
+            self.python_parameter_stack.pop()
+            self.python_scope_owner_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -1001,6 +1039,16 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             return frozenset()
         return self.python_scope_stack[-1]
 
+    def _current_python_parameters(self) -> frozenset[str]:
+        if not self.python_parameter_stack:
+            return frozenset()
+        return self.python_parameter_stack[-1]
+
+    def _current_python_scope_owner(self) -> ScopeId:
+        if not self.python_scope_owner_stack:
+            return self._current_scope()
+        return self.python_scope_owner_stack[-1]
+
     def _current_astichi_bindings(self) -> frozenset[str] | None:
         for local in reversed(self.astichi_scope_bindings_stack):
             if local is not None:
@@ -1017,12 +1065,32 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             return frozenset()
         return self.astichi_scope_trusts_stack[-1]
 
+    def _inside_fresh_scope(self) -> bool:
+        return len(self.scope_stack) > 2
+
     def _load_role(self, raw_name: str) -> LexicalRole:
         astichi_local = self._current_astichi_bindings()
-        if astichi_local is not None:
-            if raw_name in astichi_local:
+        if astichi_local is not None and raw_name in astichi_local:
+            return "internal"
+        if self._inside_fresh_scope():
+            # ``astichi_insert`` creates the default isolation boundary:
+            # unwired free names stay local to the inserted composable
+            # instead of implicitly capturing from the enclosing Python
+            # scope. Function parameters are the exception; they are
+            # stable bindings of the enclosing function and remain
+            # visible within inserted children of that function body.
+            if raw_name in self._current_python_bindings():
                 return "internal"
-        elif raw_name in self._current_python_bindings():
+            if raw_name in self._current_python_parameters():
+                if self._current_scope() == self._current_python_scope_owner():
+                    return "internal"
+                return "external"
+            if raw_name in self.preserved_names:
+                return "preserved"
+            if raw_name in self.external_names:
+                return "external"
+            return "internal"
+        if raw_name in self._current_python_bindings():
             return "internal"
         if raw_name in self.preserved_names:
             return "preserved"

@@ -703,39 +703,38 @@ def test_strict_scope_isolation_unwired_free_name_is_scope_local() -> None:
     """Unwired free-name references inside a builder contribution stay
     scope-local.
 
-    Step's body reads and writes `total` without declaring
-    `astichi_import(total)`. The root also binds `total`. Under strict
-    scope isolation, Step's `total` is a *fresh* binding in Step's
-    contribution scope — it does not silently capture Root's `total`.
-    Hygiene therefore renames Step's occurrences apart
-    (`total__astichi_scoped_N`), and the emitted program faithfully
-    reflects what the user actually wrote: a read-before-write on a
-    fresh local. Running it raises `NameError` because the user's
-    source expressed broken Python on its own local, not because
-    astichi introduced any ambiguity.
+    Step's body reads `items` without declaring `astichi_import(items)`
+    or `astichi_pass(items, outer_bind=True)`. The root also binds
+    `items`. Under strict scope isolation, Step's `items` remains local
+    to Step's contribution scope — it does not silently capture Root's
+    list just because the spelling matches. Hygiene therefore renames
+    Step's free load apart (`items__astichi_scoped_N`), and the emitted
+    program faithfully reflects what the user actually wrote: an
+    unwired local reference across an Astichi boundary. Running it
+    raises `NameError` because the inner snippet never declared how
+    `items` crosses that boundary.
 
-    If the user's intent is "Step's `total` is Root's `total`", the
-    contract is to declare `astichi_import(total)` in Step — see the
+    If the user's intent is "Step's `items` is Root's `items`", the
+    contract is to declare `astichi_import(items)` in Step — see the
     `astichi_import`-based accumulator composition in
     `tests/test_boundaries.py` and `scratch/test_mat2.py`.
     """
     builder = astichi.build()
-    builder.add.Root(astichi.compile("total = 0\nastichi_hole(body)\n"))
-    builder.add.Step(astichi.compile("total = total + 1\n"))
+    builder.add.Root(
+        astichi.compile("items = []\nastichi_hole(body)\nresult = items\n")
+    )
+    builder.add.Step(astichi.compile("items.append('x')\n"))
     builder.Root.body.add.Step()
 
     materialized = builder.build().materialize()
     source = materialized.emit(provenance=False)
 
-    assert "total = 0" in source
-    assert "total__astichi_scoped_" in source
+    assert "items = []" in source
+    assert "items__astichi_scoped_" in source
     scoped_line = next(
-        line for line in source.splitlines() if "total__astichi_scoped_" in line
+        line for line in source.splitlines() if "items__astichi_scoped_" in line
     )
-    # Hygiene renamed *both* sides of Step's assign together — Step's
-    # `total` is one binding, isolated from Root's. This is the
-    # contract, not a bug.
-    assert scoped_line.count("total__astichi_scoped_") == 2
+    assert ".append('x')" in scoped_line
 
     namespace: dict[str, object] = {}
     with pytest.raises(NameError):

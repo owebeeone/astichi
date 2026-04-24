@@ -32,21 +32,21 @@ def run() -> str:
     builder.add.Step[0](
         piece(
             """
-            result.append("step-0")
+            astichi_pass(result, outer_bind=True).append("step-0")
             """
         )
     )
     builder.add.Step[1](
         piece(
             """
-            result.append("step-1")
+            astichi_pass(result, outer_bind=True).append("step-1")
             """
         )
     )
     builder.add.Step[2](
         piece(
             """
-            result.append("step-2")
+            astichi_pass(result, outer_bind=True).append("step-2")
             astichi_hole(extra)
             """
         )
@@ -54,7 +54,7 @@ def run() -> str:
     builder.add.Step[3](
         piece(
             """
-            result.append("step-3")
+            astichi_pass(result, outer_bind=True).append("step-3")
             """
         )
     )

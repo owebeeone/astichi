@@ -23,7 +23,7 @@ final = tuple(result)
     builder.add.Step[0](
         astichi.compile(
             """
-result.append("step-0")
+astichi_pass(result, outer_bind=True).append("step-0")
 """,
             file_name="gold_src/indexed_instance_family.py",
         )
@@ -31,7 +31,7 @@ result.append("step-0")
     builder.add.Step[1](
         astichi.compile(
             """
-result.append("step-1")
+astichi_pass(result, outer_bind=True).append("step-1")
 astichi_hole(extra)
 """,
             file_name="gold_src/indexed_instance_family.py",
@@ -40,7 +40,7 @@ astichi_hole(extra)
     builder.add.Step[2](
         astichi.compile(
             """
-result.append("step-2")
+astichi_pass(result, outer_bind=True).append("step-2")
 """,
             file_name="gold_src/indexed_instance_family.py",
         )
