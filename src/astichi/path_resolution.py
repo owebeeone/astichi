@@ -206,6 +206,62 @@ def _extract_insert_order(call: ast.Call, *, phase: str) -> int:
     return order
 
 
+ROOT_SCOPE_HOLE_PREFIX = "__astichi_root__"
+
+
+def extract_hole_name(stmt: ast.stmt) -> str | None:
+    """Extract the name from a block-position ``astichi_hole(<name>)`` statement."""
+    if not isinstance(stmt, ast.Expr):
+        return None
+    call = stmt.value
+    if not isinstance(call, ast.Call):
+        return None
+    if not isinstance(call.func, ast.Name):
+        return None
+    if call.func.id != "astichi_hole":
+        return None
+    if not call.args:
+        return None
+    first_arg = call.args[0]
+    if isinstance(first_arg, ast.Name):
+        return first_arg.id
+    return None
+
+
+def synthetic_root_scope_shell(
+    body: list[ast.stmt],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Detect the ``__astichi_root__<inst>__`` wrapper produced by ``build()``.
+
+    A previously-built composable's outer module body has the shape
+    ``[astichi_hole(__astichi_root__<inst>__), @astichi_insert(...)
+    def __astichi_root__<inst>__(): <user body>]``. Addressing and
+    lookup code should treat the inner shell body as the "module"
+    body for that composable; this helper returns the shell node when
+    the pattern matches, otherwise ``None``.
+    """
+    if len(body) != 2:
+        return None
+    hole_name = extract_hole_name(body[0])
+    if hole_name is None or not hole_name.startswith(ROOT_SCOPE_HOLE_PREFIX):
+        return None
+    shell = body[1]
+    if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    info = extract_block_insert_shell(shell, phase="materialize")
+    if info is None or info.target_name != hole_name:
+        return None
+    return shell
+
+
+def effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Return the user-authored root body, unwrapping the synthetic root shell."""
+    shell = synthetic_root_scope_shell(body)
+    if shell is None:
+        return body
+    return shell.body
+
+
 @dataclass(frozen=True)
 class AddressableShell:
     """One addressable shell scope in a composable tree."""

@@ -60,16 +60,20 @@ from astichi.model.ports import (
     validate_port_pair,
 )
 from astichi.path_resolution import (
+    ROOT_SCOPE_HOLE_PREFIX as _ROOT_SCOPE_HOLE_PREFIX,
     ShellIndex,
     boundary_import_statement,
     collect_hole_names_in_body,
     collect_identifier_demands_in_body,
     collect_identifier_suppliers_in_body,
     collect_param_hole_names_in_body,
+    effective_root_body as _effective_root_body,
     extract_block_insert_shell,
+    extract_hole_name as _extract_hole_name,
     extract_param_insert_shell,
     format_instance_leaf,
     is_astichi_insert_shell,
+    synthetic_root_scope_shell as _synthetic_root_scope_shell,
 )
 from astichi.shell_refs import (
     RefPath,
@@ -153,7 +157,6 @@ class _SkipInsertShellVisitorWithClassMixin:
 
 
 _IDENTIFIER_SANITIZER = re.compile(r"[^0-9A-Za-z_]")
-_ROOT_SCOPE_HOLE_PREFIX = "__astichi_root__"
 
 
 def _sanitize_for_identifier(raw: str) -> str:
@@ -630,9 +633,19 @@ def build_merge(
         tree = copy.deepcopy(record.composable.tree)
         if do_unroll:
             tree = unroll_tree(tree)
-            composable = _refresh_composable(record.composable, tree)
-        else:
-            composable = record.composable
+        # Bug #2 (addressing): always refresh ports from the current
+        # tree so a previously-built composable's anchor-preserved
+        # holes (whose ports were stripped by its own `build_merge`
+        # satisfied-holes pass) are re-exposed to this builder stage.
+        # Intermediate `BasicComposable.demand_ports` hide holes the
+        # earlier build considered locally satisfied; the tree still
+        # carries the anchors, so `extract_demand_ports` from markers
+        # re-derives the full open-ended set. Materialize's final gate
+        # cross-checks against `_locally_satisfied_*_hole_names` on
+        # the merged tree, so re-exposing satisfied ports here does
+        # not re-introduce a materialize-time error for untouched
+        # holes.
+        composable = _refresh_composable(record.composable, tree)
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
                 name=record.name, composable=composable
@@ -648,14 +661,36 @@ def build_merge(
     # ``AssignBinding`` records on the graph and applied fresh here.
     _apply_assign_bindings(graph.assigns, instance_records, trees, shell_indexes)
 
+    # Bug #2 (addressing): when the target instance is a previously-built
+    # composable whose tree carries the synthetic
+    # ``__astichi_root__<inst>__`` wrapper, an edge keyed at ref path
+    # ``()`` refers to a hole that actually lives inside the wrapper's
+    # shell body (legacy edges keyed at ``('<inst>',)`` already land
+    # there via normal descent). Promote those ``()`` ref paths to the
+    # wrapper's inner ref so merge-time ``_replace_targets_in_tree``
+    # finds the hole during its ordinary walk. The builder-side
+    # ``_registered_shell_index`` aliases ``()`` to the same body for
+    # validation, so both user surfaces agree.
+    wrapper_inner_ref: dict[str, RefPath] = {}
+    for inst_name, tree in trees.items():
+        outer_shell = _synthetic_root_scope_shell(tree.body)
+        if outer_shell is None:
+            continue
+        info = extract_block_insert_shell(outer_shell, phase="materialize")
+        if info is None or info.ref_path is None:
+            continue
+        wrapper_inner_ref[inst_name] = info.ref_path
     edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
         effective_name = iter_target_name(
             edge.target.target_name, edge.target.path
         )
+        ref_path = normalize_ref_path(edge.target.ref_path)
+        if not ref_path and edge.target.root_instance in wrapper_inner_ref:
+            ref_path = wrapper_inner_ref[edge.target.root_instance]
         key = (
             edge.target.root_instance,
-            normalize_ref_path(edge.target.ref_path),
+            ref_path,
             effective_name,
         )
         edges_by_target.setdefault(key, []).append((idx, edge))
@@ -1132,7 +1167,18 @@ def _wrap_in_root_scope(
     the shell (after rename-collisions has run), inlining the body
     back at module level — the wrapper exists purely to carry scope
     identity through the hygiene pass.
+
+    Bug #2: if ``body`` is already shaped like
+    ``[astichi_hole(__astichi_root__X__), @astichi_insert(ref=X, ...) def __astichi_root__X__(): <user>]``
+    — i.e. the instance is itself a previously-built composable — the
+    outer wrapper is stripped first so we don't nest two root-scope
+    shells around the same user body. Stage-1 identities propagate via
+    the merged ``arg_bindings`` / ``keep_names`` union; stage-2's fresh
+    wrapper carries the scope identity for this build.
     """
+    outer_shell = _synthetic_root_scope_shell(body)
+    if outer_shell is not None:
+        body = list(outer_shell.body)
     anchor = _root_scope_anchor(instance_name)
     root_ref = normalize_ref_path((instance_name,))
     _prefix_shell_refs_in_body(body, root_ref)
@@ -1154,25 +1200,6 @@ def _wrap_in_root_scope(
         location_donor=donor,
     )
     return [hole, shell]
-
-
-def _extract_hole_name(stmt: ast.stmt) -> str | None:
-    """Extract the name from a block-position astichi_hole statement."""
-    if not isinstance(stmt, ast.Expr):
-        return None
-    call = stmt.value
-    if not isinstance(call, ast.Call):
-        return None
-    if not isinstance(call.func, ast.Name):
-        return None
-    if call.func.id != "astichi_hole":
-        return None
-    if not call.args:
-        return None
-    first_arg = call.args[0]
-    if isinstance(first_arg, ast.Name):
-        return first_arg.id
-    return None
 
 
 def _lookup_demand_port(
@@ -1250,30 +1277,6 @@ def _implicit_expression_supply_after_boundary_prefix(
     ):
         return None
     return final.value, index
-
-
-def _synthetic_root_scope_shell(
-    body: list[ast.stmt],
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    if len(body) != 2:
-        return None
-    hole_name = _extract_hole_name(body[0])
-    if hole_name is None or not hole_name.startswith(_ROOT_SCOPE_HOLE_PREFIX):
-        return None
-    shell = body[1]
-    if not isinstance(shell, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    info = extract_block_insert_shell(shell, phase="materialize")
-    if info is None or info.target_name != hole_name:
-        return None
-    return shell
-
-
-def _effective_root_body(body: list[ast.stmt]) -> list[ast.stmt]:
-    shell = _synthetic_root_scope_shell(body)
-    if shell is None:
-        return body
-    return shell.body
 
 
 def _make_keep_statement(

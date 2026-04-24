@@ -2,36 +2,32 @@ astichi_hole(__astichi_root__Pipeline__)
 
 @astichi_insert(__astichi_root__Pipeline__, ref=Pipeline)
 def __astichi_root__Pipeline__():
-    astichi_hole(__astichi_root__Root__)
+    events = []
+    astichi_hole(body)
 
-    @astichi_insert(__astichi_root__Root__, ref=Pipeline.Root)
-    def __astichi_root__Root__():
-        events = []
-        astichi_hole(body)
+    @astichi_insert(body, ref=Pipeline.Root.Loop)
+    def __astichi_contrib__Root__body__0__Loop():
+        astichi_import(events, outer_bind=True)
+        astichi_hole(slot__iter_0)
 
-        @astichi_insert(body, ref=Pipeline.Root.Loop)
-        def __astichi_contrib__Root__body__0__Loop():
+        @astichi_insert(slot__iter_0, ref=Pipeline.Root.Loop.Step0[0])
+        def __astichi_contrib__Pipeline__slot__iter_0__0__Step0():
+            astichi_import(__astichi_assign__inst__Pipeline__ref__Root__name__events, bound=True)
+            __astichi_assign__inst__Pipeline__ref__Root__name__events.append('first')
+        astichi_hole(slot__iter_1)
+
+        @astichi_insert(slot__iter_1, order=1, ref=Pipeline.Root.Loop.Step1[1])
+        def __astichi_contrib__Pipeline__slot__iter_1__0__Step1():
             astichi_import(events, outer_bind=True)
-            astichi_hole(slot__iter_0)
+            events.append('second')
+        astichi_hole(slot__iter_2)
 
-            @astichi_insert(slot__iter_0, ref=Pipeline.Root.Loop.Step0[0])
-            def __astichi_contrib__Pipeline__slot__iter_0__0__Step0():
-                astichi_import(__astichi_assign__inst__Pipeline__ref__Root__name__events, bound=True)
-                __astichi_assign__inst__Pipeline__ref__Root__name__events.append('first')
-            astichi_hole(slot__iter_1)
-
-            @astichi_insert(slot__iter_1, order=1, ref=Pipeline.Root.Loop.Step1[1])
-            def __astichi_contrib__Pipeline__slot__iter_1__0__Step1():
-                astichi_import(events, outer_bind=True)
-                events.append('second')
-            astichi_hole(slot__iter_2)
-
-            @astichi_insert(slot__iter_2, order=2, ref=Pipeline.Root.Loop.Step2[2])
-            def __astichi_contrib__Pipeline__slot__iter_2__0__Step2():
-                events = astichi_pass(events, outer_bind=True)
-                events.append('third')
-        result = events
-        astichi_keep(__astichi_assign__inst__Pipeline__ref__Root__name__events)
-        astichi_export(__astichi_assign__inst__Pipeline__ref__Root__name__events)
-        __astichi_assign__inst__Pipeline__ref__Root__name__events = events
-# astichi-provenance: eNrlWUtv3FQUdubhPGdCW2UqGoogVG0i0TQPsYgEKqHAZopFm24ryzO+k2vPxNfyIw+pSAiJ0sXdYZasYMkC1AVrVixY8QtYsWfDDhXOta/Hz/E8mjSVGGky8rnH5577ne981775vPqNuiz4H1pWbMej4idEdXvI+9qTpMfefe8zb5VWWkQ98R56q1iglY+OTYuNfskHq4dKz0UeG7qj9Hr+jdJX4Z0d12j7Y5JykAxa0lSPLsCcWhtrMiYwJy23nWPf+y5RVPBeY64tKvY0AxnEa5boHDJUOXbZJj2ZdDo2crymQOtsNG6ad1u0olj7NmSPl/qT41fpFVkO57YIcWT5U81ELLAse3gZXw2mxm80S/hN+K40BfwWC6fQmS46OSKW6sfMjPsWdsWsgUWg8x8DDI5GjA9RB5a1KgUfJ0TJYODgNXwNfGchXfcAGY6d4zlvEpsYvZNwSdceQsUOFQuuPYnOdY9ig3S+eySrqKO4Pce/rnaPAr+ZmBXyE1llZ8OC4hpejCqILyVgw1eKsGHpJFFupFG+7/8tRhi/PSKwt1Lw4G38ADB8J23eCZDC70r4Pfi5Dd9dCX8QLV6g4q5ta/tGkr3TDuCFnCx5RHToFwiWIdDqnkMs1GdrKk+RLajmc1qD/kq0FQpKkAJjpTkbrZEuOCcmAk4fMEp4Ug4KE1WuzIOUIchCTuWwCO6PuWONO16IihO//6LbyrFki0OvR2xoE8OxtFZICCYwsrwhy3cJMb2JajgaDLQeZqAdmMRysuCH0NbzUDHA/XvuuMgdl0JUBDrNpSFR5jJrOjpHXAdZckszVM/nw8wdYtiOYiQ4gWtPaKXLfMJKr/BZrvc74HJkUVI538i0yY1JCVKBIBUIUoEgr+S19oLdY5XT2Ko2GIy/8Lsu8LuWIrbEgzXcVo4lhy3bOWyJRDo+u8+cPQeZG2dJHfzdWFyhO1H+ii8ukC5UPL4IC3XCDmBbgCxHuvLHIJb9EM3xI622iBsQ6mm0hicp8Wy4rawlTZ1GhjqNQurARrXrsKIArROqCZ4J1P4cqDuivzlDENjDFNNEbCHL+J+UV41j+zTWJLTa0SxQU/yzxL3r3HspX6IaGYkCC6J1FbWJpYB+wzMFxIP7RpIOw0Zp6QjIvNIndEY6fi1yzyltGcgRKMXsntuy25ZmOmmg/x75KrGQmZCBySVMQU5TnCECLOEZrTBuDnUKNLvYqcrbs8CLVu2e1kZenMowlo1WNFMOslkTnbaQ41qGDSr7SKLz/hZrwlPUAX+mS6vT2SvoJkCjN6cE4bxEdLMvopsvkYiyDVfXAliGqiH+ydfB2F4a6MOZb6ODW81/YBiofvgZ/hfW90WwvqGiJ9qgVkwkM6rXyFe9yxnVAwvSRZivUOn0OstoHHXT7w25w09vNbV5wZMSslKbF3RzdrqsJR5IX2aT1/Sr8HMK8qjfTK8lI2f6xnCX7aEugShuFoqivsPCpPF5LkVEOdXRbzPsQAz19wNynIcGbjEN/O0cNXCrr4Fbk2kgiuGi5b07mEXviAWPHv1zEhMeJQe/MC4NktC/IgltcN/XxpXQNX7jzb46vh5ZlFQm6+D0KP22un6WKjpbGk1Fqw7WLPV5Hx3PRER/H19E9W997UsoROl/pqBbYypo6XwUdCLOlH3OBblcHHROM9A92+C80i9BKYN+mupjnEk9a8rBOH3qVKTAVLSQ7fb8FxozsUUJvEpciAu0p8I1jnkvhhoXD7E48lYZiXoXIdMb62A19VY98QnquIdm6Djv0OzF5IqimFreFObgKQpLOnTmiRp3KCoPhqMyvHFPoVXTfZjJJGvK6cMXAtnaZJCNB9JpIcBP7rV9g4Ds+P9pWf8PFYbiQA==
+        @astichi_insert(slot__iter_2, order=2, ref=Pipeline.Root.Loop.Step2[2])
+        def __astichi_contrib__Pipeline__slot__iter_2__0__Step2():
+            events = astichi_pass(events, outer_bind=True)
+            events.append('third')
+    result = events
+    astichi_keep(__astichi_assign__inst__Pipeline__ref__Root__name__events)
+    astichi_export(__astichi_assign__inst__Pipeline__ref__Root__name__events)
+    __astichi_assign__inst__Pipeline__ref__Root__name__events = events
+# astichi-provenance: eNrdWM1vG0UU39hex4nz1Uh2BCohqqomRWpIjEAFDqgUqkouFmpuoGpZ2+PMxuudZT+SWKIC9QRixIXlD+CSP4ALKidO3CvuSEiIAxc4ckHize7YM95drx01NRKRrNhv3pv38XvvN7vzmfrN71Ul/KN53fUCWnyPtH0TBV8H1+8HD4MdWmiSdj94EOxghRbePbUdsaQe66aPArZwWzdNyabjW61Q3tB70l45ox3QJfBjtLChYQJ+aL7lnYaq94jeHqg2adE0LGSRoJ6ji8hqa9LPFjE10um4yAvqCl1hq7Ko7DdpQXcOXQgar0eecYU+r2kDxw4hnqa9b9iI7appAd7Az0V+8eV6Dr8An826gl9ke+m01EX9E+K0ww0T66GE/WLSSKLQ8h0ogGcQ6x3UkcpisWrgq3gLVBYgRL+HLM8VCmWbuMQy+4Potx4AIMe6A7+DBl3snkiLtNw90dqoo/umF/5WuyeRXkmSQjRqhF3xlusah5ZwNu+BOvJiZSqi4zAmKIlC1QOPOEP84qkWoTi4HEJnQOuINFHkO1bVzfqCqBFd8vo2Atx6rARBI6WKJR5TGS/zb2siTlwd2T3PbfNguwS2W3JOWAXdD7jWMte6xILfDgGVjdf9ZorkJb7VDXpNdFGLWJ5jNDXtfthObEw0bU/T7hFiA3T4ZW5Ui4DErzbwa/DvJnzeaOA3BTaZidKVgT+jZxPHS1Z1ULOVRN53QNfhWqtcqzLIW6HzvK8FcnnWQHSR+B5ytKZhtYMQ39JtYrmebgmMcflzWugyhQFyV/j+14YTsSEkeizU7cTYbJ8T8ALYFsC2ALZr8cTpkmsySAyWxh6r2Bfc5BI3qQj05Z2qfjNFItB/JQV9QSOy07ATDjxk711cK+CPp8eevi5C1cPBh8gARDleB3UGzcuISdPE6H87rmv63MEnVG0SP2qQT4c9EWPHqt9MSuK9UE30QnVMLwBn3vJY0aE9pU6UCnQ2lhSK4aEA1kCoum0jFvkG/j6mtczLOMyIqh3DAW7DjxpcdYWrVtL5o5rgD5AgutJGLeLowKZwkMF+YJc965aL4rMeteTmsC1HZ/2rLN04dnmAPhrthQO/6bYcw5ZnG3+X+U3EWxo002ikc+B9jiOuQKSPaYG12USliDmzlVQ+VBlaVHVNo4UkGGEluVeWn5QKJkV03kGe71gukOBBg5bDE82G07rHnxTiRPJsCG6fFePvGRPc/pDg9v8bgmOH29HanKJMZCr8cJSjHj3jIytlUMKTeCwx4cf4B0jmSpRMNh8VXSASRl4JQqqmE9JGgpBAgvCP6QyEfzoH5fwzkXJ25PMCnjSQM3JewMglfSQlAsknYP3zeVkK/5JNKfjXCeu/TUNJ+9nE9Ucs66ciI5RW7j8ZCeG/Zkg8NUj56MOoa2fJPbUh99TOxT1vccW3Ew/Jd7Peb9IO6uE7rA0PV+NfdCqprNUXrFXlipenZ63r3OTGkJA2hUSPBbALSgfxl6vdCyauL6chLtXDhtN+2gepi+Cto49YvOegrqObzEDmrdz/h7dq0/NWbta8NS3c+bBDIsfrqW//Y3XjU/dk5qhEDT43rFkiwBSRXLP4XUUqy9Gig1zfDB/B745QvcLLzclu3OQXOKkw1dUBqcj2q5OOGcGZXYTszCu3GIBnmddznDsm38pNec2CTtOuWWYQX/rxdBY7nmKbj0dsosNppys7+auTkx+drmknKWWzFJE8CfH8+B2jcWgR6P7wMnT3X0E7Q3c=
