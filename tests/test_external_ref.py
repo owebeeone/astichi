@@ -229,6 +229,13 @@ def test_ref_non_sentinel_attribute_extends_lowered_path() -> None:
     assert rendered.strip() == "value = pkg.mod.other"
 
 
+def test_ref_chained_calls_compose_reference_path_segments() -> None:
+    rendered = _materialized(
+        "value = astichi_ref('cls_ctx').astichi_ref('class_name')\n"
+    )
+    assert rendered.strip() == "value = cls_ctx.class_name"
+
+
 # ---------------------------------------------------------------------------
 # §3a transparent sentinel continuation
 # ---------------------------------------------------------------------------

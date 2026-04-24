@@ -32,6 +32,80 @@ Astichi handles the parts that usually go wrong:
 - specialized straight-line Python instead of runtime dispatch layers
 - emitted source you can diff, test, and round-trip
 
+## Marker mental model
+
+Astichi is marker-bearing Python source plus a small build pipeline.
+
+- Markers are recognized from authored Python source.
+- Marker meaning comes from AST position, not string matching alone.
+- `compile(...)` parses marker-bearing source into a `Composable`.
+- `build()` wires composables together.
+- `materialize()` resolves inserts, bindings, and hygiene, then produces real
+  Python.
+
+The core markers are:
+
+- `astichi_hole(name)` -> insertion site
+- `name__astichi_arg__` -> identifier demand
+- `name__astichi_param_hole__` -> function-parameter insertion target
+- `astichi_funcargs(...)` -> call-argument payload
+- `astichi_bind_external(name)` -> external/literal value slot
+- `astichi_ref(path)` -> compile-time reducible identifier / attribute path
+- `astichi_pass(name, outer_bind=True)` -> explicit same-name boundary read
+- `astichi_import(name)` -> explicit whole-scope boundary import
+- `astichi_export(name)` -> explicit outward supply
+- `astichi_insert(...)` -> internal emitted metadata, not general authored API
+
+The one rule that matters most is scope:
+
+- `astichi_insert` is the basic Astichi boundary.
+- Each inserted composable lives in its own Astichi scope.
+- There is no implicit capture across that boundary.
+- If a name crosses the boundary, make it explicit with `keep`, `pass`,
+  `import`, or `export`.
+- Function parameters are the pinned exception: parameter names and uses in the
+  function scope stay attached to that parameter binding.
+
+Small example:
+
+```python
+import astichi
+
+builder = astichi.build()
+builder.add.Root(
+    astichi.compile(
+        """
+items = []
+astichi_hole(body)
+result = tuple(items)
+"""
+    )
+)
+builder.add.Step(
+    astichi.compile(
+        """
+astichi_pass(items, outer_bind=True).append("x")
+"""
+    )
+)
+builder.Root.body.add.Step(order=0)
+
+materialized = builder.build().materialize()
+print(materialized.emit(provenance=False))
+```
+
+Emitted Python:
+
+```python
+items = []
+items.append("x")
+result = tuple(items)
+```
+
+Without `astichi_pass(items, outer_bind=True)`, the inner snippet does not get
+to reuse `items` just because the spelling matches. That is deliberate. Astichi
+defaults to isolated scopes and only crosses them when the source says so.
+
 ## Example: schema-specialized row projector
 
 Suppose an ingestion pipeline knows its event schema at build time, and each

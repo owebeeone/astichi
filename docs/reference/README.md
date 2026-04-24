@@ -1,5 +1,8 @@
 # Reference index
 
+Fast orientation:
+**[`../../README.md#marker-mental-model`](../../README.md#marker-mental-model)**.
+
 | Document | Contents |
 |----------|----------|
 | [glossary.md](glossary.md) | Core terms |

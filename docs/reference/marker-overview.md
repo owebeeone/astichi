@@ -69,6 +69,9 @@ Reference-path note:
 - `astichi_ref(value)` is the authored value-form reference surface; it lowers
   a compile-time path string (e.g. `"self.f0"` or `"pkg.mod.attr"`) into the
   corresponding `Name` / `Attribute` AST at materialize time
+- prefer `astichi_ref(...)` over `getattr(...)` when the attribute path is
+  compile-time reducible; keep `getattr(...)` for genuinely runtime-dynamic
+  lookup
 - `astichi_ref(external=name)` is sugar for
   `astichi_ref(astichi_bind_external(name))` and surfaces the inner bind site
   as a normal demand port

@@ -71,6 +71,39 @@ The lowering pass **never** executes arbitrary Python to compute the path
 string. Calls, attribute reads, arithmetic, slice notation, and unbound names
 inside an `astichi_ref` argument are all rejected.
 
+## Compile-time accessor example
+
+`astichi_ref(...)` is the preferred authored surface when the accessor path is
+fully known by materialize time, even if the path is assembled from
+compile-time-bound pieces.
+
+```python
+astichi_bind_external(provider_name)
+astichi_bind_external(property_key)
+value = astichi_ref(f"{provider_name}.{property_key}")
+```
+
+After binding:
+
+```python
+provider_name = "cls_ctx"
+property_key = "class_name"
+```
+
+the materialized result is:
+
+```python
+value = cls_ctx.class_name
+```
+
+Prefer `astichi_ref(...)` over `getattr(...)` when the attribute path is
+compile-time reducible. Use `getattr(...)` only when the attribute name is
+genuinely runtime-dynamic.
+
+`astichi_ref(...)` lowers identifier / attribute chains. It does not lower
+dict indexing; for mapping-backed lookups keep ordinary subscription syntax
+such as `ctxt[key]`.
+
 ## Lowering
 
 After `bind()` substitutions and `astichi_for` unrolling have run, materialize
