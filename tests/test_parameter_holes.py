@@ -158,6 +158,31 @@ def astichi_params(total):
         builder.build().materialize()
 
 
+def test_duplicate_resolved_inserted_parameter_names_from_shared_payload_reject() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def run(params__astichi_param_hole__):
+    return value
+"""
+        )
+    )
+    builder.add.Params(
+        astichi.compile(
+            """
+def astichi_params(name__astichi_arg__):
+    pass
+"""
+        )
+    )
+    builder.Root.params.add.Params(order=0, arg_names={"name": "value"})
+    builder.Root.params.add.Params(order=1, arg_names={"name": "value"})
+
+    with pytest.raises(ValueError, match="duplicate final parameter names: value"):
+        builder.build().materialize()
+
+
 def test_inserted_non_default_after_target_default_rejects() -> None:
     builder = astichi.build()
     builder.add.Root(

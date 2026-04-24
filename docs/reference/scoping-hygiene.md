@@ -158,7 +158,19 @@ Resolve demands with:
 - `compile(..., arg_names={"slot": "target"})`
 - `.bind_identifier(slot="target")`
 - `builder.add.Name(piece, arg_names={"slot": "target"})`
+- `builder.Target.hole.add.Name(arg_names={"slot": "target"})`
 - `builder.assign...`
+
+Pin names with:
+
+- `compile(..., keep_names={...})`
+- `.with_keep_names(...)`
+- `builder.add.Name(piece, keep_names={...})`
+- `builder.Target.hole.add.Name(keep_names={...})`
+
+Edge-local external values can be supplied with:
+
+- `builder.Target.hole.add.Name(bind={...})`
 
 Unresolved identifier demands fail at materialize time. That failure is
 intentional: it prevents a snippet from silently binding to the wrong

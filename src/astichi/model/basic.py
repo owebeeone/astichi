@@ -309,6 +309,24 @@ def _resolve_identifier_bindings(
     return resolved
 
 
+def apply_source_overlay(
+    piece: BasicComposable,
+    *,
+    bind_values: Mapping[str, object] | None = None,
+    arg_names: Mapping[str, str] | None = None,
+    keep_names: Iterable[str] | None = None,
+) -> BasicComposable:
+    """Apply edge-local source specialization without mutating the base piece."""
+    specialized = piece
+    if bind_values is not None:
+        specialized = specialized.bind(bind_values)
+    if keep_names is not None:
+        specialized = specialized.with_keep_names(keep_names)
+    if arg_names is not None:
+        specialized = specialized.bind_identifier(arg_names)
+    return specialized
+
+
 def _rebuild_composable(
     *,
     tree: ast.Module,

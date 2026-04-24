@@ -10,10 +10,11 @@ from astichi.builder.graph import (
     AdditiveEdge,
     AssignBinding,
     BuilderGraph,
+    EdgeSourceOverlay,
     TargetRef,
 )
 from astichi.model import Composable
-from astichi.model.basic import BasicComposable
+from astichi.model.basic import BasicComposable, apply_source_overlay
 from astichi.path_resolution import (
     ShellIndex,
     collect_hole_names_in_body,
@@ -189,6 +190,7 @@ class _NamedTargetAdder:
         order: int = 0,
         arg_names: Mapping[str, str] | None = None,
         keep_names: Iterable[str] | None = None,
+        bind: Mapping[str, object] | None = None,
     ) -> AdditiveEdge:
         """Wire ``self.source_instance`` into ``self.target`` additively.
 
@@ -204,12 +206,11 @@ class _NamedTargetAdder:
 
         ``keep_names`` is the same surface as
         ``builder.add.<Name>(piece, keep_names=...)`` but scoped to
-        the contributing instance. Both maps union with any bindings
-        already attached to the instance via compile-time ``arg_names=``
-        or an earlier ``builder.add.<Name>(...)`` call; conflicts
-        raise.
+        the contributing edge. ``bind`` is the same surface as
+        ``BasicComposable.bind(...)`` but scoped to the edge.
         """
-        if arg_names is not None or keep_names is not None:
+        overlay = EdgeSourceOverlay()
+        if arg_names is not None or keep_names is not None or bind is not None:
             record = self.graph._instances.get(self.source_instance)
             if record is None:
                 raise ValueError(
@@ -222,19 +223,29 @@ class _NamedTargetAdder:
             piece = record.composable
             if not isinstance(piece, BasicComposable):
                 raise TypeError(
-                    "arg_names/keep_names require a BasicComposable "
+                    "arg_names/keep_names/bind require a BasicComposable "
                     f"instance; got {type(piece).__name__}"
                 )
-            if keep_names is not None:
-                piece = piece.with_keep_names(keep_names)
-            if arg_names is not None:
-                piece = piece.bind_identifier(arg_names)
-            self.graph.replace_instance(self.source_instance, piece)
+            keep_names_items = None if keep_names is None else tuple(keep_names)
+            apply_source_overlay(
+                piece,
+                bind_values=bind,
+                arg_names=arg_names,
+                keep_names=keep_names_items,
+            )
+            overlay = EdgeSourceOverlay(
+                arg_names=() if arg_names is None else tuple(arg_names.items()),
+                keep_names=(
+                    frozenset() if keep_names_items is None else frozenset(keep_names_items)
+                ),
+                bind_values=() if bind is None else tuple(bind.items()),
+            )
         _validate_registered_target_site(self.graph, self.target)
         return self.graph.add_additive_edge(
             target=self.target,
             source_instance=self.source_instance,
             order=order,
+            overlay=overlay,
         )
 
 

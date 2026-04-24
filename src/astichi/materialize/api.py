@@ -13,6 +13,7 @@ from astichi.builder.graph import (
     AdditiveEdge,
     AssignBinding,
     BuilderGraph,
+    EdgeSourceOverlay,
     InstanceRecord,
 )
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
@@ -34,8 +35,6 @@ from astichi.lowering import (
 from astichi.lowering.markers import (
     ALL_MARKERS,
     ARG_IDENTIFIER,
-    EXPORT,
-    FUNCARGS,
     IMPORT,
     KEEP,
     PASS,
@@ -50,7 +49,7 @@ from astichi.lowering.markers import (
 from astichi.lowering.external_ref import apply_external_ref_lowering
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.lowering.unroll import iter_target_name, unroll_tree
-from astichi.model.basic import BasicComposable
+from astichi.model.basic import BasicComposable, apply_source_overlay
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     DemandPort,
@@ -210,6 +209,26 @@ def _refresh_composable(
         bound_externals=original.bound_externals,
         arg_bindings=original.arg_bindings,
         keep_names=original.keep_names,
+    )
+
+
+def _edge_scoped_composable(
+    record: InstanceRecord, edge: AdditiveEdge
+) -> BasicComposable:
+    piece = record.composable
+    if not isinstance(piece, BasicComposable):
+        raise TypeError(
+            f"source instance {record.name} must be a BasicComposable; "
+            f"got {type(piece).__name__}"
+        )
+    overlay = edge.overlay
+    if overlay == EdgeSourceOverlay():
+        return piece
+    return apply_source_overlay(
+        piece,
+        bind_values=overlay.bind_values_map() if overlay.bind_values else None,
+        arg_names=overlay.arg_names_map() if overlay.arg_names else None,
+        keep_names=overlay.keep_names if overlay.keep_names else None,
     )
 
 
@@ -673,6 +692,8 @@ def build_merge(
     _validate_indexed_targets(edges_by_target, instance_records)
 
     resolution_order = _topo_sort_targets(graph)
+    merged_arg_binding_pairs: set[tuple[str, str]] = set()
+    merged_keep_names: set[str] = set()
 
     for inst_name in resolution_order:
         scoped_block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]] = {}
@@ -720,13 +741,14 @@ def build_merge(
             param_contributions: list[_ParamContribution] = []
             for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
+                source_piece = _edge_scoped_composable(source_record, edge)
+                merged_arg_binding_pairs.update(source_piece.arg_bindings)
+                merged_keep_names.update(source_piece.keep_names)
                 # Source-side ports and generated insert wrappers use the raw
                 # (pre-unroll) name; the suffixing happens on the target side.
                 raw_target_name = edge.target.target_name
-                source_port = _lookup_supply_port(
-                    source_record.composable, raw_target_name
-                )
-                source_tree = trees[edge.source_instance]
+                source_port = _lookup_supply_port(source_piece, raw_target_name)
+                source_tree = source_piece.tree
                 source_effective_body = _effective_root_body(source_tree.body)
                 source_is_param_payload = has_params_payload(source_effective_body)
                 implicit_expr_supply = (
@@ -753,7 +775,7 @@ def build_merge(
                         )
                     )
                 if target_port is not None and target_port.placement == "params":
-                    param_supply = _lookup_parameter_supply_port(source_record.composable)
+                    param_supply = _lookup_parameter_supply_port(source_piece)
                     if param_supply is None:
                         raise ValueError(
                             format_astichi_error(
@@ -846,9 +868,9 @@ def build_merge(
                     + (edge.source_instance,)
                     + edge.target.path
                 )
-                contrib_body = copy.deepcopy(trees[edge.source_instance].body)
+                contrib_body = copy.deepcopy(source_tree.body)
                 _inject_scoped_keep_markers(
-                    contrib_body, source_record.composable.keep_names
+                    contrib_body, source_piece.keep_names
                 )
                 _prefix_shell_refs_in_body(contrib_body, inserted_ref_path)
                 contributions.append(
@@ -904,6 +926,8 @@ def build_merge(
     # consumes the pair back into flat module body after hygiene.
     merged_body: list[ast.stmt] = []
     for name in root_names:
+        merged_arg_binding_pairs.update(instance_records[name].composable.arg_bindings)
+        merged_keep_names.update(instance_records[name].composable.keep_names)
         _inject_scoped_keep_markers(
             trees[name].body, instance_records[name].composable.keep_names
         )
@@ -911,16 +935,6 @@ def build_merge(
 
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
-
-    # Union per-instance arg_bindings / keep_names so the resolver pass
-    # and hygiene see everything bound before merge. Duplicate keys are
-    # retained as distinct pairs (eagerly-rewritten slots no longer
-    # conflict in the tree).
-    merged_arg_binding_pairs: set[tuple[str, str]] = set()
-    merged_keep_names: set[str] = set()
-    for record in instance_records.values():
-        merged_arg_binding_pairs.update(record.composable.arg_bindings)
-        merged_keep_names.update(record.composable.keep_names)
 
     markers = recognize_markers(merged_tree)
     origin = CompileOrigin(

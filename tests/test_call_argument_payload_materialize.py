@@ -67,6 +67,20 @@ def test_build_funcargs_duplicate_explicit_keyword_rejects_at_build() -> None:
         builder.build()
 
 
+def test_build_funcargs_duplicate_resolved_explicit_keyword_rejects_at_build() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("result = func(**astichi_hole(kwargs))\n"))
+    builder.add.Shared(astichi.compile("astichi_funcargs(slot__astichi_arg__=1)\n"))
+    builder.Root.kwargs.add.Shared(order=0, arg_names={"slot": "named"})
+    builder.Root.kwargs.add.Shared(order=1, arg_names={"slot": "named"})
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate explicit keyword `named` in call-argument payloads",
+    ):
+        builder.build()
+
+
 def test_build_funcargs_import_assign_and_export_survive_materialize() -> None:
     builder = astichi.build()
     builder.add.Root(

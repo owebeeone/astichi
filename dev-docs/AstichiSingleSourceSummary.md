@@ -57,12 +57,15 @@ items.
     source_kind=...)`,
     `BasicComposable.bind_identifier(**names)`,
     `BasicComposable.with_keep_names(...)`, and
-    `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`; merge
-    unions per-instance bindings with conflict detection. Strict Astichi scope
-    isolation is implemented. `wire_identifier(...)` on builder slot handles
-    remains deferred; `ast.Attribute` identifier-slot positions are deferred
-    until a concrete consumer appears. Issue 005 scope complete.
-- Test status as of 2026-04-23:
+    `builder.add.<Name>(piece, *, arg_names=..., keep_names=...)`.
+    Target-adder overlays are now edge-local:
+    `builder.<Target>.<hole>.add.<Name>(..., arg_names=..., keep_names=..., bind=...)`
+    specializes only that additive edge and does not mutate the registered
+    instance record. Strict Astichi scope isolation is implemented.
+    `wire_identifier(...)` on builder slot handles remains deferred;
+    `ast.Attribute` identifier-slot positions are deferred until a concrete
+    consumer appears. Issue 005 scope complete.
+- Test status as of 2026-04-24:
   - full suite: green (no xfails)
   - Python-version matrix: green for supported runtimes
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
@@ -169,7 +172,9 @@ locations.
 - `builder.A` returns a handle for a registered root; **`A` is the stable graph
   id** (not a hygiene output name from inside a piece).
 - `builder.A.slot.add.B(order=0)`, `builder.A.slot[i, ...]` — additive wiring and
-  indexed hole paths.
+  indexed hole paths. On the target-adder surface, `arg_names=` /
+  `keep_names=` / `bind=` are edge-local overlays, not mutations of the
+  registered source instance.
 - `builder.assign.<Src>… .to().<Dst>…` — cross-instance boundary wiring. The
   fluent chain can carry **ref paths** into nested insert shells (`AssignBinding`
   `source_ref_path` / `target_ref_path`), not only `Src` / `Dst` at the root.

@@ -158,6 +158,46 @@ def test_builder_add_keep_names_pins_identifier_through_merge() -> None:
     assert "_sentinel" in merged.keep_names
 
 
+def test_target_add_arg_names_store_edge_overlay_without_mutating_instance() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(
+        astichi.compile(
+            """
+def step__astichi_arg__():
+    return 1
+"""
+        )
+    )
+
+    edge = builder.Root.body.add.Step(arg_names={"step": "run"})
+
+    step_record = next(record for record in builder.graph.instances if record.name == "Step")
+    assert dict(step_record.composable.arg_bindings) == {}
+    assert edge.overlay.arg_names == (("step", "run"),)
+
+
+def test_target_add_keep_names_and_bind_store_edge_overlay_without_mutating_instance() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(
+        astichi.compile(
+            """
+value = astichi_bind_external(seed)
+name = value
+"""
+        )
+    )
+
+    edge = builder.Root.body.add.Step(keep_names=["name"], bind={"seed": 10})
+
+    step_record = next(record for record in builder.graph.instances if record.name == "Step")
+    assert step_record.composable.keep_names == frozenset()
+    assert step_record.composable.bound_externals == frozenset()
+    assert edge.overlay.keep_names == frozenset({"name"})
+    assert edge.overlay.bind_values == (("seed", 10),)
+
+
 def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
     piece = astichi.compile("value = 1\n")
     builder = astichi.build()
@@ -166,6 +206,75 @@ def test_builder_add_arg_names_unknown_slot_fails_at_registration() -> None:
         match=r"materialize: no __astichi_arg__ / astichi_import / astichi_pass slot named `missing`",
     ):
         builder.add.A(piece, arg_names={"missing": "x"})
+
+
+def test_target_add_arg_names_conflicting_with_registration_rejects() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(
+        astichi.compile(
+            """
+def step__astichi_arg__():
+    return 1
+"""
+        ),
+        arg_names={"step": "run"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"materialize: cannot re-bind identifier arg `step`: already resolved to `run`",
+    ):
+        builder.Root.body.add.Step(arg_names={"step": "other"})
+
+
+def test_target_add_arg_names_same_registration_value_is_idempotent() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(
+        astichi.compile(
+            """
+def step__astichi_arg__():
+    return 1
+"""
+        ),
+        arg_names={"step": "run"},
+    )
+
+    builder.Root.body.add.Step(arg_names={"step": "run"})
+    materialized = builder.build().materialize()
+
+    import ast as _ast
+
+    rendered = _ast.unparse(materialized.tree)
+    assert "__astichi_arg__" not in rendered
+    assert "def run()" in rendered
+
+
+def test_target_add_bind_unknown_external_fails() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(astichi.compile("value = 1\n"))
+
+    with pytest.raises(
+        ValueError,
+        match=r"materialize: no astichi_bind_external\(missing\) site found",
+    ):
+        builder.Root.body.add.Step(bind={"missing": 1})
+
+
+def test_target_add_bind_conflicting_with_registration_rejects() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(body)\n"))
+    builder.add.Step(
+        astichi.compile("value = astichi_bind_external(seed)\n").bind(seed=1)
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"materialize: cannot re-bind `seed`: the external binding has already been applied",
+    ):
+        builder.Root.body.add.Step(bind={"seed": 2})
 
 
 def test_fluent_equal_order_keeps_insertion_order() -> None:

@@ -36,6 +36,14 @@ builder.Pipeline.Root.Parse.rows[1, 2].Normalize.body.add.Step(order=10)
 builder.assign.Step.total.to().Pipeline.Root.Right.total
 ```
 
+On the target-adder surface, specialization is **edge-local**:
+
+- `builder.Target.hole.add.Source(arg_names=..., keep_names=...)` affects only
+  that additive edge
+- `builder.Target.hole.add.Source(bind={...})` applies `astichi_bind_external`
+  values only for that edge
+- the registered `Source` instance is not mutated by those edge-local overlays
+
 Named descendant hops come from shells preserved across earlier `build()`
 stages. A stage-built composable exposes its preserved build root name as the
 first descendant segment; index segments attach to the immediately preceding

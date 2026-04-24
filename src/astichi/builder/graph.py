@@ -30,12 +30,28 @@ class InstanceRecord:
 
 
 @dataclass(frozen=True)
+class EdgeSourceOverlay:
+    """Per-edge source specialization without mutating the instance record."""
+
+    arg_names: tuple[tuple[str, str], ...] = ()
+    keep_names: frozenset[str] = frozenset()
+    bind_values: tuple[tuple[str, object], ...] = ()
+
+    def arg_names_map(self) -> dict[str, str]:
+        return dict(self.arg_names)
+
+    def bind_values_map(self) -> dict[str, object]:
+        return dict(self.bind_values)
+
+
+@dataclass(frozen=True)
 class AdditiveEdge:
     """Additive composition edge."""
 
     target: TargetRef
     source_instance: str
     order: int = 0
+    overlay: EdgeSourceOverlay = field(default_factory=EdgeSourceOverlay)
 
 
 @dataclass(frozen=True)
@@ -133,6 +149,7 @@ class BuilderGraph:
         target: TargetRef,
         source_instance: str,
         order: int = 0,
+        overlay: EdgeSourceOverlay | None = None,
     ) -> AdditiveEdge:
         """Register an additive edge from a source instance into a target."""
         if target.root_instance not in self._instances:
@@ -155,6 +172,7 @@ class BuilderGraph:
             target=target,
             source_instance=source_instance,
             order=order,
+            overlay=EdgeSourceOverlay() if overlay is None else overlay,
         )
         self._edges.append(edge)
         return edge
