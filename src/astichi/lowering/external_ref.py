@@ -84,7 +84,7 @@ def apply_external_ref_lowering(tree: ast.Module) -> None:
 class _ExternalKwargRewriter(ast.NodeTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
-        if not _is_astichi_ref_call(node):
+        if not _is_astichi_ref_surface_call(node):
             return node
         external_kw: ast.keyword | None = None
         for keyword in node.keywords:
@@ -151,10 +151,10 @@ class _RefLowerer(ast.NodeTransformer):
     def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
         sentinel = match_transparent_sentinel(
             node,
-            is_marker_call=_is_astichi_ref_call,
+            is_marker_call=_is_astichi_ref_surface_call,
         )
         if sentinel is not None:
-            chain = _lower_ref_call_to_chain(sentinel.call, ctx=sentinel.ctx)
+            chain = _lower_ref_surface_call_to_chain(sentinel.call, ctx=sentinel.ctx)
             return chain
         # Non-sentinel attribute access on a ref: lower the inner call
         # in Load context, then leave the outer Attribute alone.
@@ -168,12 +168,13 @@ class _RefLowerer(ast.NodeTransformer):
         # `astichi_ref(...)` Call here, lower it in Load context.
         # A `Call(Call(astichi_ref...), ...)` (calling the ref result)
         # is permitted — the inner ref call lowers normally.
-        if _is_astichi_ref_call(node):
-            return _lower_ref_call_to_chain(node, ctx=ast.Load())
+        if _is_astichi_ref_surface_call(node):
+            return _lower_ref_surface_call_to_chain(node, ctx=ast.Load())
         self.generic_visit(node)
         return node
 
-def _is_astichi_ref_call(node: ast.AST) -> bool:
+
+def _is_base_astichi_ref_call(node: ast.AST) -> bool:
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
@@ -181,7 +182,26 @@ def _is_astichi_ref_call(node: ast.AST) -> bool:
     )
 
 
-def _lower_ref_call_to_chain(call: ast.Call, *, ctx: ast.expr_context) -> ast.expr:
+def _contains_astichi_ref_surface(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call):
+        return _is_astichi_ref_surface_call(node)
+    if isinstance(node, ast.Attribute):
+        return _contains_astichi_ref_surface(node.value)
+    return False
+
+
+def _is_astichi_ref_surface_call(node: ast.AST) -> bool:
+    if _is_base_astichi_ref_call(node):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "astichi_ref"
+        and _contains_astichi_ref_surface(node.func.value)
+    )
+
+
+def _extract_ref_segments(call: ast.Call) -> tuple[str, ...]:
     if call.keywords or len(call.args) != 1:
         # `external=` should have been desugared at compile time. This
         # branch is reached for trees built outside the frontend (e.g.
@@ -192,8 +212,61 @@ def _lower_ref_call_to_chain(call: ast.Call, *, ctx: ast.expr_context) -> ast.ex
             "after compile() has run)"
         )
     raw = _evaluate_path_expression(call.args[0])
-    path = _validate_path_string(raw, lineno=getattr(call, "lineno", None))
-    return _build_chain(path, ctx=ctx, lineno=getattr(call, "lineno", None))
+    return _validate_path_string(raw, lineno=getattr(call, "lineno", None))
+
+
+def _lower_ref_base_expr(node: ast.AST) -> ast.expr:
+    if isinstance(node, ast.Call) and _is_astichi_ref_surface_call(node):
+        return _lower_ref_surface_call_to_chain(node, ctx=ast.Load())
+    if isinstance(node, ast.Attribute):
+        lowered_value = _lower_ref_base_expr(node.value)
+        lowered = ast.Attribute(
+            value=lowered_value,
+            attr=node.attr,
+            ctx=ast.Load(),
+        )
+        return ast.copy_location(lowered, node)
+    raise ValueError(
+        "astichi_ref(...).astichi_ref(...) may only extend a lowered "
+        "reference path"
+    )
+
+
+def _append_chain(
+    base: ast.expr,
+    segments: tuple[str, ...],
+    *,
+    ctx: ast.expr_context,
+    lineno: int | None,
+) -> ast.expr:
+    node: ast.expr = base
+    for idx, segment in enumerate(segments):
+        is_last = idx == len(segments) - 1
+        attr_ctx: ast.expr_context = ctx if is_last else ast.Load()
+        attribute = ast.Attribute(value=node, attr=segment, ctx=attr_ctx)
+        if lineno is not None:
+            attribute.lineno = lineno
+            attribute.col_offset = 0
+        node = attribute
+    return node
+
+
+def _lower_ref_surface_call_to_chain(
+    call: ast.Call, *, ctx: ast.expr_context
+) -> ast.expr:
+    segments = _extract_ref_segments(call)
+    if _is_base_astichi_ref_call(call):
+        return _build_chain(
+            segments, ctx=ctx, lineno=getattr(call, "lineno", None)
+        )
+    assert isinstance(call.func, ast.Attribute)
+    base = _lower_ref_base_expr(call.func.value)
+    return _append_chain(
+        base,
+        segments,
+        ctx=ctx,
+        lineno=getattr(call, "lineno", None),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -386,11 +459,11 @@ def validate_external_ref_surface(tree: ast.AST) -> None:
 
 
 def _statement_form_ref(node: ast.AST) -> ast.Call | None:
-    if _is_astichi_ref_call(node):
+    if _is_astichi_ref_surface_call(node):
         return node
     sentinel = match_transparent_sentinel(
         node,
-        is_marker_call=_is_astichi_ref_call,
+        is_marker_call=_is_astichi_ref_surface_call,
     )
     if sentinel is None:
         return None
