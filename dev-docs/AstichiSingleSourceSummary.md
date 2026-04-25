@@ -183,6 +183,12 @@ locations.
 - `builder.assign.<Src>… .to().<Dst>…` — cross-instance boundary wiring. The
   fluent chain can carry **ref paths** into nested insert shells (`AssignBinding`
   `source_ref_path` / `target_ref_path`), not only `Src` / `Dst` at the root.
+- Data-driven named equivalents are available for fluent operations:
+  `builder.add("Root", comp)`, `builder.instance("Root").target("slot").add("Step")`,
+  `builder.target(root_instance="Root", target_name="slot", ...)`, and
+  `builder.assign(source_instance=..., inner_name=..., target_instance=..., outer_name=...)`.
+  The named API uses the same graph records and validation semantics as the
+  fluent API, and is the intended surface for generated mappers.
 - `builder.build()` merges the graph to one composable.
 
 **Merge ordering:** lower `order` inserts first; equal `order` uses first-registered

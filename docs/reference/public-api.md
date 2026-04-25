@@ -57,6 +57,11 @@ substitutions and returns a new immutable composable.
 ## Submodule: `astichi.builder`
 
 Builder construction and graph types used by **`build()`** and advanced callers.
+The public builder handle supports both fluent chains and data-driven named
+calls such as `builder.add("Root", piece)`,
+`builder.instance("Root").target("body").add("Step")`, `builder.target(...)`,
+and `builder.assign(source_instance=..., inner_name=..., target_instance=...,
+outer_name=...)`.
 
 ## Submodule: `astichi.emit`
 

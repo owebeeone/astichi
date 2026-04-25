@@ -86,6 +86,9 @@ Cross-scope note:
 - `astichi_pass(name)` is the value-form surface and belongs in a real
   expression (`x = astichi_pass(y)`, `call(astichi_pass(y))`,
   `astichi_pass(obj).field = 1`)
+- when the `astichi_pass(...)` result itself must occupy the target position,
+  append `._` or `.astichi_v`:
+  `astichi_pass(counter)._ = 1`
 - `outer_bind=True` is the explicit convenience form for “bind this marker to
   the same-named identifier in the immediately enclosing Astichi scope”
 - explicit builder / `arg_names=` / `.bind_identifier(...)` wiring now

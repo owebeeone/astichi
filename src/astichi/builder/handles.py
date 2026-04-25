@@ -42,6 +42,31 @@ def _normalize_instance_family_indexes(
     return items
 
 
+def _normalize_optional_indexes(
+    indexes: int | tuple[int, ...] | None,
+) -> tuple[int, ...] | None:
+    if indexes is None:
+        return None
+    return _normalize_instance_family_indexes(indexes)
+
+
+def _instance_name_from_parts(
+    name: str,
+    indexes: int | tuple[int, ...] | None = None,
+) -> str:
+    if not isinstance(name, str):
+        raise TypeError("builder instance names must be strings")
+    normalized_indexes = _normalize_optional_indexes(indexes)
+    if normalized_indexes is None:
+        return name
+    parsed = parse_indexed_instance_name(name)
+    if parsed is not None:
+        raise TypeError(
+            "indexed builder instance families do not support nested family indexes"
+        )
+    return format_indexed_instance_name(name, normalized_indexes)
+
+
 def _family_instance_name(stem: str, key: int | tuple[int, ...]) -> str:
     return format_indexed_instance_name(
         stem, _normalize_instance_family_indexes(key)
@@ -57,16 +82,57 @@ def _indexed_family_members(graph: BuilderGraph, stem: str) -> tuple[str, ...]:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class TargetHandle:
     """Stable handle for a target path inside a root instance."""
 
     graph: BuilderGraph = field(compare=False, repr=False)
-    target: TargetRef
+    target_ref: TargetRef
+
+    def __init__(
+        self,
+        graph: BuilderGraph,
+        target_ref: TargetRef | None = None,
+        *,
+        target: TargetRef | None = None,
+    ) -> None:
+        if target_ref is None:
+            if target is None:
+                raise TypeError("TargetHandle requires a target_ref")
+            target_ref = target
+        elif target is not None and target != target_ref:
+            raise TypeError("TargetHandle target and target_ref disagree")
+        object.__setattr__(self, "graph", graph)
+        object.__setattr__(self, "target_ref", target_ref)
 
     @property
     def add(self) -> "AddToTargetProxy":
-        return AddToTargetProxy(graph=self.graph, target=self.target)
+        return AddToTargetProxy(graph=self.graph, target=self.target_ref)
+
+    def index(self, *indexes: int) -> "TargetHandle":
+        """Return a new target handle with accumulated indexes on the leaf."""
+        return self[indexes]
+
+    def target(self, name: str) -> "TargetHandle":
+        """Advance one descendant hop using an explicit target name."""
+        if not isinstance(name, str):
+            raise TypeError("target path names must be strings")
+        candidate_ref = _descend_registered_ref(
+            graph=self.graph,
+            instance_name=self.target_ref.root_instance,
+            ref_path=self.target_ref.ref_path,
+            leaf_name=self.target_ref.target_name,
+            leaf_path=self.target_ref.path,
+            role="descendant path",
+        )
+        return TargetHandle(
+            graph=self.graph,
+            target_ref=TargetRef(
+                root_instance=self.target_ref.root_instance,
+                target_name=name,
+                ref_path=candidate_ref,
+            ),
+        )
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "TargetHandle":
         """Return a new target handle with accumulated indexes on the leaf."""
@@ -78,11 +144,11 @@ class TargetHandle:
             raise TypeError("target path indexes must be integers")
         return TargetHandle(
             graph=self.graph,
-            target=TargetRef(
-                root_instance=self.target.root_instance,
-                target_name=self.target.target_name,
-                ref_path=self.target.ref_path,
-                path=self.target.path + items,
+            target_ref=TargetRef(
+                root_instance=self.target_ref.root_instance,
+                target_name=self.target_ref.target_name,
+                ref_path=self.target_ref.ref_path,
+                path=self.target_ref.path + items,
             ),
         )
 
@@ -90,22 +156,7 @@ class TargetHandle:
         """Advance one descendant hop and leave ``name`` as the new leaf."""
         if name.startswith("_"):
             raise AttributeError(name)
-        candidate_ref = _descend_registered_ref(
-            graph=self.graph,
-            instance_name=self.target.root_instance,
-            ref_path=self.target.ref_path,
-            leaf_name=self.target.target_name,
-            leaf_path=self.target.path,
-            role="descendant path",
-        )
-        return TargetHandle(
-            graph=self.graph,
-            target=TargetRef(
-                root_instance=self.target.root_instance,
-                target_name=name,
-                ref_path=candidate_ref,
-            ),
-        )
+        return self.target(name)
 
 
 @dataclass(frozen=True)
@@ -115,13 +166,18 @@ class InstanceHandle:
     graph: BuilderGraph = field(compare=False, repr=False)
     root_instance: str
 
+    def target(self, name: str) -> TargetHandle:
+        if not isinstance(name, str):
+            raise TypeError("target names must be strings")
+        return TargetHandle(
+            graph=self.graph,
+            target_ref=TargetRef(root_instance=self.root_instance, target_name=name),
+        )
+
     def __getattr__(self, name: str) -> TargetHandle:
         if name.startswith("_"):
             raise AttributeError(name)
-        return TargetHandle(
-            graph=self.graph,
-            target=TargetRef(root_instance=self.root_instance, target_name=name),
-        )
+        return self.target(name)
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "_IndexedInstanceHandle":
         if isinstance(key, tuple):
@@ -148,7 +204,7 @@ class _IndexedInstanceHandle:
             raise AttributeError(name)
         return TargetHandle(
             graph=self.graph,
-            target=TargetRef(
+            target_ref=TargetRef(
                 root_instance=self.root_instance,
                 target_name=name,
                 path=self.path,
@@ -212,6 +268,24 @@ class AddProxy:
     """Dedicated proxy for builder.add.<Name>(...) syntax."""
 
     graph: BuilderGraph = field(compare=False, repr=False)
+
+    def __call__(
+        self,
+        name: str,
+        composable: Composable,
+        *,
+        indexes: int | tuple[int, ...] | None = None,
+        arg_names: Mapping[str, str] | None = None,
+        keep_names: Iterable[str] | None = None,
+    ) -> InstanceHandle:
+        return _NamedAdder(
+            graph=self.graph,
+            instance_name=_instance_name_from_parts(name, indexes),
+        )(
+            composable,
+            arg_names=arg_names,
+            keep_names=keep_names,
+        )
 
     def __getattr__(self, name: str) -> _NamedAdder:
         if name.startswith("_"):
@@ -308,6 +382,27 @@ class AddToTargetProxy:
 
     graph: BuilderGraph = field(compare=False, repr=False)
     target: TargetRef
+
+    def __call__(
+        self,
+        source: str,
+        *,
+        indexes: int | tuple[int, ...] | None = None,
+        order: int = 0,
+        arg_names: Mapping[str, str] | None = None,
+        keep_names: Iterable[str] | None = None,
+        bind: Mapping[str, object] | None = None,
+    ) -> AdditiveEdge:
+        return _NamedTargetAdder(
+            graph=self.graph,
+            target=self.target,
+            source_instance=_instance_name_from_parts(source, indexes),
+        )(
+            order=order,
+            arg_names=arg_names,
+            keep_names=keep_names,
+            bind=bind,
+        )
 
     def __getattr__(self, name: str) -> _NamedTargetAdder:
         if name.startswith("_"):
@@ -733,6 +828,49 @@ class AssignProxy:
 
     graph: BuilderGraph = field(compare=False, repr=False)
 
+    def __call__(
+        self,
+        *,
+        source_instance: str,
+        inner_name: str,
+        target_instance: str,
+        outer_name: str,
+        source_ref_path: RefPath = (),
+        target_ref_path: RefPath = (),
+    ) -> AssignBinding:
+        if not isinstance(source_instance, str):
+            raise TypeError("assign source instance names must be strings")
+        if not isinstance(inner_name, str):
+            raise TypeError("assign inner names must be strings")
+        if not isinstance(target_instance, str):
+            raise TypeError("assign target instance names must be strings")
+        if not isinstance(outer_name, str):
+            raise TypeError("assign outer names must be strings")
+        normalized_source_ref_path = normalize_ref_path(source_ref_path)
+        normalized_target_ref_path = normalize_ref_path(target_ref_path)
+        _validate_registered_identifier_demand(
+            graph=self.graph,
+            instance_name=source_instance,
+            ref_path=normalized_source_ref_path,
+            inner_name=inner_name,
+        )
+        _validate_registered_identifier_supplier(
+            graph=self.graph,
+            instance_name=target_instance,
+            ref_path=normalized_target_ref_path,
+            outer_name=outer_name,
+        )
+        return self.graph.add_assign(
+            AssignBinding(
+                source_instance=source_instance,
+                inner_name=inner_name,
+                target_instance=target_instance,
+                outer_name=outer_name,
+                source_ref_path=normalized_source_ref_path,
+                target_ref_path=normalized_target_ref_path,
+            )
+        )
+
     def __getattr__(self, source_instance: str) -> _AssignSourcePicker:
         if source_instance.startswith("_"):
             raise AttributeError(source_instance)
@@ -755,6 +893,45 @@ class BuilderHandle:
     @property
     def assign(self) -> AssignProxy:
         return AssignProxy(graph=self.graph)
+
+    def instance(
+        self,
+        name: str,
+        *,
+        indexes: int | tuple[int, ...] | None = None,
+    ) -> InstanceHandle:
+        instance_name = _instance_name_from_parts(name, indexes)
+        instance_names = {record.name for record in self.graph.instances}
+        if instance_name in instance_names:
+            return InstanceHandle(graph=self.graph, root_instance=instance_name)
+        if indexes is None and _indexed_family_members(self.graph, name):
+            raise AttributeError(
+                f"unknown builder instance: {name} (indexed family exists; "
+                "select a member with `indexes=...`)"
+            )
+        raise AttributeError(f"unknown builder instance: {instance_name}")
+
+    def target(
+        self,
+        *,
+        root_instance: str,
+        target_name: str,
+        ref_path: RefPath = (),
+        leaf_path: int | tuple[int, ...] | None = None,
+    ) -> TargetHandle:
+        if not isinstance(target_name, str):
+            raise TypeError("target names must be strings")
+        root = self.instance(root_instance)
+        normalized_leaf_path = _normalize_optional_indexes(leaf_path)
+        return TargetHandle(
+            graph=self.graph,
+            target_ref=TargetRef(
+                root_instance=root.root_instance,
+                target_name=target_name,
+                ref_path=normalize_ref_path(ref_path),
+                path=() if normalized_leaf_path is None else normalized_leaf_path,
+            ),
+        )
 
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Merge the builder graph into a single composable.

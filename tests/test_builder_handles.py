@@ -36,6 +36,17 @@ def test_builder_add_name_registers_instance_and_returns_instance_handle() -> No
     assert [record.name for record in builder.graph.instances] == ["A"]
 
 
+def test_builder_add_named_call_registers_instance_and_returns_instance_handle() -> None:
+    builder = astichi.build()
+    comp = astichi.compile("value = 1\n")
+
+    instance = builder.add("A", comp)
+
+    assert isinstance(instance, InstanceHandle)
+    assert instance.root_instance == "A"
+    assert [record.name for record in builder.graph.instances] == ["A"]
+
+
 def test_builder_root_instance_lookup_returns_instance_handle() -> None:
     builder = astichi.build()
     builder.add.A(astichi.compile("value = 1\n"))
@@ -57,6 +68,17 @@ def test_builder_add_indexed_instance_family_member_registers_distinct_instance(
     assert [record.name for record in builder.graph.instances] == ["Step[1]"]
 
 
+def test_builder_add_named_call_registers_indexed_instance_family_member() -> None:
+    builder = astichi.build()
+    comp = astichi.compile("value = 1\n")
+
+    instance = builder.add("Step", comp, indexes=(1,))
+
+    assert isinstance(instance, InstanceHandle)
+    assert instance.root_instance == "Step[1]"
+    assert [record.name for record in builder.graph.instances] == ["Step[1]"]
+
+
 def test_builder_root_instance_lookup_can_select_indexed_family_member() -> None:
     builder = astichi.build()
     builder.add.Step[1](astichi.compile("astichi_hole(extra)\n"))
@@ -65,6 +87,29 @@ def test_builder_root_instance_lookup_can_select_indexed_family_member() -> None
 
     assert isinstance(instance, InstanceHandle)
     assert instance == InstanceHandle(graph=builder.graph, root_instance="Step[1]")
+
+
+def test_builder_named_instance_lookup_can_select_base_and_indexed_members() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("value = 1\n"))
+    builder.add.Step[1](astichi.compile("astichi_hole(extra)\n"))
+
+    assert builder.instance("Root") == InstanceHandle(
+        graph=builder.graph,
+        root_instance="Root",
+    )
+    assert builder.instance("Step", indexes=1) == InstanceHandle(
+        graph=builder.graph,
+        root_instance="Step[1]",
+    )
+
+
+def test_builder_named_instance_lookup_requires_index_for_family_stem() -> None:
+    builder = astichi.build()
+    builder.add.Step[1](astichi.compile("value = 1\n"))
+
+    with pytest.raises(AttributeError, match="indexed family exists"):
+        builder.instance("Step")
 
 
 def test_builder_unknown_indexed_family_member_fails_immediately() -> None:
@@ -92,6 +137,9 @@ def test_builder_indexed_instance_family_indexes_must_be_integers() -> None:
     with pytest.raises(TypeError, match="instance family indexes must be integers"):
         _ = builder.add.Step["bad"]
 
+    with pytest.raises(TypeError, match="instance family indexes must be integers"):
+        builder.add("Step", astichi.compile("value = 1\n"), indexes="bad")
+
 
 def test_builder_unknown_root_instance_fails_immediately() -> None:
     builder = astichi.build()
@@ -108,12 +156,45 @@ def test_instance_handle_attribute_and_indexing_create_target_handles() -> None:
     indexed = target[0, 1]
 
     assert isinstance(target, TargetHandle)
-    assert target.target == TargetRef(root_instance="A", target_name="first")
+    assert target.target_ref == TargetRef(root_instance="A", target_name="first")
     assert isinstance(indexed, TargetHandle)
-    assert indexed.target == TargetRef(
+    assert indexed.target_ref == TargetRef(
         root_instance="A",
         target_name="first",
         path=(0, 1),
+    )
+
+
+def test_instance_handle_named_target_and_index_create_target_handles() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("value = 1\n"))
+
+    target = builder.instance("A").target("first")
+    indexed = target.index(0).index(1)
+
+    assert target == builder.A.first
+    assert indexed == builder.A.first[0, 1]
+
+
+def test_builder_direct_target_helper_creates_target_handle() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("value = 1\n"))
+
+    target = builder.target(
+        root_instance="A",
+        ref_path=("Root",),
+        target_name="slot",
+        leaf_path=(0, 1),
+    )
+
+    assert target == TargetHandle(
+        graph=builder.graph,
+        target=TargetRef(
+            root_instance="A",
+            target_name="slot",
+            ref_path=("Root",),
+            path=(0, 1),
+        ),
     )
 
 
@@ -123,6 +204,9 @@ def test_target_handle_indexing_requires_integer_path_items() -> None:
 
     with pytest.raises(TypeError, match="target path indexes must be integers"):
         _ = builder.A.first["bad"]
+
+    with pytest.raises(TypeError, match="target path indexes must be integers"):
+        builder.A.first.index("bad")
 
 
 def test_target_handle_exposes_fluent_add_proxy() -> None:
@@ -141,12 +225,41 @@ def test_target_handle_exposes_fluent_add_proxy() -> None:
     assert builder.graph.edges == (edge,)
 
 
+def test_target_add_named_call_wires_source_instance() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("astichi_hole(slot)\n"))
+    builder.add.B(astichi.compile("value = 1\n"))
+
+    edge = builder.instance("A").target("slot").add("B", order=10)
+
+    assert edge == AdditiveEdge(
+        target=TargetRef(root_instance="A", target_name="slot"),
+        source_instance="B",
+        order=10,
+    )
+    assert builder.graph.edges == (edge,)
+
+
 def test_target_add_can_source_indexed_family_member() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("astichi_hole(slot)\n"))
     builder.add.Step[1](astichi.compile("value = 1\n"))
 
     edge = builder.Root.slot.add.Step[1](order=10)
+
+    assert edge == AdditiveEdge(
+        target=TargetRef(root_instance="Root", target_name="slot"),
+        source_instance="Step[1]",
+        order=10,
+    )
+
+
+def test_target_add_named_call_can_source_indexed_family_member() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("astichi_hole(slot)\n"))
+    builder.add("Step", astichi.compile("value = 1\n"), indexes=1)
+
+    edge = builder.instance("Root").target("slot").add("Step", indexes=1, order=10)
 
     assert edge == AdditiveEdge(
         target=TargetRef(root_instance="Root", target_name="slot"),
@@ -175,6 +288,48 @@ def test_fluent_and_raw_builder_operations_produce_equivalent_graph_state() -> N
 
     assert fluent.graph.instances == raw.instances
     assert fluent.graph.edges == raw.edges
+
+
+def test_fluent_and_named_builder_operations_produce_equivalent_graph_state() -> None:
+    root = astichi.compile("astichi_hole(slot)\n")
+    child = astichi.compile("value = astichi_bind_external(seed)\n")
+
+    fluent = astichi.build()
+    fluent.add.A(root)
+    fluent.add.Step[2](child)
+    fluent.A.slot.add.Step[2](
+        order=10,
+        bind={"seed": 1},
+        keep_names=["value"],
+    )
+
+    named = astichi.build()
+    named.add("A", root)
+    named.add("Step", child, indexes=(2,))
+    named.instance("A").target("slot").add(
+        "Step",
+        indexes=(2,),
+        order=10,
+        bind={"seed": 1},
+        keep_names=["value"],
+    )
+
+    assert named.graph.instances == fluent.graph.instances
+    assert named.graph.edges == fluent.graph.edges
+
+
+def test_named_api_accepts_leading_underscore_instance_and_target_names() -> None:
+    builder = astichi.build()
+    builder.add("_Root", astichi.compile("astichi_hole(_slot)\n"))
+    builder.add("_Step", astichi.compile("value = 1\n"))
+
+    edge = builder.instance("_Root").target("_slot").add("_Step")
+
+    assert edge == AdditiveEdge(
+        target=TargetRef(root_instance="_Root", target_name="_slot"),
+        source_instance="_Step",
+    )
+    assert builder.build().materialize().emit(provenance=False).strip() == "value = 1"
 
 
 def test_builder_add_arg_names_resolves_slot_before_registration() -> None:
@@ -374,6 +529,26 @@ def test_descendant_target_handles_accumulate_ref_path_across_build_stages() -> 
     )
 
 
+def test_named_descendant_target_handles_match_fluent_ref_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("astichi_hole(slot)\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+
+    target = (
+        stage2.instance("Pipeline")
+        .target("Root")
+        .target("Inner")
+        .target("slot")
+    )
+
+    assert target == stage2.Pipeline.Root.Inner.slot
+
+
 def test_descendant_target_handle_rejects_unknown_registered_path() -> None:
     stage1 = astichi.build()
     stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
@@ -446,6 +621,64 @@ def test_assign_descendant_target_records_full_ref_path() -> None:
     )
 
 
+def test_named_assign_matches_fluent_assign_for_root_and_descendant_paths() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("total = 10\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    source = astichi.compile("astichi_import(total)\nvalue = total + 1\n")
+
+    fluent = astichi.build()
+    fluent.add.Pipeline(built)
+    fluent.add.Step(source)
+    fluent.assign.Step.total.to().Pipeline.Root.Inner.total
+
+    named = astichi.build()
+    named.add("Pipeline", built)
+    named.add("Step", source)
+    named.assign(
+        source_instance="Step",
+        inner_name="total",
+        target_instance="Pipeline",
+        outer_name="total",
+        target_ref_path=("Root", "Inner"),
+    )
+
+    assert named.graph.assigns == fluent.graph.assigns
+
+
+def test_named_assign_matches_fluent_assign_for_nested_source_path() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(
+        astichi.compile("astichi_import(counter)\nresult = counter + 1\n")
+    )
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    init = astichi.compile("counter = 10\n")
+
+    fluent = astichi.build()
+    fluent.add.Pipeline(built)
+    fluent.add.Init(init)
+    fluent.assign.Pipeline.Root.Inner.counter.to().Init.counter
+
+    named = astichi.build()
+    named.add("Pipeline", built)
+    named.add("Init", init)
+    named.assign(
+        source_instance="Pipeline",
+        source_ref_path=("Root", "Inner"),
+        inner_name="counter",
+        target_instance="Init",
+        outer_name="counter",
+    )
+
+    assert named.graph.assigns == fluent.graph.assigns
+
+
 def test_assign_descendant_target_rejects_unknown_registered_path_cleanly() -> None:
     stage1 = astichi.build()
     stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
@@ -462,5 +695,29 @@ def test_assign_descendant_target_rejects_unknown_registered_path_cleanly() -> N
         ),
     ):
         stage2.assign.Step.total.to().Pipeline.Missing.total
+
+    assert stage2.graph.assigns == ()
+
+
+def test_named_assign_rejects_unknown_registered_path_cleanly() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built)
+    stage2.add.Step(astichi.compile("astichi_import(total)\nvalue = total + 1\n"))
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown assign target path `Pipeline\.Missing`",
+    ):
+        stage2.assign(
+            source_instance="Step",
+            inner_name="total",
+            target_instance="Pipeline",
+            outer_name="total",
+            target_ref_path=("Missing",),
+        )
 
     assert stage2.graph.assigns == ()

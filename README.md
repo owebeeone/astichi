@@ -46,6 +46,8 @@ Astichi is marker-bearing Python source plus a small build pipeline.
 The core markers are:
 
 - `astichi_hole(name)` -> insertion site
+- `astichi_keep(name)` -> hygiene-preserved name in expression / statement source
+- `name__astichi_keep__` -> hygiene-preserved name in identifier position
 - `name__astichi_arg__` -> identifier demand
 - `name__astichi_param_hole__` -> function-parameter insertion target
 - `astichi_funcargs(...)` -> call-argument payload
@@ -55,6 +57,18 @@ The core markers are:
 - `astichi_import(name)` -> explicit whole-scope boundary import
 - `astichi_export(name)` -> explicit outward supply
 - `astichi_insert(...)` -> internal emitted metadata, not general authored API
+
+Value-form target note:
+
+- `astichi_ref(...)` and `astichi_pass(...)` are ordinary value-form surfaces in
+  expressions.
+- If the marker result itself must occupy an `Assign` / `AugAssign` / `Delete`
+  target position, append `._` or `.astichi_v`:
+  `astichi_ref("self.f0")._ = 1`,
+  `astichi_pass(counter).astichi_v = 1`.
+- If you immediately continue to a real attribute, plain Python target syntax
+  already works:
+  `astichi_pass(obj).field = 1`.
 
 The one rule that matters most is scope:
 

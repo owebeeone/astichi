@@ -9,7 +9,7 @@ Fast orientation:
 | [public-api.md](public-api.md) | Package exports and submodules |
 | [compile-api.md](compile-api.md) | `compile`, origins, lowering pipeline |
 | [composable-api.md](composable-api.md) | `Composable`, `emit`, `materialize` |
-| [builder-api.md](builder-api.md) | `build()`, fluent and handle APIs |
+| [builder-api.md](builder-api.md) | `build()`, fluent, handle, and data-driven named APIs |
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |
 | [marker-holes.md](marker-holes.md) | `astichi_hole`, `*`, `**`, block sites |

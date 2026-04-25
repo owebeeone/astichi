@@ -102,6 +102,74 @@ result = b.build()
 
 Fluent and handle styles **must** behave identically (**[§8](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
+## Data-driven named API
+
+The fluent builder is a DSL over a named API. Use the named API when builder
+instance names, target paths, indexed family members, edge overlays, or assign
+bindings come from resolved data records instead of handwritten Python
+attribute chains.
+
+```python
+b = build()
+b.add("Root", root_piece)
+b.add("Step", step_piece, indexes=(2,))
+
+b.instance("Root").target("body").add(
+    "Step",
+    indexes=(2,),
+    order=10,
+    bind={"seed": 1},
+)
+
+b.assign(
+    source_instance="Step",
+    inner_name="total",
+    target_instance="Root",
+    outer_name="total",
+)
+```
+
+`builder.add`, `target.add`, and `builder.assign` remain proxy properties for
+the fluent API; the proxies are also callable for named/data-driven use. Named
+calls reuse the same graph records and validation paths as fluent calls.
+
+Leading-underscore names are only available through explicit named calls:
+
+```python
+b.add("_Root", root_piece)
+b.add("_Step", step_piece)
+b.instance("_Root").target("_slot").add("_Step")
+```
+
+Fluent attribute access still rejects leading-underscore names because those
+names collide with Python object protocol behavior.
+
+### Fluent vs data-driven equivalence
+
+| Fluent | Data-driven named API |
+| --- | --- |
+| `builder.add.Root(root)` | `builder.add("Root", root)` |
+| `builder.add.Step[2](piece)` | `builder.add("Step", piece, indexes=(2,))` |
+| `builder.Root` | `builder.instance("Root")` |
+| `builder.Step[2]` | `builder.instance("Step", indexes=(2,))` |
+| `builder.Root.body` | `builder.instance("Root").target("body")` |
+| `builder.Pipeline.Root.Loop.slot[0]` | `builder.instance("Pipeline").target("Root").target("Loop").target("slot").index(0)` |
+| `builder.Root.body.add.Step(order=0)` | `builder.instance("Root").target("body").add("Step", order=0)` |
+| `builder.Root.body.add.Step[2](order=2)` | `builder.instance("Root").target("body").add("Step", indexes=(2,), order=2)` |
+| `builder.assign.Step.total.to().Root.total` | `builder.assign(source_instance="Step", inner_name="total", target_instance="Root", outer_name="total")` |
+
+For systems that already hold a normalized target reference, `builder.target`
+constructs the same target handle directly:
+
+```python
+b.target(
+    root_instance="Pipeline",
+    ref_path=("Root", "Loop"),
+    target_name="slot",
+    leaf_path=(0,),
+).add("Step")
+```
+
 ## Raw / assembler layer
 
 A lower-level explicit API (instance ids, `PortId`, `tie`, …) exists for tooling
