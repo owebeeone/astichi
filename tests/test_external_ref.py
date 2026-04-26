@@ -236,6 +236,20 @@ def test_ref_chained_calls_compose_reference_path_segments() -> None:
     assert rendered.strip() == "value = cls_ctx.class_name"
 
 
+def test_ref_method_form_extends_arbitrary_base_expression() -> None:
+    rendered = _materialized(
+        "self.astichi_ref(external=field_name)._ = 1\n",
+        field_name="label",
+    )
+    assert rendered.strip() == "self.label = 1"
+
+
+def test_ref_method_form_external_kwarg_surfaces_bind_external_demand_port() -> None:
+    compiled = astichi.compile("value = self.astichi_ref(external=field_name)\n")
+    demands = {p.name for p in compiled.demand_ports}
+    assert "field_name" in demands
+
+
 # ---------------------------------------------------------------------------
 # §3a transparent sentinel continuation
 # ---------------------------------------------------------------------------

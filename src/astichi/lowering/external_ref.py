@@ -32,6 +32,7 @@ defined here.
 from __future__ import annotations
 
 import ast
+import copy
 from dataclasses import dataclass
 
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
@@ -197,7 +198,6 @@ def _is_astichi_ref_surface_call(node: ast.AST) -> bool:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "astichi_ref"
-        and _contains_astichi_ref_surface(node.func.value)
     )
 
 
@@ -218,7 +218,10 @@ def _extract_ref_segments(call: ast.Call) -> tuple[str, ...]:
 def _lower_ref_base_expr(node: ast.AST) -> ast.expr:
     if isinstance(node, ast.Call) and _is_astichi_ref_surface_call(node):
         return _lower_ref_surface_call_to_chain(node, ctx=ast.Load())
-    if isinstance(node, ast.Attribute):
+    if (
+        isinstance(node, ast.Attribute)
+        and _contains_astichi_ref_surface(node.value)
+    ):
         lowered_value = _lower_ref_base_expr(node.value)
         lowered = ast.Attribute(
             value=lowered_value,
@@ -226,10 +229,24 @@ def _lower_ref_base_expr(node: ast.AST) -> ast.expr:
             ctx=ast.Load(),
         )
         return ast.copy_location(lowered, node)
+    if isinstance(node, ast.expr):
+        lowered = copy.deepcopy(node)
+        lowered = _RefLowerer().visit(lowered)
+        if not isinstance(lowered, ast.expr):
+            raise ValueError(
+                "astichi_ref(...) extension base did not lower to an expression"
+            )
+        _force_load_context(lowered)
+        return ast.copy_location(lowered, node)
     raise ValueError(
-        "astichi_ref(...).astichi_ref(...) may only extend a lowered "
-        "reference path"
+        "astichi_ref(...) extension base must be an expression"
     )
+
+
+def _force_load_context(node: ast.AST) -> None:
+    for child in ast.walk(node):
+        if isinstance(child, (ast.Name, ast.Attribute, ast.Subscript, ast.Starred)):
+            child.ctx = ast.Load()
 
 
 def _append_chain(

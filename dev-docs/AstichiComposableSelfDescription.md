@@ -33,6 +33,11 @@ The design question is:
 > Can the remaining metadata live in marker names, or do composables need
 > explicit surface keys / metadata annotations?
 
+There is a stronger middle path: standardize reusable class/function templates
+and component recipes so that many interfaces are carried by known hole names
+and recipe structure. For common constructs, the user of the recipe should not
+need to classify every hole manually.
+
 This document inventories every connection surface so that question can be
 answered deliberately.
 
@@ -387,7 +392,226 @@ not a normal demand/supply target
 Additional metadata usually belongs to the external bind that supplies the
 path.
 
-## 4. What Names Can Encode
+## 4. Canonical Template And Component Recipes
+
+For class and function generation, the best first-order abstraction is probably
+not "raw snippets plus arbitrary metadata". It is a small suite of canonical
+Astichi templates and component recipes.
+
+The source still self-describes through Astichi markers, but the recipe gives
+standard meaning to the port names.
+
+### 4.1 Class Shell Template
+
+A minimal class shell can standardize these names:
+
+```python
+class class_name__astichi_arg__(*astichi_hole(class_parents)):
+    astichi_hole(class_components)
+```
+
+Derived structural interface:
+
+```text
+identifier demand: class_name
+variadic expression target: class_parents
+block target: class_components
+```
+
+Recipe-level meaning:
+
+- `class_name` is the generated class name.
+- `class_parents` receives base-class expressions.
+- `class_components` receives class-body components such as `__slots__`,
+  metadata assignments, methods, helper declarations, and future class-level
+  constructs.
+
+The mapper should not need a separate classifier to know that
+`class_components` is a class-body component bus if it is using this canonical
+class shell recipe.
+
+### 4.2 Component Recipe Shape
+
+A component recipe describes how one reusable component is inserted and how its
+entries are populated from input bits.
+
+Conceptual shape:
+
+```python
+ClassComponent(
+    name="slots",
+    component=SlotsComponent,
+    component_target="class_components",
+    component_order=0,
+    entry_target="slot_entries",
+    entry=SlotEntry,
+    requires=("slot_names",),
+    rules=...
+)
+```
+
+Meaning:
+
+- `component` is an Astichi composable that is inserted into the parent
+  template.
+- `component_target` names the parent hole that receives the component.
+- `component_order` controls ordering among class components.
+- `entry_target` names the component's inner hole for repeated entries.
+- `entry` is the Astichi composable used for one repeated entry.
+- `requires` names the input bit collections the recipe needs.
+- `rules` select bits, compute order, and bind values/identifiers into entries.
+
+The component recipe is the bridge between "known composable interface" and
+"data-driven build operations".
+
+### 4.3 Slots Component
+
+Slots can be described as a class component:
+
+```python
+__slots__ = (*astichi_hole(slot_entries),)
+```
+
+One slot entry can be:
+
+```python
+astichi_bind_external(slot_name)
+```
+
+Recipe-level meaning:
+
+```text
+insert SlotsComponent into class_components at component_order=0
+for each selected slot name:
+    insert SlotEntry into slot_entries
+    bind slot_name
+```
+
+The canonical names are enough here:
+
+- `slot_entries` means the repeated entries inside `__slots__`.
+- `slot_name` means the external value needed by one slot entry.
+
+No surface key is required unless this recipe needs to coexist with another
+`slot_entries` target in the same composable scope.
+
+### 4.4 Init Method Component
+
+An init method can be described as another class component:
+
+```python
+def __init__(self, init_params__astichi_param_hole__):
+    astichi_hole(init_body)
+```
+
+Recipe-level meaning:
+
+- `init_params` receives parameter payload entries.
+- `init_body` receives statement entries.
+
+The component can then carry multiple entry recipes:
+
+```text
+for each field selected by init-param rule:
+    insert InitParamEntry into init_params
+    bind/arg-map field properties
+
+for each field selected by init-body rule:
+    insert InitBodyEntry into init_body
+    bind/arg-map field properties
+
+if no body entries were selected:
+    insert PassEntry into init_body
+```
+
+The rule engine belongs here. It decides which bits produce entries and how
+those bits bind into the entry composables. Astichi still only sees reusable
+composables, ports, binds, identifier maps, and additive edges.
+
+### 4.5 Function Shell Template
+
+A generic function shell can use the same pattern:
+
+```python
+def function_name__astichi_arg__(function_params__astichi_param_hole__):
+    astichi_hole(function_body)
+```
+
+Canonical names:
+
+- `function_name`
+- `function_params`
+- `function_body`
+
+Specialized recipes can then alias or specialize those names:
+
+- `__init__` uses `init_params` / `init_body`
+- property getter uses `getter_body`
+- setter uses `setter_params` / `setter_body`
+
+The generic shape is the same; the recipe vocabulary decides which names are
+standard for each construct family.
+
+### 4.6 Bits And Rule Evaluation
+
+Recipes are run against input bits. A bit is a structured input record supplied
+by a generation system.
+
+Examples:
+
+- `slot_names`
+- `field_specs`
+- `managed_field_specs`
+- `owned_field_specs`
+- `defaulted_fields`
+- `init_fields`
+
+The recipe evaluator needs these inputs:
+
+1. a root template composable
+2. zero or more component recipes
+3. bit collections
+4. selectors over bits
+5. binding maps from bit properties to `bind=...`
+6. identifier maps from bit properties to `arg_names=...`
+7. order functions
+
+Evaluation is mechanical:
+
+1. Insert each enabled component into its parent target.
+2. Evaluate the component's entry rules over the available bits.
+3. For each selected bit, insert the entry resource into the component's entry
+   target with computed order, binds, identifier maps, and keep names.
+4. Delegate final AST composition and hygiene to Astichi.
+
+There should be no search over arbitrary source. The "magic" is rule expansion
+over declared bits and canonical component interfaces.
+
+### 4.7 Astichi-Owned Recipe Suite
+
+For common Python constructs, Astichi can eventually ship a suite of canonical
+composables/recipes:
+
+- class shell
+- function shell
+- async function shell
+- class variable component
+- method component
+- slots component
+- decorator list component
+- base-class list component
+- return annotation component
+- parameter entry component
+- assignment statement entry component
+
+If these live in Astichi, YIDL can consume them without knowing every internal
+hole name. The recipe exposes the stable interface; the holes remain the
+implementation of that recipe.
+
+YIDL still supplies the domain bits and selectors. Astichi should not learn
+what `managed`, `owned`, or `field_spec` means.
+
+## 5. What Names Can Encode
 
 Port names can carry a surprising amount of useful information.
 
@@ -431,7 +655,7 @@ Limits:
 Conclusion: names are a good default convention, but they should not be the
 only self-description mechanism.
 
-## 5. What Surface Keys Add
+## 6. What Surface Keys Add
 
 A surface key is a stable interface label distinct from the local Astichi port
 name.
@@ -459,12 +683,12 @@ Costs:
 
 Conclusion: surface keys are justified for reusable generation resources.
 
-## 6. Candidate Metadata Carriers
+## 7. Candidate Metadata Carriers
 
 The metadata carrier must preserve valid Python source and must be extractable
 during compile/lowering.
 
-### 6.1 Keyword Metadata On Call Markers
+### 7.1 Keyword Metadata On Call Markers
 
 Example:
 
@@ -502,7 +726,7 @@ Poor fit:
 - `name__astichi_keep__`
 - `name__astichi_param_hole__`
 
-### 6.2 Prefix Metadata Statement
+### 7.2 Prefix Metadata Statement
 
 Example:
 
@@ -541,7 +765,7 @@ Poor fit:
 - inline expression holes
 - individual identifiers inside dense expressions
 
-### 6.3 Decorator Metadata
+### 7.3 Decorator Metadata
 
 Example:
 
@@ -568,7 +792,7 @@ Good fit:
 - class shells
 - parameter-hole owner metadata
 
-### 6.4 Annotation Metadata For Parameters
+### 7.4 Annotation Metadata For Parameters
 
 Example:
 
@@ -596,7 +820,7 @@ Cons:
 
 Conclusion: avoid unless no better parameter-hole metadata carrier exists.
 
-### 6.5 Naming Convention Only
+### 7.5 Naming Convention Only
 
 Example:
 
@@ -618,19 +842,24 @@ Cons:
 
 Conclusion: keep as convention, not as the only mechanism.
 
-## 7. Recommended Direction
+## 8. Recommended Direction
 
 Use a layered self-description model:
 
-1. **Inference first.**
+1. **Canonical recipes first for common constructs.**
+   Prefer standardized class/function/component recipes with known hole names
+   and entry targets over arbitrary per-snippet classifiers.
+2. **Inference from marker position.**
    Astichi continues deriving shape, placement, cardinality, and basic
    demand/supply direction from marker kind and AST position.
-2. **Name convention second.**
-   The local marker name remains the default port key. Simple resources can use
-   only names.
-3. **Explicit metadata when needed.**
+3. **Name convention as recipe vocabulary.**
+   The local marker name remains the default port key. In canonical recipes,
+   names such as `class_components`, `slot_entries`, `init_params`, and
+   `init_body` carry standardized meaning.
+4. **Explicit metadata when needed.**
    Add a small `astichi_meta(...)` surface for surface keys, roles, construct
-   grouping, and tags.
+   grouping, and tags where recipe vocabulary cannot express the interface
+   cleanly.
 
 The composable interface should expose both:
 
@@ -661,7 +890,7 @@ surface = name
 
 depending on which is more useful for the mapper.
 
-## 8. Attachment Rules To Decide
+## 9. Attachment Rules To Decide
 
 The hardest part is not storing metadata; it is defining what metadata attaches
 to.
@@ -691,11 +920,11 @@ provider__astichi_arg__.value
 
 These rules need tests before implementation.
 
-## 9. Connection Inventory For Mapper Rules
+## 10. Connection Inventory For Mapper Rules
 
 A generation mapper needs to answer these questions from composable interfaces.
 
-### 9.1 Can This Resource Fill This Target?
+### 10.1 Can This Resource Fill This Target?
 
 Required data:
 
@@ -717,7 +946,7 @@ Missing:
 
 - optional surface key / role / tags
 
-### 9.2 What Values Must A Rule Bind?
+### 10.2 What Values Must A Rule Bind?
 
 Required data:
 
@@ -736,7 +965,7 @@ Missing:
 - role/property mapping metadata
 - value constraints beyond shape
 
-### 9.3 What Does A Resource Publish?
+### 10.3 What Does A Resource Publish?
 
 Required data:
 
@@ -752,7 +981,7 @@ Missing:
 
 - role/surface metadata for supplies
 
-### 9.4 Which Ports Belong To One Construct?
+### 10.4 Which Ports Belong To One Construct?
 
 Example:
 
@@ -771,7 +1000,7 @@ Missing:
 - construct key / grouping metadata
 - stable surface aliases independent of local port names
 
-### 9.5 How Does A Rule Select Specs?
+### 10.5 How Does A Rule Select Specs?
 
 Required data:
 
@@ -784,20 +1013,23 @@ Astichi should not learn what `field_spec`, `init`, `managed`, or `slots`
 mean. It should only expose a composable interface rich enough for YIDL rules
 to target.
 
-## 10. Proposed First Slice
+## 11. Proposed First Slice
 
-The first slice should be introspection-only and metadata-light.
+The first slice should be recipe-first and metadata-light.
 
-1. Add an explicit `Composable.interface` or equivalent helper that exposes:
+1. Define canonical class and function shell recipes with standardized hole
+   names.
+2. Define one or two component recipes, likely slots and init.
+3. Add an explicit `Composable.interface` or equivalent helper that exposes:
    - demand ports
    - supply ports
    - marker source tags
    - inferred shape/placement
    - local name
-2. Add no new sugar yet.
-3. Build one YIDL mapper prototype using names only.
-4. Identify where names become ambiguous or too noisy.
-5. Add the smallest metadata carrier that solves the concrete ambiguity.
+4. Add no metadata sugar yet.
+5. Build one YIDL mapper prototype using recipe-standard names only.
+6. Identify where names become ambiguous or too noisy.
+7. Add the smallest metadata carrier that solves the concrete ambiguity.
 
 Likely second slice:
 
@@ -807,7 +1039,7 @@ Likely second slice:
 3. Add prefix `astichi_meta(...)` only if suffix-form identifiers require it in
    a concrete YIDL resource.
 
-## 11. Test Strategy
+## 12. Test Strategy
 
 Use focused Astichi tests for introspection mechanics and metadata attachment.
 
@@ -823,22 +1055,27 @@ Bespoke tests:
 
 Gold tests:
 
-1. A self-described class shell plus slot item resource compose without manual
-   target declarations.
-2. A self-described init shell plus parameter/body resources compose through
-   surface keys.
+1. A canonical class shell plus slots component and slot item resource compose
+   without manual target declarations.
+2. A canonical class shell plus init component, parameter entries, and body
+   entries compose through recipe-standard names.
 3. Identifier demand metadata can drive `arg_names` without string-chain
    builder access.
 
-## 12. Open Decisions
+## 13. Open Decisions
 
-1. Should `surface` default to the local port name, or stay `None` unless
+1. Which canonical hole names belong in the first class/function recipe suite?
+2. Should recipes live in Astichi, in YIDL generation, or start in YIDL and
+   migrate to Astichi once generalized?
+3. What is the minimal generic rule-expression/evaluator API needed by
+   component recipes?
+4. Should `surface` default to the local port name, or stay `None` unless
    authored?
-2. Should `role` be a free string, a tuple path, or a constrained identifier?
-3. Should `tags` exist in the first metadata slice?
-4. Should call-form metadata live directly on markers or only through
+5. Should `role` be a free string, a tuple path, or a constrained identifier?
+6. Should `tags` exist in the first metadata slice?
+7. Should call-form metadata live directly on markers or only through
    `astichi_meta(...)`?
-5. Can parameter-hole metadata be solved by owner-function metadata and naming
+8. Can parameter-hole metadata be solved by owner-function metadata and naming
    convention, or does it need a direct carrier?
-6. Should identifier suffix metadata be implemented now, or deferred until a
+9. Should identifier suffix metadata be implemented now, or deferred until a
    concrete resource needs it?
