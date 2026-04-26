@@ -1,0 +1,14 @@
+{
+  "instances": {
+    "Root": "root.py",
+    "First": "first.py",
+    "Second": "second.py"
+  },
+  "wires": [
+    "builder.Root.tuple_entries.add.Second(order=1)",
+    "builder.Root.tuple_entries.add.First(order=1)",
+    "builder.Root.list_entries.add.Second(order=1)",
+    "builder.Root.list_entries.add.First(order=0)"
+  ],
+  "unroll": false
+}
