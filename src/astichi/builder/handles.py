@@ -18,6 +18,7 @@ from astichi.builder.graph import (
 )
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable, apply_source_overlay
+from astichi.model.descriptors import ComposableHole, TargetAddress
 from astichi.path_resolution import (
     ShellIndex,
     collect_hole_names_in_body,
@@ -913,12 +914,50 @@ class BuilderHandle:
 
     def target(
         self,
+        address: TargetAddress | ComposableHole | None = None,
+        /,
         *,
-        root_instance: str,
-        target_name: str,
-        ref_path: RefPath = (),
+        root_instance: str | None = None,
+        target_name: str | None = None,
+        ref_path: RefPath | None = None,
         leaf_path: int | tuple[int, ...] | None = None,
     ) -> TargetHandle:
+        if isinstance(address, ComposableHole):
+            address = address.address
+        if address is not None and not isinstance(address, TargetAddress):
+            raise TypeError(
+                "builder.target address must be a TargetAddress or ComposableHole"
+            )
+        if address is not None:
+            if root_instance is not None and root_instance != address.root_instance:
+                raise ValueError("root_instance conflicts with descriptor target address")
+            if target_name is not None and target_name != address.target_name:
+                raise ValueError("target_name conflicts with descriptor target address")
+            normalized_ref_override = (
+                None if ref_path is None else normalize_ref_path(ref_path)
+            )
+            if (
+                normalized_ref_override is not None
+                and normalized_ref_override != address.ref_path
+            ):
+                raise ValueError("ref_path conflicts with descriptor target address")
+            normalized_leaf_override = _normalize_optional_indexes(leaf_path)
+            if (
+                normalized_leaf_override is not None
+                and normalized_leaf_override != address.leaf_path
+            ):
+                raise ValueError("leaf_path conflicts with descriptor target address")
+            root_instance = address.root_instance
+            target_name = address.target_name
+            ref_path = address.ref_path
+            leaf_path = address.leaf_path
+        if root_instance is None:
+            raise ValueError(
+                "builder.target requires a resolved root_instance; "
+                "use hole.with_root_instance(...) before passing descriptor targets"
+            )
+        if target_name is None:
+            raise TypeError("builder.target requires target_name")
         if not isinstance(target_name, str):
             raise TypeError("target names must be strings")
         root = self.instance(root_instance)
@@ -928,7 +967,11 @@ class BuilderHandle:
             target_ref=TargetRef(
                 root_instance=root.root_instance,
                 target_name=target_name,
-                ref_path=normalize_ref_path(ref_path),
+                ref_path=(
+                    normalize_ref_path(())
+                    if ref_path is None
+                    else normalize_ref_path(ref_path)
+                ),
                 path=() if normalized_leaf_path is None else normalized_leaf_path,
             ),
         )

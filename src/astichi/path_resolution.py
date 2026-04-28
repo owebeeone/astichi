@@ -435,6 +435,19 @@ class ShellIndex:
             )
         return ResolvedShellPath(shell=matches[0])
 
+    def addressable_shells(self) -> tuple[AddressableShell, ...]:
+        """Return all unique shell scopes indexed by their public ref path."""
+        shells: list[AddressableShell] = []
+        for ref_path, matches in sorted(
+            self._matches_by_ref.items(),
+            key=lambda item: (len(item[0]), format_ref_path(item[0])),
+        ):
+            if len(matches) != 1:
+                continue
+            shell = matches[0]
+            shells.append(AddressableShell(ref_path=ref_path, body=shell.body))
+        return tuple(shells)
+
     def direct_child_segments(self, prefix: RefPath) -> frozenset[RefSegment]:
         prefix = normalize_ref_path(prefix)
         prefix_len = len(prefix)
@@ -660,6 +673,14 @@ def collect_identifier_suppliers_in_body(body: list[ast.stmt]) -> frozenset[str]
         if info is None:
             break
         names.add(info[0])
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "astichi_export":
+                continue
+            if len(node.args) == 1 and isinstance(node.args[0], ast.Name):
+                names.add(node.args[0].id)
 
     class _Collector(ast.NodeVisitor):
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:

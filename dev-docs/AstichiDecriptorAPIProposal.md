@@ -1,6 +1,15 @@
 # Astichi Descriptor API Proposal
 
-Status: proposal.
+Status: implemented except unresolved ambiguities.
+
+Implementation note: phase one added immutable descriptor value objects,
+`Composable.describe()`, `BasicComposable.describe()`, descriptor-address
+support in `builder.target(...)`, region-aware production descriptors,
+external bind descriptors, and identifier demand/supply descriptors. Current
+descriptors use the addressable shell refs that the builder already validates.
+Indexed leaf-path projection for unrolled holes remains unresolved because the
+runtime tree does not distinguish a generated `slot__iter_0` name from an
+authored hole with the same spelling.
 
 Note: the filename intentionally follows the requested spelling
 `AstichiDecriptorAPIProposal.md`.
@@ -173,7 +182,7 @@ builder.target(
 ) -> TargetHandle
 ```
 
-Proposed compatible extension:
+Implemented compatible extension:
 
 ```python
 builder.target(
@@ -181,7 +190,7 @@ builder.target(
     *,
     root_instance: str | None = None,
     target_name: str | None = None,
-    ref_path: tuple[str | int, ...] = (),
+    ref_path: tuple[str | int, ...] | None = None,
     leaf_path: int | tuple[int, ...] | None = None,
 ) -> TargetHandle
 ```
@@ -582,6 +591,8 @@ reserved for indexes on that final target, matching
 
 ## 14. Indexed Holes
 
+Status: ambiguous / not implemented.
+
 Indexed holes produced by unrolled loops should describe their leaf path:
 
 ```python
@@ -604,6 +615,25 @@ which is equivalent to:
 ```python
 builder.Pipeline.Root.Loop.step[2].add.Step(order=0)
 ```
+
+Open ambiguity: after unroll, the surviving source-visible fact is the
+synthetic target name, for example `slot__iter_0`. That spelling can also be
+authored directly as `astichi_hole(slot__iter_0)`. Without explicit provenance
+or a reserved-name rule, `describe()` cannot safely decide whether to expose:
+
+```python
+TargetAddress(target_name="slot", leaf_path=(0,))
+```
+
+or:
+
+```python
+TargetAddress(target_name="slot__iter_0", leaf_path=())
+```
+
+The second form is executable today and preserves source truth. The first form
+needs either retained unroll provenance or a rule reserving `__iter_<n>` target
+suffixes for Astichi-generated holes.
 
 ## 15. Compatibility With Existing Ports
 
@@ -687,7 +717,7 @@ This proposal does not:
 
 ## 18. Implementation Plan
 
-Phase one:
+Phase one implemented:
 
 1. Add descriptor dataclasses and behavior-bearing policy/compatibility
    classes.
@@ -700,19 +730,27 @@ Phase one:
    directly.
 6. Add focused tests that descriptor-derived target calls produce the same
    graph records as explicit data-driven calls.
-7. Keep production descriptors conservative: expose only productions that can
-   be derived from current port/payload/root-body facts without new inference.
+7. Keep production descriptors conservative: expose port-backed productions,
+   ordinary block productions, implicit expression productions,
+   `astichi_funcargs(...)` expression-family productions, and
+   `astichi_params(...)` parameter productions only where current
+   materialize/build logic already accepts the source form.
 
-Phase two:
+Phase two / unresolved:
 
-1. Add richer production descriptors for `astichi_funcargs(...)` payload
-   variants.
-2. Add compatibility diagnostics with source-origin context.
+1. Region-aware `astichi_funcargs(...)` production compatibility is
+   implemented for starred and double-starred call targets.
+2. Rich compatibility diagnostics with source-origin context remain
+   underspecified. The current API returns behavior-bearing compatibility
+   objects with diagnostic strings from existing validators, but no source
+   span/origin descriptor shape is defined here.
 3. Add docs examples for rule engines that auto-connect composables based on
    descriptors.
 4. Consider `AssignAddress` only after phase-one identifier demand/supply
    descriptors are proven useful with the existing named `builder.assign(...)`
    API.
+5. Add indexed leaf-path projection only after resolving the synthetic-name
+   ambiguity above.
 
 ## 19. Test Plan
 

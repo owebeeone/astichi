@@ -13,6 +13,9 @@ class Composable(ABC):
 
     @abstractmethod
     def materialize(self) -> object: ...
+
+    @abstractmethod
+    def describe(self) -> ComposableDescription: ...
 ```
 
 The returned composable is **closed** for the chosen target: safe to **`emit`**
@@ -48,6 +51,11 @@ so symbolic composition becomes a concrete, valid Python naming layout
 
 ## Introspection
 
-Depending on the pipeline stage, implementations may expose fields such as an
-internal **`ast.Module`**, origin, or marker maps for tooling. Treat those as
-**read-only** unless the API explicitly supports mutation.
+Use **`describe()`** for stable public introspection. It returns immutable
+descriptor objects for additive holes, ports, external binds, identifier
+wiring surfaces, and conservative productions. See
+**[descriptor-api.md](descriptor-api.md)**.
+
+Depending on the pipeline stage, implementations may also expose fields such
+as an internal **`ast.Module`**, origin, or marker maps for tooling. Treat
+those as **read-only** unless the API explicitly supports mutation.

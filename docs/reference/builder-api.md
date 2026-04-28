@@ -170,6 +170,18 @@ b.target(
 ).add("Step")
 ```
 
+`builder.target(...)` also accepts descriptor target data from
+`Composable.describe()`:
+
+```python
+hole = built.describe().single_hole_named("slot")
+b.add("Pipeline", built)
+b.target(hole.with_root_instance("Pipeline")).add("Step")
+```
+
+Passing an unresolved descriptor address raises; descriptor addresses become
+executable only after a root instance is supplied.
+
 ## Raw / assembler layer
 
 A lower-level explicit API (instance ids, `PortId`, `tie`, …) exists for tooling

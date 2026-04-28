@@ -17,7 +17,8 @@ work.
   marker syntax, additive builder wiring, build-time merge, materialize-time
   hygiene, and emit-time round-trip support.
 - Public package exports today: `astichi.compile`, `astichi.build`,
-  `astichi.Composable`.
+  `astichi.Composable`, `astichi.ComposableDescription`,
+  `astichi.ComposableHole`, and `astichi.TargetAddress`.
 - Implemented V3 parameter holes:
   - `name__astichi_param_hole__` declares a function-parameter insertion
     target in an ordinary `FunctionDef.args` parameter slot.
@@ -80,6 +81,14 @@ work.
     strings such as `source_kind="authored"` and emitted
     `kind="params"` metadata remain accepted and are normalized at the
     boundary.
+  - The phase-one descriptor API is implemented. `Composable.describe()`
+    returns immutable descriptor objects for additive holes, demand/supply
+    ports, external binds, identifier demand/supply surfaces, and conservative
+    productions for currently supported block, implicit-expression,
+    call-argument payload, and parameter payload source forms. Descriptor hole
+    addresses use the same shell-ref paths the builder validates, and
+    `builder.target(...)` accepts `ComposableHole` or `TargetAddress` objects
+    directly once a root instance is resolved.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
   - Remaining work is polish/deferred surface area: Phase 3 cleanup,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -23,6 +23,11 @@ from astichi.model.ports import (
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
+    from astichi.model.descriptors import (
+        ComposableDescription,
+        PortDescriptor,
+        ProductionDescriptor,
+    )
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,137 @@ class BasicComposable(Composable):
         from astichi.materialize import materialize_composable
 
         return materialize_composable(self)
+
+    def describe(self) -> "ComposableDescription":
+        from astichi.model.descriptors import (
+            ComposableDescription,
+            ComposableHole,
+            ExternalBindDescriptor,
+            HoleDescriptor,
+            IdentifierDemandDescriptor,
+            IdentifierSupplyDescriptor,
+            PortDescriptor,
+            ProductionDescriptor,
+            TargetAddress,
+            add_policy_for_demand,
+            block_production,
+            expression_production,
+            expression_ast_production,
+            funcargs_production,
+        )
+        from astichi.lowering import is_astichi_funcargs_call
+        from astichi.lowering.markers import ALL_MARKERS
+        from astichi.lowering.parameters import has_params_payload
+        from astichi.path_resolution import (
+            ROOT_SCOPE_HOLE_PREFIX,
+            ShellIndex,
+            collect_hole_names_in_body,
+            collect_identifier_demands_in_body,
+            collect_identifier_suppliers_in_body,
+            collect_param_hole_names_in_body,
+            effective_root_body,
+        )
+
+        demand_descriptors = tuple(
+            PortDescriptor.from_demand(port) for port in self.demand_ports
+        )
+        supply_descriptors = tuple(
+            PortDescriptor.from_supply(port) for port in self.supply_ports
+        )
+        root_body = effective_root_body(self.tree.body)
+        demand_by_name = {port.name: port for port in self.demand_ports}
+        supply_by_name = {port.name: port for port in self.supply_ports}
+        holes: list[ComposableHole] = []
+        identifier_demands: list[IdentifierDemandDescriptor] = []
+        identifier_supplies: list[IdentifierSupplyDescriptor] = []
+        for shell in ShellIndex.from_tree(self.tree).addressable_shells():
+            local_names = (
+                collect_hole_names_in_body(shell.body)
+                | collect_param_hole_names_in_body(shell.body)
+            )
+            for name in sorted(local_names):
+                if name.startswith(ROOT_SCOPE_HOLE_PREFIX):
+                    continue
+                port = demand_by_name.get(name)
+                if port is None:
+                    continue
+                if not (
+                    port.is_additive_hole_demand()
+                    or port.is_parameter_hole_demand()
+                ):
+                    continue
+                port_descriptor = PortDescriptor.from_demand(port)
+                hole_descriptor = HoleDescriptor(port=port_descriptor)
+                holes.append(
+                    ComposableHole(
+                        name=name,
+                        descriptor=hole_descriptor,
+                        address=TargetAddress(
+                            root_instance=None,
+                            ref_path=shell.ref_path,
+                            target_name=name,
+                        ),
+                        port=port_descriptor,
+                        add_policy=add_policy_for_demand(port),
+                    )
+                )
+            for name in sorted(collect_identifier_demands_in_body(shell.body)):
+                port = demand_by_name.get(name)
+                if port is None or not port.is_identifier_demand():
+                    continue
+                identifier_demands.append(
+                    IdentifierDemandDescriptor(
+                        name=name,
+                        port=PortDescriptor.from_demand(port),
+                        ref_path=shell.ref_path,
+                    )
+                )
+            for name in sorted(collect_identifier_suppliers_in_body(shell.body)):
+                port = supply_by_name.get(name)
+                if port is None or not port.origins.is_identifier_supply():
+                    continue
+                identifier_supplies.append(
+                    IdentifierSupplyDescriptor(
+                        name=name,
+                        port=PortDescriptor.from_supply(port),
+                        ref_path=shell.ref_path,
+                    )
+                )
+
+        return ComposableDescription(
+            holes=tuple(holes),
+            demand_ports=demand_descriptors,
+            supply_ports=supply_descriptors,
+            external_binds=tuple(
+                ExternalBindDescriptor(
+                    name=descriptor.name,
+                    port=descriptor,
+                    already_bound=descriptor.name in self.bound_externals,
+                )
+                for descriptor in demand_descriptors
+                if descriptor.is_external_bind_demand()
+            ),
+            identifier_demands=tuple(identifier_demands),
+            identifier_supplies=tuple(identifier_supplies),
+            productions=_describe_productions(
+                body=root_body,
+                supply_descriptors=supply_descriptors,
+                is_params_payload=has_params_payload(root_body),
+                is_funcargs_payload=_is_funcargs_payload_body(
+                    root_body,
+                    is_astichi_funcargs_call=is_astichi_funcargs_call,
+                ),
+                boundary_prefix_names=frozenset(
+                    marker.source_name
+                    for marker in ALL_MARKERS
+                    if marker.is_expression_prefix_directive()
+                ),
+                block_production=block_production,
+                expression_production=expression_production,
+                expression_ast_production=expression_ast_production,
+                funcargs_production=funcargs_production,
+            ),
+        )
 
     def bind(
         self,
@@ -273,6 +409,102 @@ def _resolve_bindings(
             resolved[key] = value
     resolved.update(values)
     return resolved
+
+
+def _describe_productions(
+    *,
+    body: list[ast.stmt],
+    supply_descriptors: tuple["PortDescriptor", ...],
+    is_params_payload: bool,
+    is_funcargs_payload: bool,
+    boundary_prefix_names: frozenset[str],
+    block_production: Callable[[str], "ProductionDescriptor"],
+    expression_production: Callable[[str], "ProductionDescriptor"],
+    expression_ast_production: Callable[..., "ProductionDescriptor"],
+    funcargs_production: Callable[..., "ProductionDescriptor"],
+) -> tuple["ProductionDescriptor", ...]:
+    from astichi.model.descriptors import ProductionDescriptor
+
+    productions: list[ProductionDescriptor] = [
+        ProductionDescriptor(name=descriptor.name, port=descriptor)
+        for descriptor in supply_descriptors
+        if not descriptor.is_identifier_supply()
+    ]
+    if is_funcargs_payload:
+        payload = _extract_funcargs_payload_from_body(body)
+        if payload is not None:
+            productions.append(funcargs_production(payload, name="__funcargs__"))
+        return tuple(productions)
+    if is_params_payload:
+        return tuple(productions)
+    expression = _implicit_expression_after_boundary_prefix(body, boundary_prefix_names)
+    if expression is not None:
+        productions.append(expression_ast_production(expression, name="__expr__"))
+    productions.append(block_production("__block__"))
+    return tuple(productions)
+
+
+def _is_funcargs_payload_body(
+    body: list[ast.stmt],
+    *,
+    is_astichi_funcargs_call: Callable[[ast.AST], bool],
+) -> bool:
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and is_astichi_funcargs_call(body[0].value)
+    )
+
+
+def _extract_funcargs_payload_from_body(body: list[ast.stmt]) -> object | None:
+    from astichi.lowering import extract_funcargs_payload, is_astichi_funcargs_call
+
+    if (
+        len(body) == 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and is_astichi_funcargs_call(body[0].value)
+    ):
+        return extract_funcargs_payload(body[0].value)
+    return None
+
+
+def _implicit_expression_after_boundary_prefix(
+    body: list[ast.stmt], boundary_prefix_names: frozenset[str]
+) -> ast.expr | None:
+    expression_seen = False
+    expression: ast.expr | None = None
+    for statement in body:
+        if _is_boundary_prefix_statement(statement, boundary_prefix_names):
+            continue
+        if expression_seen:
+            return None
+        if isinstance(statement, ast.Expr):
+            expression_seen = True
+            expression = statement.value
+            continue
+        return None
+    if (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id == "astichi_insert"
+    ):
+        return None
+    return expression
+
+
+def _is_boundary_prefix_statement(
+    statement: ast.stmt, boundary_prefix_names: frozenset[str]
+) -> bool:
+    if not isinstance(statement, ast.Expr):
+        return False
+    call = statement.value
+    if not isinstance(call, ast.Call):
+        return False
+    if not isinstance(call.func, ast.Name):
+        return False
+    return call.func.id in boundary_prefix_names
 
 
 def _resolve_identifier_bindings(

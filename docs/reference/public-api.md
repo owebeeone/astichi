@@ -6,11 +6,15 @@
 |------|------|
 | `__version__` | Package version. |
 | `Composable` | Abstract type for composed program fragments. |
+| `ComposableDescription` | Immutable descriptor returned by `Composable.describe()`. |
+| `ComposableHole` | Additive-hole descriptor with builder target address data. |
+| `TargetAddress` | Data-driven target address accepted by `builder.target(...)`. |
 | `compile` | Parse marker-bearing **source** into a `Composable`. |
 | `build` | Create a **mutable builder** for wiring `Composable` instances. |
 
 ```python
-from astichi import Composable, compile, build
+from astichi import Composable, ComposableDescription, ComposableHole, TargetAddress
+from astichi import compile, build
 ```
 
 ## Marker names in compiled source
@@ -53,6 +57,9 @@ bound = compiled.bind(fields=("a", "b"))
 
 `.bind(mapping=None, /, **values)` applies `astichi_bind_external(...)`
 substitutions and returns a new immutable composable.
+
+`.describe()` returns immutable descriptor metadata for data-driven
+composition. See [descriptor-api.md](descriptor-api.md).
 
 ## Submodule: `astichi.builder`
 
