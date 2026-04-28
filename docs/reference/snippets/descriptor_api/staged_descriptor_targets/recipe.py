@@ -52,7 +52,9 @@ def run() -> str:
     pipeline_desc = pipeline.describe()
     consumer_hole = pipeline_desc.single_hole_named("consumers")
     shared_supply = next(
-        supply for supply in pipeline_desc.identifier_supplies if supply.name == "shared"
+        supply
+        for supply in pipeline_desc.identifier_supplies
+        if supply.name == "shared" and supply.ref_path == ("Root", "Cell")
     )
     shared_demand = next(
         demand for demand in consumer.describe().identifier_demands if demand.name == "shared"
