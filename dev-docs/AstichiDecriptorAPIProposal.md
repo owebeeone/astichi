@@ -9,7 +9,8 @@ Note: the filename intentionally follows the requested spelling
 
 Astichi can already derive useful composition metadata from marker-bearing
 source. Internally, compiled and built composables carry demand ports, supply
-ports, marker shapes, source tags, builder refs, and insertion metadata.
+ports, marker shapes, behavior-bearing port origins, builder refs, and
+insertion metadata.
 
 That information is not currently exposed as a stable public descriptor API.
 Higher-level generators therefore have two poor choices:
@@ -38,7 +39,7 @@ The description should answer:
 
 This API must follow the Astichi coding rules:
 
-- no enums for semantic shape concepts
+- no enum classes for semantic concepts
 - no passive string tags as the public semantic model
 - prefer behavior-bearing objects and semantic queries
 - do not expose compiler internals as the normal author-facing surface
@@ -56,9 +57,43 @@ IDENTIFIER
 PARAMETER
 ```
 
-Descriptors may carry strings for diagnostic display, source tags, or
-round-trippable names, but compatibility must be owned by descriptor/shape
-objects rather than implemented through scattered string comparisons.
+Descriptors may carry strings for diagnostic display, source-level names,
+builder instance names, and round-trippable identifier names. Semantic
+properties such as shape, placement, mutability, origin, cardinality policy,
+context, and compatibility must be behavior-bearing objects rather than
+strings or enum values.
+
+The descriptor API should expose the same public-friendly semantic singleton
+families used internally:
+
+```python
+MarkerShape
+PortPlacement
+PortMutability
+PortOrigin
+PortOrigins
+AddPolicy
+Compatibility
+```
+
+Callers should ask semantic questions:
+
+```python
+hole.add_policy.accepts_next_addition(current_count)
+port.is_external_bind_demand()
+port.accepts_supply(other_port)
+```
+
+not branch on values:
+
+```python
+if port.placement == "expr": ...
+if "bind_external" in port.sources: ...
+```
+
+Remaining `str` fields in this proposal are names from authored source or
+builder data, such as `target_name`, `root_instance`, `name`, and
+`source_instance_name`. Those are identifiers/addresses, not semantic tags.
 
 ## 3. Public Surface
 
@@ -89,7 +124,7 @@ holes:
 class TargetAddress:
     root_instance: str | None
     ref_path: tuple[str | int, ...] = ()
-    target_name: str = ""
+    target_name: str
     leaf_path: tuple[int, ...] = ()
 ```
 
@@ -102,9 +137,14 @@ registered = hole.with_root_instance("Root")
 builder.target(registered).add("Step", order=0)
 ```
 
-Open question: whether `TargetAddress` should allow `target_name=""` at the
-type level. The implementation may instead require an explicit constructor and
-validate that `target_name` is non-empty.
+`target_name` is required. Do not use an empty string as a sentinel for an
+unresolved target. If construction needs validation, validate in
+`TargetAddress.__post_init__` and reject an empty target name immediately.
+
+An unresolved `root_instance=None` address is valid inside a descriptor, but it
+is not valid as an executable builder target. `builder.target(...)` must reject
+an unresolved address. Callers should resolve it with
+`hole.with_root_instance("Root")` after registering the composable.
 
 The address maps directly to the existing direct builder helper:
 
@@ -155,6 +195,8 @@ Rules:
    data.
 4. `root_instance` must be resolved before a `TargetHandle` can be returned.
 5. `leaf_path` normalizes through the same helper as the existing named API.
+6. A `TargetAddress` with `root_instance=None` rejects with a clear diagnostic;
+   it is descriptor metadata, not a complete builder address.
 
 Usage:
 
@@ -248,6 +290,9 @@ The policy is advisory for planning and diagnostics. Build/materialize remains
 authoritative and must still reject illegal multiple contributions or invalid
 merged outputs.
 
+Phase one should implement only these current semantics. Do not add optional
+holes, replacement semantics, or automatic coercions as part of `AddPolicy`.
+
 ## 8. Hole Descriptor Objects
 
 `HoleDescriptor` owns compatibility logic for target holes:
@@ -260,7 +305,7 @@ class HoleDescriptor(ABC):
 
     @property
     @abstractmethod
-    def placement(self) -> str: ...
+    def placement(self) -> PortPlacement: ...
 
     @abstractmethod
     def accepts(self, production: "ProductionDescriptor") -> "Compatibility": ...
@@ -301,7 +346,7 @@ A production is something this composable can add to another composable's hole.
 class ProductionDescriptor:
     descriptor: ProductionShapeDescriptor
     port: PortDescriptor | None = None
-    source_name: str | None = None
+    source_instance_name: str | None = None
 
     def is_compatible_with(self, hole: ComposableHole) -> Compatibility:
         return hole.descriptor.accepts(self)
@@ -317,13 +362,13 @@ class ProductionShapeDescriptor(ABC):
 
     @property
     @abstractmethod
-    def placement(self) -> str: ...
+    def placement(self) -> PortPlacement: ...
 
     @abstractmethod
     def can_supply(self, hole: HoleDescriptor) -> Compatibility: ...
 ```
 
-Initial production sources:
+Initial production surfaces:
 
 - ordinary statement/block composables can supply block holes
 - scalar expression composables can supply scalar expression holes
@@ -334,8 +379,9 @@ Initial production sources:
 - `astichi_bind_external(...)` does not supply another composable; it creates
   an external value demand
 
-Expression-to-block insertion should be represented as a compatibility
-decision with an explicit coercion plan if supported. It should not be treated
+Expression-to-block insertion is not part of phase one. If Astichi later
+supports it, it must be represented as a compatibility decision with an
+explicit coercion plan and tests for the emitted result. It must not be treated
 as the same shape.
 
 ## 10. Ports
@@ -465,8 +511,10 @@ builder.assign(
 )
 ```
 
-An optional follow-up could introduce an `AssignAddress` descriptor, but phase
-one can reuse `ref_path` plus the existing named `builder.assign(...)` API.
+Do not introduce `AssignAddress` in phase one. Reuse `ref_path` plus the
+existing named `builder.assign(...)` API until identifier demand/supply
+descriptors prove that a dedicated assign-address object removes real
+complexity.
 
 ## 13. Built Composables And Descendant Refs
 
@@ -507,6 +555,30 @@ This must be equivalent to fluent:
 ```python
 builder.Pipeline.Root.Inner.slot.add.Step()
 ```
+
+Descriptor projection must derive descendant hole addresses from the same
+shell-ref index and validation rules that builder target addressing uses.
+`describe()` must not implement a second addressing algorithm.
+
+Required rule:
+
+> `describe()` indexes preserved insert shells with the same `ShellIndex` /
+> shell-ref machinery used by builder target validation. If a descendant ref is
+> ambiguous, unknown, or invalid, descriptor construction raises the same class
+> of diagnostic that builder registration / target validation would raise.
+
+Address mapping:
+
+```text
+hole in root module body                  -> ref_path=()
+hole inside shell ref=Root.Inner          -> ref_path=("Root", "Inner")
+hole inside shell ref=Root[2].Inner       -> ref_path=("Root", 2, "Inner")
+hole inside shell ref=Root.Loop[1].Step   -> ref_path=("Root", "Loop", 1, "Step")
+```
+
+`target_name` is always the final hole / parameter target name. `leaf_path` is
+reserved for indexes on that final target, matching
+`builder.target(..., leaf_path=...)`.
 
 ## 14. Indexed Holes
 
@@ -552,6 +624,22 @@ Recommended internal flow:
 3. `describe()` projects those facts into public descriptor objects
 4. builder APIs accept descriptor addresses but continue validating through
    existing graph/handle logic
+
+Phase one production descriptors should be conservative:
+
+- port-backed supplies can produce `ProductionDescriptor` records when the
+  supply port already has explicit semantics
+- parameter payloads can produce parameter-list productions
+- call-argument payloads can produce call-argument productions only when the
+  existing payload recognizer can classify them without inventing new rules
+- ordinary module/body snippets may be described as block productions only when
+  the existing builder/materialize path already accepts them as block
+  contributions
+
+If a composable's production shape cannot be derived from existing ports,
+payload carriers, or the current root-body shape, omit that production in phase
+one rather than guessing. The descriptor API may be incomplete for production
+auto-selection at first; it must not be unsound.
 
 ## 16. Example
 
@@ -605,12 +693,15 @@ Phase one:
    classes.
 2. Add `Composable.describe()` to the abstract interface.
 3. Implement `BasicComposable.describe()` by projecting current ports and
-   marker/build metadata.
+   marker/build metadata, deriving descendant target addresses through the
+   same shell-ref index used by builder target validation.
 4. Add `TargetAddress` and `ComposableHole.with_root_instance(...)`.
 5. Extend `builder.target(...)` to accept `TargetAddress` and `ComposableHole`
    directly.
 6. Add focused tests that descriptor-derived target calls produce the same
    graph records as explicit data-driven calls.
+7. Keep production descriptors conservative: expose only productions that can
+   be derived from current port/payload/root-body facts without new inference.
 
 Phase two:
 
@@ -619,6 +710,9 @@ Phase two:
 2. Add compatibility diagnostics with source-origin context.
 3. Add docs examples for rule engines that auto-connect composables based on
    descriptors.
+4. Consider `AssignAddress` only after phase-one identifier demand/supply
+   descriptors are proven useful with the existing named `builder.assign(...)`
+   API.
 
 ## 19. Test Plan
 
