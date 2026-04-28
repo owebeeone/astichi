@@ -41,6 +41,10 @@ This applies to:
 - additive targets such as `builder.Pipeline.Root.Parse.body.add.Step(order=0)`
 - identifier wiring such as
   `builder.assign.Step.total.to().Pipeline.Root.Right.total`
+- data-driven additive targets such as
+  `builder.target(root_instance="Pipeline", ref_path=("Root", "Parse"), target_name="body").add("Step")`
+- descriptor targets whose `TargetAddress` carries the same `root_instance`,
+  `ref_path`, `target_name`, and `leaf_path` fields
 - internal emitted shell refs such as
   `@astichi_insert(body, ref=Pipeline.Root.Parse[1, 2].Normalize)`
 
@@ -74,4 +78,5 @@ examples in **[§9.2](../../dev-docs/historical/AstichiApiDesignV1.md)** and **�
 ## See also
 
 - [Builder API](builder-api.md)
+- [Descriptor API](descriptor-api.md)
 - **[§9 — Addressing](../../dev-docs/historical/AstichiApiDesignV1.md)**

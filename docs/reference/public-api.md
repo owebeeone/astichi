@@ -30,9 +30,6 @@ The current package does **not** ship a runtime `astichi.markers` helper module,
 so marker-bearing examples are typically embedded directly in the source string
 that Astichi parses.
 
-Exact export list matches
-**[`AstichiApiDesignV1.md` §5](../../dev-docs/historical/AstichiApiDesignV1.md)**.
-
 ## Submodule: `astichi.frontend`
 
 Lower-level access to the compiler surface:
@@ -60,6 +57,12 @@ substitutions and returns a new immutable composable.
 
 `.describe()` returns immutable descriptor metadata for data-driven
 composition. See [descriptor-api.md](descriptor-api.md).
+
+Additional descriptor value objects for advanced inspection are exported from
+`astichi.model`, including `PortDescriptor`, `HoleDescriptor`,
+`ProductionDescriptor`, `ExternalBindDescriptor`,
+`IdentifierDemandDescriptor`, `IdentifierSupplyDescriptor`, `SINGLE_ADD`, and
+`MULTI_ADD`.
 
 ## Submodule: `astichi.builder`
 

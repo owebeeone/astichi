@@ -1,6 +1,12 @@
 # Astichi Composable Self-Description
 
-Status: proposal / design inventory.
+Status: archived discussion document; explicitly not implemented.
+
+This document records an earlier discussion of semantic surface metadata,
+canonical recipes, `astichi_meta(...)`, roles, tags, and mapper-oriented rule
+concepts. Those ideas are not part of current Astichi behavior. The implemented
+descriptor API is the structural `Composable.describe()` surface documented in
+`dev-docs/AstichiSingleSourceSummary.md` and `docs/reference/descriptor-api.md`.
 
 ## 1. Problem
 

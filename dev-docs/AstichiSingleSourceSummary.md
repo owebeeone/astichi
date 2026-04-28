@@ -64,9 +64,9 @@ work.
     `wire_identifier(...)` on builder slot handles remains deferred;
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-04-24:
-  - full suite: green (no xfails)
-  - Python-version matrix: green for supported runtimes
+- Test status as of 2026-04-28:
+  - full suite: `543 passed`
+  - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
   - Treat Phase 2 unroll, the 005 identifier cluster, 006 cross-scope
@@ -81,14 +81,7 @@ work.
     strings such as `source_kind="authored"` and emitted
     `kind="params"` metadata remain accepted and are normalized at the
     boundary.
-  - The phase-one descriptor API is implemented. `Composable.describe()`
-    returns immutable descriptor objects for additive holes, demand/supply
-    ports, external binds, identifier demand/supply surfaces, and conservative
-    productions for currently supported block, implicit-expression,
-    call-argument payload, and parameter payload source forms. Descriptor hole
-    addresses use the same shell-ref paths the builder validates, and
-    `builder.target(...)` accepts `ComposableHole` or `TargetAddress` objects
-    directly once a root instance is resolved.
+  - The descriptor API is implemented as current public behavior. See §3.4.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
   - Remaining work is polish/deferred surface area: Phase 3 cleanup,
@@ -207,6 +200,27 @@ locations.
   `builder.assign(source_instance=..., inner_name=..., target_instance=..., outer_name=...)`.
   The named API uses the same graph records and validation semantics as the
   fluent API, and is the intended surface for generated mappers.
+- `builder.add("Step", piece, indexes=(2,), arg_names=..., keep_names=...)`
+  is the named equivalent of `builder.add.Step[2](...)`.
+- `builder.instance("Step", indexes=(2,))` selects indexed family members by
+  data rather than by attribute/index syntax.
+- `InstanceHandle.target(name)`, `TargetHandle.target(name)`, and
+  `TargetHandle.index(*indexes)` are the named path-walk equivalents of
+  fluent `.<name>` and `[i]` target chaining.
+- `target.add("Step", indexes=(2,), order=..., arg_names=..., keep_names=...,
+  bind=...)` is the named equivalent of
+  `target.add.Step[2](...)`; `arg_names`, `keep_names`, and `bind` remain
+  edge-local overlays.
+- `builder.assign(...)` accepts `source_ref_path` and `target_ref_path` data
+  directly and creates the same `AssignBinding` as the fluent
+  `builder.assign.<Src>...to().<Dst>...` chain.
+- Leading-underscore instance and target names are available through explicit
+  named calls such as `builder.add("_Root", piece)` and
+  `builder.instance("_Root").target("_slot")`; fluent attribute access still
+  rejects leading underscores.
+- `builder.target(...)` also accepts descriptor target data:
+  `builder.target(hole.with_root_instance("Root"))` or a resolved
+  `TargetAddress`. Unresolved descriptor addresses reject.
 - `builder.build()` merges the graph to one composable.
 
 **Merge ordering:** lower `order` inserts first; equal `order` uses first-registered
@@ -229,6 +243,7 @@ Abstract surface:
 
 - `emit(provenance: bool = True) -> str`
 - `materialize() -> object`
+- `describe() -> ComposableDescription`
 
 Concrete carrier:
 
@@ -238,7 +253,133 @@ Concrete carrier:
     `demand_ports`, `supply_ports`, `bound_externals`
   - method: `bind(mapping=None, /, **values) -> BasicComposable`
 
-### 3.4 Emit, materialize, and provenance contract
+### 3.4 Descriptor API
+
+`Composable.describe()` is the stable public self-description surface for
+data-driven composition. It returns immutable descriptor value objects and does
+not expose the builder graph as the primary API.
+
+Public package exports:
+
+- `ComposableDescription`
+- `ComposableHole`
+- `TargetAddress`
+
+Additional descriptor classes are exported from `astichi.model` for advanced
+typing and tooling:
+
+- `AddPolicy`, `SINGLE_ADD`, `MULTI_ADD`
+- `PortDescriptor`
+- `HoleDescriptor`
+- `ProductionDescriptor`
+- `ExternalBindDescriptor`
+- `IdentifierDemandDescriptor`
+- `IdentifierSupplyDescriptor`
+
+Descriptor semantic fields use behavior-bearing singleton/value objects, not
+enums or passive string tags:
+
+- `MarkerShape`
+- `PortPlacement`
+- `PortMutability`
+- `PortOrigin` / `PortOrigins`
+- `AddPolicy`
+- `Compatibility`
+
+Diagnostic/source names remain strings where they are actual identifiers or
+addresses (`name`, `target_name`, `root_instance`, etc.).
+
+`ComposableDescription` fields:
+
+- `holes`: additive target holes only
+- `productions`: things this composable can add to compatible holes
+- `demand_ports` / `supply_ports`: stable public port descriptors
+- `external_binds`: `astichi_bind_external(...)` value demands
+- `identifier_demands` / `identifier_supplies`: explicit identifier wiring
+  surfaces with descendant `ref_path`
+
+Convenience methods:
+
+- `holes_named(name) -> tuple[ComposableHole, ...]`
+- `single_hole_named(name) -> ComposableHole`
+- `productions_compatible_with(hole) -> tuple[ProductionDescriptor, ...]`
+
+`ComposableHole` describes one additive target:
+
+- `name`: authored target name
+- `descriptor`: `HoleDescriptor`
+- `address`: `TargetAddress`
+- `port`: `PortDescriptor`
+- `add_policy`: `SINGLE_ADD` or `MULTI_ADD`
+
+`TargetAddress` is the data-driven builder address:
+
+- `root_instance: str | None`
+- `ref_path: tuple[str | int, ...]`
+- `target_name: str`
+- `leaf_path: tuple[int, ...]`
+
+`root_instance=None` is valid descriptor metadata, but not executable builder
+input. Resolve it with `hole.with_root_instance("Root")` or
+`hole.address.with_root_instance("Root")` after registering the composable.
+`builder.target(...)` accepts either a `TargetAddress` or a `ComposableHole`
+directly and rejects unresolved addresses. Keyword overrides are accepted only
+when they match the descriptor address.
+
+Descriptor addresses use the same shell-ref machinery as builder target
+validation. For built/staged composables, preserved insert-shell refs become
+the descriptor `ref_path`, so a hole inside `Pipeline.Root.Inner.slot` is
+described as `ref_path=("Root", "Inner")`, `target_name="slot"`.
+
+Unrolled holes currently describe the source-visible synthetic name rather than
+reverse-projecting to `leaf_path`. For example, `slot__iter_0` is exposed as
+`TargetAddress(target_name="slot__iter_0", leaf_path=())`. Reverse-projecting
+that to `target_name="slot", leaf_path=(0,)` is intentionally not implemented:
+the AST does not distinguish a generated `slot__iter_0` from an authored hole
+with the same spelling unless Astichi later retains unroll provenance or
+reserves `__iter_<n>` target suffixes.
+
+Add policy mapping:
+
+- block holes: `MULTI_ADD`
+- positional variadic holes (`*astichi_hole(...)`): `MULTI_ADD`
+- named variadic holes (`**astichi_hole(...)` / dict expansion): `MULTI_ADD`
+- parameter holes: `MULTI_ADD`, still subject to final signature validation
+- scalar expression holes: `SINGLE_ADD`
+- identifier demands and external binds are not additive holes
+
+Production descriptors mirror current materialize/build behavior:
+
+- ordinary non-payload snippets expose block productions
+- implicit expression snippets expose expression productions
+- `astichi_funcargs(...)` payloads expose expression-family productions and
+  compatibility is region-aware for `*` and `**` targets
+- `astichi_params(...)` payloads expose parameter productions
+- `astichi_export(...)` exposes identifier supply descriptors, not additive
+  productions
+- `astichi_bind_external(...)` exposes external value demands, not productions
+
+Compatibility helpers are planning aids. Build/materialize remains
+authoritative and still performs final shape, payload, duplicate-keyword,
+signature, hygiene, and unresolved-demand validation.
+
+Identifier wiring descriptors intentionally reuse the existing named
+`builder.assign(...)` API:
+
+```python
+builder.assign(
+    source_instance="Step",
+    source_ref_path=source.ref_path,
+    inner_name=source.name,
+    target_instance="Root",
+    target_ref_path=target.ref_path,
+    outer_name=target.name,
+)
+```
+
+No `AssignAddress` object exists today.
+
+### 3.5 Emit, materialize, and provenance contract
 
 Current implementation reality:
 

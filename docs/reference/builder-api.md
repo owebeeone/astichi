@@ -133,6 +133,58 @@ b.assign(
 the fluent API; the proxies are also callable for named/data-driven use. Named
 calls reuse the same graph records and validation paths as fluent calls.
 
+Reference signatures:
+
+```python
+builder.add(
+    name,
+    composable,
+    *,
+    indexes=None,
+    arg_names=None,
+    keep_names=None,
+)
+
+builder.instance(name, *, indexes=None)
+builder.instance("Root").target("body")
+builder.instance("Root").target("body").index(0)
+
+target.add(
+    source,
+    *,
+    indexes=None,
+    order=0,
+    arg_names=None,
+    keep_names=None,
+    bind=None,
+)
+
+builder.target(
+    address=None,
+    *,
+    root_instance=None,
+    ref_path=None,
+    target_name=None,
+    leaf_path=None,
+)
+
+builder.assign(
+    *,
+    source_instance,
+    inner_name,
+    target_instance,
+    outer_name,
+    source_ref_path=(),
+    target_ref_path=(),
+)
+```
+
+`arg_names`, `keep_names`, and `bind` are overlays for the registered source
+piece on that specific edge. They use the same semantics as
+`BasicComposable.bind(...)`, identifier binding, and keep-name preservation, but
+the overlay is scoped to the edge rather than changing the registered
+composable.
+
 Leading-underscore names are only available through explicit named calls:
 
 ```python
@@ -157,6 +209,8 @@ names collide with Python object protocol behavior.
 | `builder.Root.body.add.Step(order=0)` | `builder.instance("Root").target("body").add("Step", order=0)` |
 | `builder.Root.body.add.Step[2](order=2)` | `builder.instance("Root").target("body").add("Step", indexes=(2,), order=2)` |
 | `builder.assign.Step.total.to().Root.total` | `builder.assign(source_instance="Step", inner_name="total", target_instance="Root", outer_name="total")` |
+| `builder.assign.Step.total.to().Pipeline.Root.Inner.total` | `builder.assign(source_instance="Step", inner_name="total", target_instance="Pipeline", target_ref_path=("Root", "Inner"), outer_name="total")` |
+| `builder.assign.Pipeline.Root.Inner.total.to().Init.total` | `builder.assign(source_instance="Pipeline", source_ref_path=("Root", "Inner"), inner_name="total", target_instance="Init", outer_name="total")` |
 
 For systems that already hold a normalized target reference, `builder.target`
 constructs the same target handle directly:
@@ -181,6 +235,31 @@ b.target(hole.with_root_instance("Pipeline")).add("Step")
 
 Passing an unresolved descriptor address raises; descriptor addresses become
 executable only after a root instance is supplied.
+
+When an address object is passed, explicit keyword overrides are allowed only if
+they match the address. A conflicting `root_instance`, `target_name`,
+`ref_path`, or `leaf_path` raises before any graph edge is recorded.
+
+Descriptor data can also drive named identifier wiring. Identifier demand and
+supply descriptors carry the same descendant `ref_path` values accepted by
+`builder.assign(...)`:
+
+```python
+demand = step.describe().identifier_demands[0]
+supply = built.describe().identifier_supplies[0]
+
+b.assign(
+    source_instance="Step",
+    source_ref_path=demand.ref_path,
+    inner_name=demand.name,
+    target_instance="Pipeline",
+    target_ref_path=supply.ref_path,
+    outer_name=supply.name,
+)
+```
+
+See [descriptor-api.md](descriptor-api.md) for the full descriptor object model
+and descriptor-driven builder workflow.
 
 ## Raw / assembler layer
 

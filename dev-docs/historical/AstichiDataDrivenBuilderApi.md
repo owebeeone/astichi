@@ -1,6 +1,11 @@
 # Astichi Data-Driven Builder API
 
-Status: implemented.
+Status: archived implemented proposal.
+
+This document records the design proposal for the data-driven builder API.
+The implemented current behavior is summarized in
+`dev-docs/AstichiSingleSourceSummary.md` and documented in
+`docs/reference/builder-api.md`.
 
 ## 1. Problem
 

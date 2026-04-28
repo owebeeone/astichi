@@ -9,7 +9,7 @@ Fast orientation:
 | [public-api.md](public-api.md) | Package exports and submodules |
 | [compile-api.md](compile-api.md) | `compile`, origins, lowering pipeline |
 | [composable-api.md](composable-api.md) | `Composable`, `emit`, `materialize` |
-| [descriptor-api.md](descriptor-api.md) | `Composable.describe()` and descriptor target data |
+| [descriptor-api.md](descriptor-api.md) | `Composable.describe()`, descriptor objects, compatibility, and descriptor-driven builder use |
 | [builder-api.md](builder-api.md) | `build()`, fluent, handle, and data-driven named APIs |
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |
