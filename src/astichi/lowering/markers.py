@@ -17,6 +17,27 @@ from astichi.asttools import (
     SCALAR_EXPR,
     MarkerShape,
 )
+from astichi.model.semantics import (
+    ARG_IDENTIFIER_ORIGIN,
+    BIND_EXTERNAL_ORIGIN,
+    CONST_MUTABILITY,
+    EXPORT_ORIGIN,
+    HOLE_ORIGIN,
+    IMPORT_ORIGIN,
+    INSERT_ORIGIN,
+    PARAMETER_HOLE_ORIGIN,
+    PARAMETER_PAYLOAD_ORIGIN,
+    PASS_ORIGIN,
+    PortMutability,
+    PortOrigin,
+)
+from astichi.lowering.marker_contexts import (
+    CALL_CONTEXT,
+    DECORATOR_CONTEXT,
+    DEFINITIONAL_CONTEXT,
+    IDENTIFIER_CONTEXT,
+    MarkerContext,
+)
 from astichi.shell_refs import parse_ref_path_literal
 
 
@@ -90,8 +111,8 @@ class PortTemplate:
     """
 
     shape: MarkerShape
-    mutability: str
-    source_tag: str
+    mutability: PortMutability
+    origin: PortOrigin
 
 
 class MarkerSpec(ABC):
@@ -365,7 +386,7 @@ class _ArgIdentifierMarker(_SuffixIdentifierMarker):
 
     def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
         return PortTemplate(
-            shape=IDENTIFIER, mutability="const", source_tag="arg"
+            shape=IDENTIFIER, mutability=CONST_MUTABILITY, origin=ARG_IDENTIFIER_ORIGIN
         )
 
 
@@ -395,7 +416,7 @@ class _ParamHoleIdentifierMarker(_SuffixIdentifierMarker):
 
     def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
         return PortTemplate(
-            shape=PARAMETER, mutability="const", source_tag="param_hole"
+            shape=PARAMETER, mutability=CONST_MUTABILITY, origin=PARAMETER_HOLE_ORIGIN
         )
 
 
@@ -418,7 +439,7 @@ class _HoleMarker(_SimpleMarker):
             "astichi_hole occurrences must carry a shape by recognition time"
         )
         return PortTemplate(
-            shape=marker.shape, mutability="const", source_tag="hole"
+            shape=marker.shape, mutability=CONST_MUTABILITY, origin=HOLE_ORIGIN
         )
 
 
@@ -443,10 +464,10 @@ class _InsertMarker(MarkerSpec):
         # Only the expression-form (call context) contributes a supply
         # port. Decorator-form inserts are block shells that are matched
         # by the flatten pass, not by port wiring.
-        if marker.context != "call":
+        if not marker.context.is_call_context():
             return None
         return PortTemplate(
-            shape=SCALAR_EXPR, mutability="const", source_tag="insert"
+            shape=SCALAR_EXPR, mutability=CONST_MUTABILITY, origin=INSERT_ORIGIN
         )
 
     def validate_node(self, node: ast.AST) -> None:
@@ -526,7 +547,7 @@ class _ParamsMarker(MarkerSpec):
 
     def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
         return PortTemplate(
-            shape=PARAMETER, mutability="const", source_tag="params"
+            shape=PARAMETER, mutability=CONST_MUTABILITY, origin=PARAMETER_PAYLOAD_ORIGIN
         )
 
     def validate_node(self, node: ast.AST) -> None:
@@ -602,7 +623,7 @@ BIND_EXTERNAL = _SimpleMarker(
     positional_args=1,
     name_bearing=True,
     demand_template=PortTemplate(
-        shape=SCALAR_EXPR, mutability="const", source_tag="bind_external"
+        shape=SCALAR_EXPR, mutability=CONST_MUTABILITY, origin=BIND_EXTERNAL_ORIGIN
     ),
 )
 KEEP = _SimpleMarker(
@@ -619,7 +640,7 @@ EXPORT = _SimpleMarker(
     boundary_declaration_directive=True,
     expression_prefix_directive=True,
     supply_template=PortTemplate(
-        shape=SCALAR_EXPR, mutability="const", source_tag="export"
+        shape=SCALAR_EXPR, mutability=CONST_MUTABILITY, origin=EXPORT_ORIGIN
     ),
 )
 FOR = _SimpleMarker("astichi_for", positional_args=1)
@@ -642,7 +663,7 @@ IMPORT = _BoundaryIdentifierMarker(
     boundary_declaration_directive=True,
     expression_prefix_directive=True,
     demand_template=PortTemplate(
-        shape=IDENTIFIER, mutability="const", source_tag="import"
+        shape=IDENTIFIER, mutability=CONST_MUTABILITY, origin=IMPORT_ORIGIN
     ),
 )
 PASS = _BoundaryIdentifierMarker(
@@ -650,7 +671,7 @@ PASS = _BoundaryIdentifierMarker(
     positional_args=1,
     name_bearing=True,
     demand_template=PortTemplate(
-        shape=IDENTIFIER, mutability="const", source_tag="pass"
+        shape=IDENTIFIER, mutability=CONST_MUTABILITY, origin=PASS_ORIGIN
     ),
 )
 
@@ -757,7 +778,7 @@ class RecognizedMarker:
 
     spec: MarkerSpec
     node: ast.AST
-    context: str
+    context: MarkerContext
     shape: MarkerShape | None = None
 
     @property
@@ -842,7 +863,7 @@ class _MarkerVisitor(ast.NodeVisitor):
                 RecognizedMarker(
                     spec=marker,
                     node=node,
-                    context="call",
+                    context=CALL_CONTEXT,
                     shape=shape,
                 )
             )
@@ -898,7 +919,7 @@ class _MarkerVisitor(ast.NodeVisitor):
             RecognizedMarker(
                 spec=suffix_marker,
                 node=node,
-                context="identifier",
+                context=IDENTIFIER_CONTEXT,
                 shape=None,
             )
         )
@@ -911,7 +932,7 @@ class _MarkerVisitor(ast.NodeVisitor):
             RecognizedMarker(
                 spec=PARAMS,
                 node=node,
-                context="definitional",
+                context=DEFINITIONAL_CONTEXT,
                 shape=None,
             )
         )
@@ -930,7 +951,7 @@ class _MarkerVisitor(ast.NodeVisitor):
                 RecognizedMarker(
                     spec=marker,
                     node=decorator,
-                    context="decorator",
+                    context=DECORATOR_CONTEXT,
                     shape=None,
                 )
             )
@@ -955,7 +976,7 @@ class _MarkerVisitor(ast.NodeVisitor):
             RecognizedMarker(
                 spec=suffix_marker,
                 node=node,
-                context="definitional",
+                context=DEFINITIONAL_CONTEXT,
                 shape=None,
             )
         )

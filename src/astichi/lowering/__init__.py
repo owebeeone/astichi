@@ -1,11 +1,15 @@
 """Marker recognition and lowering bridge for Astichi."""
 
 from astichi.lowering.call_argument_payloads import (
+    DOUBLE_STAR_FUNC_ARG_REGION,
+    PLAIN_FUNC_ARG_REGION,
     PayloadLocalDirective,
+    STARRED_FUNC_ARG_REGION,
     DirectiveFuncArgItem,
     DoubleStarFuncArgItem,
     FuncArgPayload,
     FuncArgPayloadItem,
+    FuncArgRegion,
     KeywordFuncArgItem,
     PositionalFuncArgItem,
     StarredFuncArgItem,
@@ -29,6 +33,13 @@ from astichi.lowering.external_ref import (
     desugar_external_ref_kwargs,
     validate_external_ref_surface,
 )
+from astichi.lowering.marker_contexts import (
+    CALL_CONTEXT,
+    DECORATOR_CONTEXT,
+    DEFINITIONAL_CONTEXT,
+    IDENTIFIER_CONTEXT,
+    MarkerContext,
+)
 from astichi.lowering.markers import (
     MARKERS_BY_NAME,
     MarkerSpec,
@@ -48,18 +59,27 @@ from astichi.lowering.parameters import (
 
 __all__ = [
     "MARKERS_BY_NAME",
+    "CALL_CONTEXT",
+    "DECORATOR_CONTEXT",
+    "DEFINITIONAL_CONTEXT",
     "DirectiveFuncArgItem",
     "DoubleStarFuncArgItem",
+    "DOUBLE_STAR_FUNC_ARG_REGION",
     "FuncArgPayload",
     "FuncArgPayloadItem",
+    "FuncArgRegion",
+    "IDENTIFIER_CONTEXT",
     "KeywordFuncArgItem",
+    "MarkerContext",
     "MarkerSpec",
     "PayloadLocalDirective",
     "PARAMS_PAYLOAD_NAME",
+    "PLAIN_FUNC_ARG_REGION",
     "PortTemplate",
     "PositionalFuncArgItem",
     "RecognizedMarker",
     "StarredFuncArgItem",
+    "STARRED_FUNC_ARG_REGION",
     "apply_external_bindings",
     "apply_external_ref_lowering",
     "collect_payload_local_directives",

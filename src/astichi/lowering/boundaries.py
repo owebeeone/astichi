@@ -283,15 +283,15 @@ def group_markers_by_astichi_scope(
             continue
         lineno = getattr(marker.node, "lineno", 0) or 0
         src = marker.source_name
-        if src == "astichi_import" and marker.context == "call":
+        if src == "astichi_import" and marker.context.is_call_context():
             bucket.imports.setdefault(name, lineno)
-        elif src == "astichi_pass" and marker.context == "call":
+        elif src == "astichi_pass" and marker.context.is_call_context():
             bucket.passes.setdefault(name, lineno)
         elif src == "astichi_keep_identifier":
             bucket.keeps.setdefault(name, lineno)
         elif src == "astichi_arg_identifier":
             bucket.args.setdefault(name, lineno)
-        elif src == "astichi_export" and marker.context == "call":
+        elif src == "astichi_export" and marker.context.is_call_context():
             bucket.exports.setdefault(name, lineno)
     return groups
 

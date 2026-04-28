@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable
 
 from astichi.ast_provenance import propagate_ast_source_locations
 from astichi.lowering.markers import (
@@ -19,6 +19,7 @@ from astichi.lowering.markers import (
     is_call_to_marker,
 )
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
+from astichi.model.semantics import SemanticSingleton
 
 _DIRECTIVE_SPECS: tuple[MarkerSpec, ...] = (IMPORT, EXPORT)
 
@@ -67,7 +68,52 @@ class PayloadLocalDirective:
     name: str
 
 
-FuncArgRegion = Literal["plain", "starred", "dstar"]
+class FuncArgRegion(SemanticSingleton):
+    """Target region for authored call-argument payloads."""
+
+    def accepts_payload_item(self, item: FuncArgPayloadItem) -> bool:
+        return False
+
+    def rejects_message(self, hole_name: str) -> str:
+        return f"call-argument target {hole_name} rejects payload item"
+
+
+@dataclass(frozen=True, eq=False)
+class _PlainFuncArgRegion(FuncArgRegion):
+    name: str = "plain"
+
+    def accepts_payload_item(self, item: FuncArgPayloadItem) -> bool:
+        return True
+
+
+@dataclass(frozen=True, eq=False)
+class _StarredFuncArgRegion(FuncArgRegion):
+    name: str = "starred"
+
+    def accepts_payload_item(self, item: FuncArgPayloadItem) -> bool:
+        return isinstance(item, (PositionalFuncArgItem, StarredFuncArgItem))
+
+    def rejects_message(self, hole_name: str) -> str:
+        return f"starred target {hole_name} rejects keyword / **mapping payload items"
+
+
+@dataclass(frozen=True, eq=False)
+class _DoubleStarFuncArgRegion(FuncArgRegion):
+    name: str = "dstar"
+
+    def accepts_payload_item(self, item: FuncArgPayloadItem) -> bool:
+        return isinstance(item, (KeywordFuncArgItem, DoubleStarFuncArgItem))
+
+    def rejects_message(self, hole_name: str) -> str:
+        return (
+            f"double-starred target {hole_name} rejects positional / "
+            "starred payload items"
+        )
+
+
+PLAIN_FUNC_ARG_REGION = _PlainFuncArgRegion()
+STARRED_FUNC_ARG_REGION = _StarredFuncArgRegion()
+DOUBLE_STAR_FUNC_ARG_REGION = _DoubleStarFuncArgRegion()
 
 
 def is_astichi_funcargs_call(node: ast.AST) -> bool:
@@ -280,23 +326,9 @@ def validate_payload_for_region(
     for item in payload.items:
         if isinstance(item, DirectiveFuncArgItem):
             continue
-        if region == "plain":
+        if region.accepts_payload_item(item):
             continue
-        if region == "starred" and isinstance(
-            item, (PositionalFuncArgItem, StarredFuncArgItem)
-        ):
-            continue
-        if region == "dstar" and isinstance(
-            item, (KeywordFuncArgItem, DoubleStarFuncArgItem)
-        ):
-            continue
-        if region == "starred":
-            raise ValueError(
-                f"starred target {hole_name} rejects keyword / **mapping payload items"
-            )
-        raise ValueError(
-            f"double-starred target {hole_name} rejects positional / starred payload items"
-        )
+        raise ValueError(region.rejects_message(hole_name))
 
     if seen_explicit_keywords is None:
         return

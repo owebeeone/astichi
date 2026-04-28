@@ -12,6 +12,7 @@ from astichi.lowering.markers import (
     boundary_outer_bind_enabled,
     strip_identifier_suffix,
 )
+from astichi.model.semantics import SemanticSingleton
 from astichi.lowering.parameters import param_hole_name
 from astichi.shell_refs import (
     RefPath,
@@ -20,6 +21,50 @@ from astichi.shell_refs import (
     format_ref_path,
     normalize_ref_path,
 )
+
+
+class InsertMetadataKind(SemanticSingleton):
+    """Kind of internal decorator-form astichi_insert metadata."""
+
+    def is_block_shell(self) -> bool:
+        return False
+
+    def is_parameter_shell(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True, eq=False)
+class _BlockInsertMetadataKind(InsertMetadataKind):
+    name: str = "block"
+
+    def is_block_shell(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, eq=False)
+class _ParameterInsertMetadataKind(InsertMetadataKind):
+    name: str = "params"
+
+    def is_parameter_shell(self) -> bool:
+        return True
+
+
+BLOCK_INSERT_METADATA = _BlockInsertMetadataKind()
+PARAMETER_INSERT_METADATA = _ParameterInsertMetadataKind()
+
+
+def _insert_kind_from_source(value: str, *, phase: str) -> InsertMetadataKind:
+    if value == BLOCK_INSERT_METADATA.name:
+        return BLOCK_INSERT_METADATA
+    if value == PARAMETER_INSERT_METADATA.name:
+        return PARAMETER_INSERT_METADATA
+    raise ValueError(
+        format_astichi_error(
+            phase,
+            f"unsupported astichi_insert kind `{value}`",
+            hint="supported internal insert kinds are `block` and `params`",
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -93,7 +138,7 @@ def extract_block_insert_shell(
         if len(decorator.args) != 1:
             continue
         kind = _extract_insert_kind(decorator, phase=phase)
-        if kind != "block":
+        if not kind.is_block_shell():
             continue
         first_arg = decorator.args[0]
         if not isinstance(first_arg, ast.Name):
@@ -136,7 +181,7 @@ def extract_param_insert_shell(
         if len(decorator.args) != 1:
             continue
         kind = _extract_insert_kind(decorator, phase=phase)
-        if kind != "params":
+        if not kind.is_parameter_shell():
             continue
         first_arg = decorator.args[0]
         if not isinstance(first_arg, ast.Name):
@@ -150,8 +195,8 @@ def extract_param_insert_shell(
     return None
 
 
-def _extract_insert_kind(call: ast.Call, *, phase: str) -> str:
-    kind = "block"
+def _extract_insert_kind(call: ast.Call, *, phase: str) -> InsertMetadataKind:
+    kind: InsertMetadataKind = BLOCK_INSERT_METADATA
     seen = False
     for keyword in call.keywords:
         if keyword.arg != "kind":
@@ -175,15 +220,7 @@ def _extract_insert_kind(call: ast.Call, *, phase: str) -> str:
                     hint="use `kind=\"params\"` only on parameter insertion metadata",
                 )
             )
-        kind = keyword.value.value
-        if kind not in {"block", "params"}:
-            raise ValueError(
-                format_astichi_error(
-                    phase,
-                    f"unsupported astichi_insert kind `{kind}`",
-                    hint="supported internal insert kinds are `block` and `params`",
-                )
-            )
+        kind = _insert_kind_from_source(keyword.value.value, phase=phase)
     return kind
 
 

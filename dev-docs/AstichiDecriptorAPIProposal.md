@@ -348,34 +348,36 @@ Expose stable port descriptors instead of asking users to read internal
 class PortDescriptor:
     name: str
     shape: MarkerShape
-    placement: str
-    mutability: str
-    sources: frozenset[str]
+    placement: PortPlacement
+    mutability: PortMutability
+    origins: PortOrigins
+
+    def accepts_supply(self, supply: "PortDescriptor") -> Compatibility: ...
 ```
 
-This intentionally mirrors the current internal port model:
+This intentionally mirrors the semantic internal port model:
 
 ```python
 DemandPort(
     name: str,
     shape: MarkerShape,
-    placement: str,
-    mutability: str,
-    sources: frozenset[str],
+    placement: PortPlacement,
+    mutability: PortMutability,
+    origins: PortOrigins,
 )
 
 SupplyPort(
     name: str,
     shape: MarkerShape,
-    placement: str,
-    mutability: str,
-    sources: frozenset[str],
+    placement: PortPlacement,
+    mutability: PortMutability,
+    origins: PortOrigins,
 )
 ```
 
 The public descriptor should be stable even if the internal dataclass names
-change. It is acceptable for the first implementation to wrap current internal
-ports.
+change. Descriptors should expose behavior-bearing placement, mutability, and
+origin objects. They should not require callers to branch on string tags.
 
 Description should separate ports by role:
 

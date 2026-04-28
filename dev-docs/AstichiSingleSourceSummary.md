@@ -71,6 +71,15 @@ work.
   - Treat Phase 2 unroll, the 005 identifier cluster, 006 cross-scope
     threading, V3 call-argument payloads, and V3 parameter holes as
     implemented.
+  - The no-enum semantic singleton refactor is implemented for port placement,
+    mutability, origins, marker contexts, call-argument regions, source kind,
+    hygiene mode/roles, binding occurrence kind, and insert metadata kind.
+    Implementation logic should use semantic methods such as
+    `port.is_external_bind_demand()` and `marker.context.is_call_context()`
+    rather than string-tag comparisons. Existing public/source boundary
+    strings such as `source_kind="authored"` and emitted
+    `kind="params"` metadata remain accepted and are normalized at the
+    boundary.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
   - Remaining work is polish/deferred surface area: Phase 3 cleanup,

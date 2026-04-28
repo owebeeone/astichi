@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable, Mapping
-from typing import Literal
 
+from astichi.frontend.source_kind import (
+    AUTHORED_SOURCE,
+    SourceKind,
+    normalize_source_kind,
+)
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
 from astichi.lowering import (
@@ -25,10 +29,6 @@ from astichi.model import (
     extract_demand_ports,
     extract_supply_ports,
 )
-
-
-SourceKind = Literal["authored", "astichi-emitted"]
-
 
 def _single_line_source(source: str) -> bool:
     """Return whether source is logically one line."""
@@ -57,7 +57,7 @@ def compile(
     *,
     arg_names: Mapping[str, str] | None = None,
     keep_names: Iterable[str] | None = None,
-    source_kind: SourceKind = "authored",
+    source_kind: SourceKind | str = AUTHORED_SOURCE,
 ) -> Composable:
     """Compile marker-bearing source into a composable.
 
@@ -76,7 +76,7 @@ def compile(
     by Astichi itself; it enables internal marker metadata such as
     `astichi_insert(...)`.
     """
-    _validate_source_kind(source_kind)
+    normalized_source_kind = normalize_source_kind(source_kind)
     origin = CompileOrigin(
         file_name=file_name or "<astichi>",
         line_number=line_number,
@@ -105,11 +105,11 @@ def compile(
             ),
             filename=origin.file_name,
         )
-    _validate_authored_marker_surface(tree, source_kind=source_kind)
+    _validate_authored_marker_surface(tree, source_kind=normalized_source_kind)
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
     validate_boundary_marker_placement(tree)
-    if source_kind == "authored":
+    if normalized_source_kind.validates_authored_payload_surfaces():
         validate_call_argument_payload_surface(tree)
         validate_parameter_payload_surface(tree)
     desugar_external_ref_kwargs(tree)
@@ -146,21 +146,12 @@ def compile(
         return compiled.bind_identifier(dict(validated_arg_bindings))
     return compiled
 
-
-def _validate_source_kind(source_kind: str) -> None:
-    if source_kind not in {"authored", "astichi-emitted"}:
-        raise ValueError(
-            "source_kind must be 'authored' or 'astichi-emitted'; "
-            f"got {source_kind!r}"
-        )
-
-
 def _validate_authored_marker_surface(
     tree: ast.AST,
     *,
     source_kind: SourceKind,
 ) -> None:
-    if source_kind == "astichi-emitted":
+    if source_kind.allows_internal_insert_metadata():
         return
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -206,7 +197,7 @@ def _validate_arg_names(
     arg_slot_names = {
         port.name
         for port in demand_ports
-        if "arg" in port.sources or "import" in port.sources or "pass" in port.sources
+        if port.is_identifier_demand()
     }
     resolved: dict[str, str] = {}
     for key, value in arg_names.items():

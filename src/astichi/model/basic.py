@@ -82,7 +82,7 @@ class BasicComposable(Composable):
         bind_external_demands = {
             port.name
             for port in self.demand_ports
-            if port.sources == frozenset({"bind_external"})
+            if port.is_external_bind_demand()
         }
         known_demands = tuple(sorted(bind_external_demands))
 
@@ -188,7 +188,7 @@ class BasicComposable(Composable):
         arg_demand_names = {
             port.name
             for port in self.demand_ports
-            if "arg" in port.sources or "import" in port.sources or "pass" in port.sources
+            if port.is_identifier_demand()
         }
         existing = dict(self.arg_bindings)
         for key, value in resolved.items():

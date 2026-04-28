@@ -8,6 +8,32 @@ from typing import TYPE_CHECKING
 
 from astichi.asttools import BLOCK, IDENTIFIER, PARAMETER, SCALAR_EXPR, MarkerShape
 from astichi.lowering import RecognizedMarker
+from astichi.model.semantics import (
+    ARG_IDENTIFIER_ORIGIN,
+    BIND_EXTERNAL_ORIGIN,
+    BLOCK_PLACEMENT,
+    CALL_ARGUMENT_PLACEMENT,
+    CONST_MUTABILITY,
+    EXPRESSION_PLACEMENT,
+    EXPORT_ORIGIN,
+    HOLE_ORIGIN,
+    IMPLIED_DEMAND_ORIGIN,
+    IDENTIFIER_PLACEMENT,
+    IMPORT_ORIGIN,
+    INSERT_ORIGIN,
+    PARAMETER_HOLE_ORIGIN,
+    PARAMETER_PAYLOAD_ORIGIN,
+    PASS_ORIGIN,
+    SIGNATURE_PARAMETER_PLACEMENT,
+    Compatibility,
+    PortMutability,
+    PortOrigin,
+    PortOrigins,
+    PortPlacement,
+    normalize_port_mutability,
+    normalize_port_placement,
+    placement_for_shape,
+)
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
@@ -17,10 +43,29 @@ if TYPE_CHECKING:
 # definition lives in `astichi.asttools.shapes`.
 __all__ = (
     "BLOCK",
+    "BLOCK_PLACEMENT",
+    "CALL_ARGUMENT_PLACEMENT",
+    "EXPRESSION_PLACEMENT",
     "IDENTIFIER",
+    "IDENTIFIER_PLACEMENT",
     "PARAMETER",
     "SCALAR_EXPR",
+    "SIGNATURE_PARAMETER_PLACEMENT",
+    "ARG_IDENTIFIER_ORIGIN",
+    "BIND_EXTERNAL_ORIGIN",
+    "CONST_MUTABILITY",
     "DemandPort",
+    "EXPORT_ORIGIN",
+    "HOLE_ORIGIN",
+    "IMPORT_ORIGIN",
+    "INSERT_ORIGIN",
+    "PARAMETER_HOLE_ORIGIN",
+    "PARAMETER_PAYLOAD_ORIGIN",
+    "PASS_ORIGIN",
+    "PortMutability",
+    "PortOrigin",
+    "PortOrigins",
+    "PortPlacement",
     "SupplyPort",
     "extract_demand_ports",
     "extract_supply_ports",
@@ -34,9 +79,51 @@ class DemandPort:
 
     name: str
     shape: MarkerShape
-    placement: str
-    mutability: str
-    sources: frozenset[str] = field(default_factory=frozenset)
+    placement: PortPlacement
+    mutability: PortMutability
+    origins: PortOrigins = field(default_factory=lambda: PortOrigins(frozenset()))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "placement", normalize_port_placement(self.placement)
+        )
+        object.__setattr__(
+            self, "mutability", normalize_port_mutability(self.mutability)
+        )
+
+    def accepts_supply(self, supply: "SupplyPort") -> Compatibility:
+        compatibility = self.placement.accepts_supply(self, supply)
+        if not compatibility.is_accepted():
+            return compatibility
+        if (
+            not self.placement.is_expression_family()
+            and self.shape is not supply.shape
+        ):
+            return _shape_rejection(self.name, self.shape, supply.shape)
+        return self.mutability.accepts_supply_mutability(supply.mutability)
+
+    def is_external_bind_demand(self) -> bool:
+        return self.origins.is_external_bind_demand()
+
+    def is_identifier_demand(self) -> bool:
+        return self.origins.is_identifier_demand()
+
+    def is_additive_hole_demand(self) -> bool:
+        return self.origins.is_additive_hole_demand()
+
+    def is_parameter_hole_demand(self) -> bool:
+        return self.origins.is_parameter_hole_demand()
+
+    def is_signature_parameter_demand(self) -> bool:
+        return self.placement.is_signature_parameter_family()
+
+    def is_expression_family_demand(self) -> bool:
+        return self.placement.is_expression_family()
+
+    @property
+    def sources(self) -> frozenset[str]:
+        """Compatibility diagnostic view of origin names."""
+        return self.origins.names
 
 
 @dataclass(frozen=True)
@@ -45,9 +132,28 @@ class SupplyPort:
 
     name: str
     shape: MarkerShape
-    placement: str
-    mutability: str
-    sources: frozenset[str] = field(default_factory=frozenset)
+    placement: PortPlacement
+    mutability: PortMutability
+    origins: PortOrigins = field(default_factory=lambda: PortOrigins(frozenset()))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "placement", normalize_port_placement(self.placement)
+        )
+        object.__setattr__(
+            self, "mutability", normalize_port_mutability(self.mutability)
+        )
+
+    def is_expression_family_supply(self) -> bool:
+        return self.placement.is_expression_family()
+
+    def is_signature_parameter_supply(self) -> bool:
+        return self.placement.is_signature_parameter_family()
+
+    @property
+    def sources(self) -> frozenset[str]:
+        """Compatibility diagnostic view of origin names."""
+        return self.origins.names
 
 
 def extract_demand_ports(
@@ -73,9 +179,9 @@ def extract_demand_ports(
             DemandPort(
                 name=marker.name_id,
                 shape=template.shape,
-                placement=_placement_for_shape(template.shape),
+                placement=placement_for_shape(template.shape),
                 mutability=template.mutability,
-                sources=frozenset({template.source_tag}),
+                origins=PortOrigins.of(template.origin),
             )
         )
     for implied in classification.implied_demands:
@@ -83,9 +189,9 @@ def extract_demand_ports(
             DemandPort(
                 name=implied.name,
                 shape=SCALAR_EXPR,
-                placement="expr",
-                mutability="const",
-                sources=frozenset({"implied"}),
+                placement=placement_for_shape(SCALAR_EXPR),
+                mutability=CONST_MUTABILITY,
+                origins=PortOrigins.of(IMPLIED_DEMAND_ORIGIN),
             )
         )
     return _merge_demand_ports(ports)
@@ -111,9 +217,9 @@ def extract_supply_ports(
             SupplyPort(
                 name=marker.name_id,
                 shape=template.shape,
-                placement=_placement_for_shape(template.shape),
+                placement=placement_for_shape(template.shape),
                 mutability=template.mutability,
-                sources=frozenset({template.source_tag}),
+                origins=PortOrigins.of(template.origin),
             )
         )
     return _merge_supply_ports(ports)
@@ -121,21 +227,9 @@ def extract_supply_ports(
 
 def validate_port_pair(demand: DemandPort, supply: SupplyPort) -> None:
     """Validate that a supply port can satisfy a demand port."""
-    if demand.placement != supply.placement:
-        raise ValueError(
-            f"incompatible port placement for {demand.name}: "
-            f"{demand.placement} != {supply.placement}"
-        )
-    if demand.placement != "expr" and demand.shape is not supply.shape:
-        raise ValueError(
-            f"incompatible port shape for {demand.name}: "
-            f"{demand.shape.name} != {supply.shape.name}"
-        )
-    if demand.mutability != supply.mutability:
-        raise ValueError(
-            f"incompatible port mutability for {demand.name}: "
-            f"{demand.mutability} != {supply.mutability}"
-        )
+    compatibility = demand.accepts_supply(supply)
+    if not compatibility.is_accepted():
+        raise ValueError(compatibility.error_message())
 
 
 def _merge_demand_ports(ports: list[DemandPort]) -> tuple[DemandPort, ...]:
@@ -146,8 +240,8 @@ def _merge_demand_ports(ports: list[DemandPort]) -> tuple[DemandPort, ...]:
         for port in group[1:]:
             if (
                 port.shape is not exemplar.shape
-                or port.placement != exemplar.placement
-                or port.mutability != exemplar.mutability
+                or port.placement is not exemplar.placement
+                or port.mutability is not exemplar.mutability
             ):
                 raise ValueError(f"incompatible demand-port declarations for {name}")
         merged.append(
@@ -156,7 +250,9 @@ def _merge_demand_ports(ports: list[DemandPort]) -> tuple[DemandPort, ...]:
                 shape=exemplar.shape,
                 placement=exemplar.placement,
                 mutability=exemplar.mutability,
-                sources=frozenset().union(*(port.sources for port in group)),
+                origins=PortOrigins(
+                    frozenset().union(*(port.origins.items for port in group))
+                ),
             )
         )
     return tuple(merged)
@@ -170,8 +266,8 @@ def _merge_supply_ports(ports: list[SupplyPort]) -> tuple[SupplyPort, ...]:
         for port in group[1:]:
             if (
                 port.shape is not exemplar.shape
-                or port.placement != exemplar.placement
-                or port.mutability != exemplar.mutability
+                or port.placement is not exemplar.placement
+                or port.mutability is not exemplar.mutability
             ):
                 raise ValueError(f"incompatible supply-port declarations for {name}")
         merged.append(
@@ -180,17 +276,20 @@ def _merge_supply_ports(ports: list[SupplyPort]) -> tuple[SupplyPort, ...]:
                 shape=exemplar.shape,
                 placement=exemplar.placement,
                 mutability=exemplar.mutability,
-                sources=frozenset().union(*(port.sources for port in group)),
+                origins=PortOrigins(
+                    frozenset().union(*(port.origins.items for port in group))
+                ),
             )
         )
     return tuple(merged)
 
 
-def _placement_for_shape(shape: MarkerShape) -> str:
-    if shape is BLOCK:
-        return "block"
-    if shape is IDENTIFIER:
-        return "identifier"
-    if shape is PARAMETER:
-        return "params"
-    return "expr"
+def _shape_rejection(
+    name: str, demand_shape: MarkerShape, supply_shape: MarkerShape
+) -> Compatibility:
+    from astichi.model.semantics import RejectedCompatibility
+
+    return RejectedCompatibility(
+        f"incompatible port shape for {name}: "
+        f"{demand_shape.name} != {supply_shape.name}"
+    )

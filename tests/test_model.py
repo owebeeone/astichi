@@ -4,7 +4,17 @@ import pytest
 
 import astichi
 from astichi.asttools import BLOCK, NAMED_VARIADIC, POSITIONAL_VARIADIC, SCALAR_EXPR
-from astichi.model import BasicComposable, DemandPort, IDENTIFIER, SupplyPort, validate_port_pair
+from astichi.model import (
+    BIND_EXTERNAL_ORIGIN,
+    CALL_ARGUMENT_PLACEMENT,
+    CONST_MUTABILITY,
+    EXPRESSION_PLACEMENT,
+    BasicComposable,
+    DemandPort,
+    IDENTIFIER,
+    SupplyPort,
+    validate_port_pair,
+)
 
 
 def test_compile_returns_model_backed_composable_with_ports() -> None:
@@ -51,6 +61,31 @@ astichi_bind_external(fields)
     assert demand.placement == "expr"
     assert demand.mutability == "const"
     assert demand.sources == frozenset({"bind_external"})
+
+
+def test_ports_expose_semantic_singletons_and_origin_queries() -> None:
+    compiled = astichi.compile("astichi_bind_external(fields)\n")
+
+    demand = compiled.demand_ports[0]
+
+    assert demand.placement is EXPRESSION_PLACEMENT
+    assert demand.mutability is CONST_MUTABILITY
+    assert demand.origins.items == frozenset({BIND_EXTERNAL_ORIGIN})
+    assert demand.is_external_bind_demand()
+    call_arg_demand = DemandPort(
+        name="args",
+        shape=POSITIONAL_VARIADIC,
+        placement=CALL_ARGUMENT_PLACEMENT,
+        mutability=CONST_MUTABILITY,
+    )
+    assert call_arg_demand.accepts_supply(
+        SupplyPort(
+            name="args",
+            shape=SCALAR_EXPR,
+            placement=EXPRESSION_PLACEMENT,
+            mutability=CONST_MUTABILITY,
+        )
+    ).is_accepted()
 
 
 def test_multiple_bind_external_markers_produce_multiple_demand_ports() -> None:

@@ -1,6 +1,8 @@
 # Astichi No-Enum / Semantic Singleton Refactor Proposal
 
-Status: proposal.
+Status: implemented for the core internal semantic tag families. Keep this
+document as the design record and refactor checklist for future semantic
+concepts.
 
 ## 1. Problem
 

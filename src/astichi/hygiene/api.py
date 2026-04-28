@@ -5,14 +5,104 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from itertools import count
-from typing import Literal
 
 from astichi.lowering import RecognizedMarker
 from astichi.model.basic import BasicComposable
+from astichi.model.semantics import SemanticSingleton
 
-Mode = Literal["strict", "permissive"]
-LexicalRole = Literal["internal", "preserved", "external"]
-BindingKind = Literal["binding", "reference"]
+
+class HygieneMode(SemanticSingleton):
+    """Name-analysis mode."""
+
+    def allows_implied_demands(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True, eq=False)
+class _StrictHygieneMode(HygieneMode):
+    name: str = "strict"
+
+
+@dataclass(frozen=True, eq=False)
+class _PermissiveHygieneMode(HygieneMode):
+    name: str = "permissive"
+
+    def allows_implied_demands(self) -> bool:
+        return True
+
+
+STRICT_HYGIENE = _StrictHygieneMode()
+PERMISSIVE_HYGIENE = _PermissiveHygieneMode()
+
+
+def normalize_hygiene_mode(mode: HygieneMode | str) -> HygieneMode:
+    if isinstance(mode, HygieneMode):
+        return mode
+    if mode == STRICT_HYGIENE.name:
+        return STRICT_HYGIENE
+    if mode == PERMISSIVE_HYGIENE.name:
+        return PERMISSIVE_HYGIENE
+    raise ValueError(f"unsupported hygiene mode: {mode}")
+
+
+class LexicalRole(SemanticSingleton):
+    """Role of a lexical occurrence in hygiene."""
+
+    def should_preserve_spelling(self) -> bool:
+        return False
+
+    def uses_outer_scope(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True, eq=False)
+class _InternalLexicalRole(LexicalRole):
+    name: str = "internal"
+
+
+@dataclass(frozen=True, eq=False)
+class _PreservedLexicalRole(LexicalRole):
+    name: str = "preserved"
+
+    def should_preserve_spelling(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, eq=False)
+class _ExternalLexicalRole(LexicalRole):
+    name: str = "external"
+
+    def uses_outer_scope(self) -> bool:
+        return True
+
+
+INTERNAL_LEXICAL_ROLE = _InternalLexicalRole()
+PRESERVED_LEXICAL_ROLE = _PreservedLexicalRole()
+EXTERNAL_LEXICAL_ROLE = _ExternalLexicalRole()
+
+
+class BindingKind(SemanticSingleton):
+    """Whether an occurrence binds or references a name."""
+
+    def is_binding(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True, eq=False)
+class _BindingOccurrence(BindingKind):
+    name: str = "binding"
+
+    def is_binding(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, eq=False)
+class _ReferenceOccurrence(BindingKind):
+    name: str = "reference"
+
+
+BINDING_OCCURRENCE = _BindingOccurrence()
+REFERENCE_OCCURRENCE = _ReferenceOccurrence()
 
 
 @dataclass(frozen=True)
@@ -79,12 +169,11 @@ class ScopeAnalysis:
 def analyze_names(
     composable: BasicComposable,
     *,
-    mode: Mode = "strict",
+    mode: HygieneMode | str = STRICT_HYGIENE,
     preserved_names: frozenset[str] = frozenset(),
 ) -> NameClassification:
     """Classify names for a frontend composable."""
-    if mode not in ("strict", "permissive"):
-        raise ValueError(f"unsupported hygiene mode: {mode}")
+    mode = normalize_hygiene_mode(mode)
 
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
     local_bindings = _collect_local_bindings(composable.tree)
@@ -139,7 +228,7 @@ def analyze_names(
 
     unresolved_free = frozenset(sorted(unresolved))
     implied_demands: tuple[ImpliedDemand, ...]
-    if mode == "permissive":
+    if mode.allows_implied_demands():
         implied_demands = tuple(ImpliedDemand(name=name) for name in sorted(unresolved))
     else:
         if unresolved:
@@ -161,7 +250,7 @@ def rewrite_hygienically(
     composable: BasicComposable,
     *,
     preserved_names: frozenset[str] = frozenset(),
-    mode: Mode = "strict",
+    mode: HygieneMode | str = STRICT_HYGIENE,
 ) -> HygieneResult:
     """Rewrite colliding local names hygienically."""
     classification = analyze_names(
@@ -312,7 +401,7 @@ def rename_scope_collisions(scope_analysis: ScopeAnalysis) -> None:
             scope_serial
             for scope_serial, scope_occurrences in ordered_scopes
             if any(
-                occurrence.role == "preserved"
+                occurrence.role.should_preserve_spelling()
                 for occurrence in scope_occurrences
             )
         }
@@ -877,19 +966,23 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # Astichi scope; imported chains are alias-through, not a
             # sequence of fresh intermediate bindings.
             binding_kind: BindingKind = (
-                "reference" if isinstance(node.ctx, ast.Load) else "binding"
+                REFERENCE_OCCURRENCE
+                if isinstance(node.ctx, ast.Load)
+                else BINDING_OCCURRENCE
             )
             if node.id in self.trust_names:
-                role: LexicalRole = "preserved"
+                role: LexicalRole = PRESERVED_LEXICAL_ROLE
                 scope_id = self._current_scope()
             else:
-                role = "internal"
+                role = INTERNAL_LEXICAL_ROLE
                 scope_id = self._import_origin_scope(node.id)
         elif isinstance(node.ctx, ast.Load):
             role = self._load_role(node.id)
-            binding_kind = "reference"
+            binding_kind = REFERENCE_OCCURRENCE
             scope_id = (
-                self._outer_scope() if role == "external" else self._current_scope()
+                self._outer_scope()
+                if role.uses_outer_scope()
+                else self._current_scope()
             )
         else:
             # Issue 006 6c: a Store is `preserved` only when the
@@ -901,10 +994,10 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # stay `internal` so rename can separate it from the
             # trust-declaring scope.
             if node.id in self._current_trust_declarations():
-                role = "preserved"
+                role = PRESERVED_LEXICAL_ROLE
             else:
-                role = "internal"
-            binding_kind = "binding"
+                role = INTERNAL_LEXICAL_ROLE
+            binding_kind = BINDING_OCCURRENCE
             scope_id = self._current_scope()
         self.occurrences.append(
             LexicalOccurrence(
@@ -924,8 +1017,8 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 raw_name=node.arg,
                 scope_id=self._current_scope(),
                 collision_domain=self._current_collision_domain(),
-                role="internal",
-                binding_kind="binding",
+                role=INTERNAL_LEXICAL_ROLE,
+                binding_kind=BINDING_OCCURRENCE,
                 ordinal=next(self.ordinal_counter),
                 node=node,
             )
@@ -1071,7 +1164,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
     def _load_role(self, raw_name: str) -> LexicalRole:
         astichi_local = self._current_astichi_bindings()
         if astichi_local is not None and raw_name in astichi_local:
-            return "internal"
+            return INTERNAL_LEXICAL_ROLE
         if self._inside_fresh_scope():
             # ``astichi_insert`` creates the default isolation boundary:
             # unwired free names stay local to the inserted composable
@@ -1081,22 +1174,22 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             # visible within inserted children of that function body.
             if raw_name in self._current_python_parameters():
                 if self._current_scope() == self._current_python_scope_owner():
-                    return "internal"
-                return "external"
+                    return INTERNAL_LEXICAL_ROLE
+                return EXTERNAL_LEXICAL_ROLE
             if raw_name in self._current_python_bindings():
-                return "internal"
+                return INTERNAL_LEXICAL_ROLE
             if raw_name in self.preserved_names:
-                return "preserved"
+                return PRESERVED_LEXICAL_ROLE
             if raw_name in self.external_names:
-                return "external"
-            return "internal"
+                return EXTERNAL_LEXICAL_ROLE
+            return INTERNAL_LEXICAL_ROLE
         if raw_name in self._current_python_bindings():
-            return "internal"
+            return INTERNAL_LEXICAL_ROLE
         if raw_name in self.preserved_names:
-            return "preserved"
+            return PRESERVED_LEXICAL_ROLE
         if raw_name in self.external_names:
-            return "external"
-        return "external"
+            return EXTERNAL_LEXICAL_ROLE
+        return EXTERNAL_LEXICAL_ROLE
 
 
 class _Renamer(ast.NodeTransformer):

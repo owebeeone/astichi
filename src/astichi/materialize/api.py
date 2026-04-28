@@ -19,7 +19,10 @@ from astichi.builder.graph import (
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
 from astichi.lowering import (
     PayloadLocalDirective,
+    DOUBLE_STAR_FUNC_ARG_REGION,
+    PLAIN_FUNC_ARG_REGION,
     RecognizedMarker,
+    STARRED_FUNC_ARG_REGION,
     collect_payload_local_directives,
     direct_funcargs_directive_calls,
     extract_funcargs_payload,
@@ -32,6 +35,7 @@ from astichi.lowering import (
     recognize_markers,
     validate_payload_for_region,
 )
+from astichi.lowering.marker_contexts import CALL_CONTEXT
 from astichi.lowering.markers import (
     ALL_MARKERS,
     ARG_IDENTIFIER,
@@ -763,7 +767,7 @@ def build_merge(
                     source_is_param_payload
                     and (
                         target_port is None
-                        or target_port.placement != "params"
+                        or not target_port.is_signature_parameter_demand()
                     )
                 ):
                     raise ValueError(
@@ -774,7 +778,10 @@ def build_merge(
                             hint="wire `def astichi_params(...): pass` only into `__astichi_param_hole__` targets",
                         )
                     )
-                if target_port is not None and target_port.placement == "params":
+                if (
+                    target_port is not None
+                    and target_port.is_signature_parameter_demand()
+                ):
                     param_supply = _lookup_parameter_supply_port(source_piece)
                     if param_supply is None:
                         raise ValueError(
@@ -820,7 +827,10 @@ def build_merge(
                         )
                     )
                     continue
-                if target_port is not None and target_port.placement == "expr":
+                if (
+                    target_port is not None
+                    and target_port.is_expression_family_demand()
+                ):
                     if (
                         _is_call_argument_target_body(target_body, effective_target_name)
                         and _has_authored_expression_insert_source(source_tree, raw_target_name)
@@ -835,7 +845,8 @@ def build_merge(
                             )
                         )
                     expr_source_ok = (
-                        source_port is not None and source_port.placement == "expr"
+                        source_port is not None
+                        and source_port.is_expression_family_supply()
                     ) or (source_port is None and implicit_expr_supply)
                     if not expr_source_ok:
                         raise ValueError(
@@ -953,9 +964,9 @@ def build_merge(
         port
         for port in raw_demands
         if not (
-            (port.sources == frozenset({"hole"}) and port.name in satisfied)
+            (port.is_additive_hole_demand() and port.name in satisfied)
             or (
-                port.sources == frozenset({"param_hole"})
+                port.is_parameter_hole_demand()
                 and port.name in satisfied_params
             )
         )
@@ -1199,7 +1210,10 @@ def _lookup_supply_port(
 def _lookup_parameter_supply_port(
     composable: BasicComposable,
 ) -> SupplyPort | None:
-    matches = [port for port in composable.supply_ports if port.placement == "params"]
+    matches = [
+        port for port in composable.supply_ports
+        if port.is_signature_parameter_supply()
+    ]
     if not matches:
         return None
     if len(matches) > 1:
@@ -1537,7 +1551,7 @@ def _validate_star_region_inserts(
             continue
         validate_payload_for_region(
             insert.payload,
-            region="starred",
+            region=STARRED_FUNC_ARG_REGION,
             hole_name=hole_name,
         )
 
@@ -1561,7 +1575,7 @@ def _validate_dstar_region_inserts(
             continue
         validate_payload_for_region(
             insert.payload,
-            region="dstar",
+            region=DOUBLE_STAR_FUNC_ARG_REGION,
             hole_name=hole_name,
             seen_explicit_keywords=seen_explicit_keywords,
         )
@@ -1577,7 +1591,7 @@ def _validate_plain_call_region_inserts(
             continue
         validate_payload_for_region(
             insert.payload,
-            region="plain",
+            region=PLAIN_FUNC_ARG_REGION,
             hole_name="call-argument hole",
             seen_explicit_keywords=seen_explicit_keywords,
         )
@@ -2148,7 +2162,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 payload = extract_funcargs_payload(arg.args[1])
                 lowered_args, lowered_keywords = lower_payload_for_region(
                     payload,
-                    region="plain",
+                    region=PLAIN_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(arg) or "<payload>",
                     transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
                 )
@@ -2164,7 +2178,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 payload = extract_funcargs_payload(arg.value.args[1])
                 lowered_args, _ = lower_payload_for_region(
                     payload,
-                    region="starred",
+                    region=STARRED_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(arg.value) or "<payload>",
                     transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
                 )
@@ -2192,7 +2206,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 payload = extract_funcargs_payload(keyword.value.args[1])
                 _, lowered_keywords = lower_payload_for_region(
                     payload,
-                    region="dstar",
+                    region=DOUBLE_STAR_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(keyword.value) or "<payload>",
                     transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
                 )
@@ -2294,7 +2308,7 @@ def _payload_local_directive_markers(
         )
         propagate_ast_source_locations(call, None)
         markers.append(
-            RecognizedMarker(spec=directive.spec, node=call, context="call")
+            RecognizedMarker(spec=directive.spec, node=call, context=CALL_CONTEXT)
         )
     return tuple(markers)
 
@@ -2325,12 +2339,12 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         for port in composable.demand_ports
         if (
             (
-                "hole" in port.sources
+                port.is_additive_hole_demand()
                 and port.name in required_holes
                 and port.name not in satisfied_holes
             )
             or (
-                "param_hole" in port.sources
+                port.is_parameter_hole_demand()
                 and port.name not in satisfied_param_holes
             )
         )
@@ -2345,7 +2359,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
             )
         )
     mandatory_binds = [
-        port for port in composable.demand_ports if "bind_external" in port.sources
+        port for port in composable.demand_ports if port.is_external_bind_demand()
     ]
     if mandatory_binds:
         if len(mandatory_binds) == 1:
