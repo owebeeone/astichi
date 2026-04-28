@@ -84,6 +84,18 @@ If you use indexed targets such as `builder.Root.slot[0]`, `builder.build()`
 defaults to `unroll="auto"` and unrolls `astichi_for(...)` sites as needed for
 those indexed edges.
 
+The same builder graph can be driven by data instead of fluent attribute
+chains. The named API is useful when instance names, target paths, or edge
+overlays come from configuration or descriptor inspection:
+
+```python
+builder = build()
+builder.add("Root", root)
+builder.add("Child", child)
+builder.instance("Root").target("body").add("Child", order=10)
+graph = builder.build()
+```
+
 If a later stage reuses a built composable, descendant paths stay fluent:
 
 ```python
@@ -98,7 +110,101 @@ metadata; authored snippets should use holes and builder wiring instead.
 `build()` on the graph returns a **new** `Composable`. Boundary **holes** may
 still be open if you chose not to wire every demand.
 
-## 5. Materialize
+## 5. Inspect descriptors and drive the builder
+
+Use **`.describe()`** when a tool needs to inspect a composable before deciding
+how to wire it. Descriptors expose additive holes, target addresses, external
+binds, identifier demands/supplies, add cardinality, and conservative
+production compatibility.
+
+Descriptor target references map directly to the data-driven builder API:
+
+```python
+stage1 = build()
+stage1.add(
+    "Root",
+    astichi.compile(
+        """
+result = []
+astichi_hole(cells)
+astichi_hole(consumers)
+final = tuple(result)
+"""
+    ),
+)
+stage1.add(
+    "Cell",
+    astichi.compile(
+        """
+shared = 10
+astichi_export(shared)
+"""
+    ),
+)
+stage1.instance("Root").target("cells").add("Cell")
+pipeline = stage1.build()
+
+consumer = astichi.compile(
+    """
+astichi_import(shared)
+astichi_pass(result, outer_bind=True).append(shared + 5)
+"""
+)
+
+pipeline_desc = pipeline.describe()
+consumer_hole = pipeline_desc.single_hole_named("consumers")
+shared_supply = next(
+    supply for supply in pipeline_desc.identifier_supplies
+    if supply.name == "shared"
+)
+shared_demand = consumer.describe().identifier_demands[0]
+
+stage2 = build()
+stage2.add("Pipeline", pipeline)
+stage2.add("Consumer", consumer)
+stage2.target(consumer_hole.with_root_instance("Pipeline")).add("Consumer")
+stage2.assign(
+    source_instance="Consumer",
+    source_ref_path=shared_demand.ref_path,
+    inner_name=shared_demand.name,
+    target_instance="Pipeline",
+    target_ref_path=shared_supply.ref_path,
+    outer_name=shared_supply.name,
+)
+
+graph = stage2.build()
+```
+
+In this example, `consumer_hole.address` contains the descriptor target data:
+the descendant path inside the staged `pipeline` composable and the target hole
+name. `with_root_instance("Pipeline")` resolves that address against the
+builder instance, and `stage2.target(...)` creates the same target handle as the
+equivalent fluent path. The identifier descriptors provide the `ref_path` values
+for named `assign(...)`.
+
+External binds are also visible through descriptors:
+
+```python
+template = astichi.compile(
+    """
+label = astichi_bind_external(label)
+result = label
+"""
+)
+values = {"label": "ready"}
+bind_values = {
+    item.name: values[item.name]
+    for item in template.describe().external_binds
+    if not item.already_bound
+}
+bound = template.bind(bind_values)
+```
+
+See [Descriptor API](../reference/descriptor-api.md) for the full descriptor
+surface and [Builder API](../reference/builder-api.md) for the data-driven
+builder signatures.
+
+## 6. Materialize
 
 When all **mandatory** demands for your target are satisfied and **hygiene**
 checks pass, call **`materialize()`** to obtain a representation suitable for
@@ -112,7 +218,7 @@ closed = graph.materialize()
 If a required hole is missing or a name rule is violated, **`materialize`**
 raises with a diagnostic.
 
-## 6. Emit
+## 7. Emit
 
 Produce Python **source** for inspection, tests, or downstream tools.
 
@@ -127,7 +233,9 @@ form `# astichi-provenance: ...`. The emitted Python body remains authoritative;
 the provenance payload is only for AST/source-location restoration and
 round-trip checks. See [Materialize and emit](../reference/materialize-and-emit.md).
 
-## 7. Where to read next
+## 8. Where to read next
 
 - [Reference index](../reference/README.md)
+- [Descriptor API](../reference/descriptor-api.md)
+- [Builder API](../reference/builder-api.md)
 - **[`AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)** — current snapshot and open gaps

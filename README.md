@@ -13,6 +13,7 @@ Astichi is a fit when you want to:
 - stitch block and expression fragments at named composition sites
 - bind compile-time values into source before final lowering
 - unroll compile-time loops into straight-line Python
+- inspect composables with descriptors before wiring them
 - emit inspectable source with provenance instead of opaque runtime machinery
 
 It is **not** a general macro system and **not** a generic codemod framework.
@@ -40,6 +41,8 @@ Astichi is marker-bearing Python source plus a small build pipeline.
 - Marker meaning comes from AST position, not string matching alone.
 - `compile(...)` parses marker-bearing source into a `Composable`.
 - `build()` wires composables together.
+- `describe()` exposes holes, binds, ports, and builder target addresses for
+  data-driven composition.
 - `materialize()` resolves inserts, bindings, and hygiene, then produces real
   Python.
 
@@ -120,6 +123,22 @@ Without `astichi_pass(items, outer_bind=True)`, the inner snippet does not get
 to reuse `items` just because the spelling matches. That is deliberate. Astichi
 defaults to isolated scopes and only crosses them when the source says so.
 
+The fluent builder is also available as a data-driven named API. Descriptor
+target data can feed that API directly:
+
+```python
+hole = root.describe().single_hole_named("body")
+
+builder = astichi.build()
+builder.add("Root", root)
+builder.add("Step", astichi.compile("value = 1\n"))
+builder.target(hole.with_root_instance("Root")).add("Step")
+```
+
+That `builder.target(...)` call uses the same target address as
+`builder.Root.body.add.Step()`, but the address came from `describe()` instead
+of a Python attribute chain.
+
 ## Example: schema-specialized row projector
 
 Suppose an ingestion pipeline knows its event schema at build time, and each
@@ -194,7 +213,10 @@ Astichi currently provides:
 
 - `astichi.compile(source, file_name=None, line_number=1, offset=0)`
 - `astichi.build()` for builder-based composition
-- concrete composables with `.bind(...)`, `.materialize()`, and `.emit(...)`
+- concrete composables with `.bind(...)`, `.describe()`, `.materialize()`, and
+  `.emit(...)`
+- data-driven builder calls such as `builder.add("Root", root)` and
+  `builder.target(hole.with_root_instance("Root")).add("Step")`
 - provenance helpers in `astichi.emit`
 
 Supported pieces today include block holes, expression inserts, external
