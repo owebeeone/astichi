@@ -7,8 +7,10 @@ from astichi.builder import (
     AddProxy,
     AddToTargetProxy,
     AdditiveEdge,
+    BindIdentifierProxy,
     BuilderHandle,
     BuilderGraph,
+    IdentifierBinding,
     InstanceHandle,
     TargetHandle,
     TargetRef,
@@ -21,6 +23,7 @@ def test_build_returns_builder_handle_with_empty_graph() -> None:
 
     assert isinstance(builder, BuilderHandle)
     assert isinstance(builder.add, AddProxy)
+    assert isinstance(builder.bind_identifier, BindIdentifierProxy)
     assert builder.graph.instances == ()
     assert builder.graph.edges == ()
 
@@ -721,3 +724,133 @@ def test_named_assign_rejects_unknown_registered_path_cleanly() -> None:
         )
 
     assert stage2.graph.assigns == ()
+
+
+def test_bind_identifier_accepts_descriptor_demand_and_supply() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(astichi.compile("shared = 10\nastichi_export(shared)\n"))
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    source = astichi.compile("astichi_import(shared)\nvalue = shared + 1\n")
+    supply = next(
+        item
+        for item in built.describe().identifier_supplies
+        if item.name == "shared" and item.ref_path == ("Root", "Inner")
+    )
+    demand = source.describe().identifier_demands[0]
+
+    builder = astichi.build()
+    builder.add("Pipeline", built)
+    builder.add("Step", source)
+    binding = builder.bind_identifier(
+        source_instance="Step",
+        identifier=demand,
+        target_instance="Pipeline",
+        to=supply,
+    )
+
+    assert binding == IdentifierBinding(
+        source_instance="Step",
+        inner_name="shared",
+        target_instance="Pipeline",
+        outer_name="shared",
+        target_ref_path=("Root", "Inner"),
+    )
+    assert builder.graph.identifier_bindings == (binding,)
+
+
+def test_fluent_bind_identifier_matches_descriptor_bind_identifier_paths() -> None:
+    stage1 = astichi.build()
+    stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
+    stage1.add.Inner(
+        astichi.compile("astichi_import(counter)\nvalue = counter + 1\n")
+    )
+    stage1.Root.body.add.Inner()
+    built = stage1.build()
+
+    init = astichi.compile("counter = 10\nastichi_export(counter)\n")
+    demand = next(
+        item
+        for item in built.describe().identifier_demands
+        if item.name == "counter" and item.ref_path == ("Root", "Inner")
+    )
+    supply = init.describe().identifier_supplies[0]
+
+    fluent = astichi.build()
+    fluent.add.Pipeline(built)
+    fluent.add.Init(init)
+    fluent.bind_identifier.Pipeline.Root.Inner.counter.to().Init.counter
+
+    named = astichi.build()
+    named.add("Pipeline", built)
+    named.add("Init", init)
+    named.bind_identifier(
+        source_instance="Pipeline",
+        identifier=demand,
+        target_instance="Init",
+        to=supply,
+    )
+
+    assert named.graph.identifier_bindings == fluent.graph.identifier_bindings
+
+
+def test_bind_identifier_conflicts_with_assign_for_same_source_demand() -> None:
+    root = astichi.compile("total = 10\nastichi_export(total)\n")
+    step = astichi.compile("astichi_import(total)\nvalue = total + 1\n")
+    demand = step.describe().identifier_demands[0]
+    supply = root.describe().identifier_supplies[0]
+
+    builder = astichi.build()
+    builder.add.Root(root)
+    builder.add.Step(step)
+    builder.assign.Step.total.to().Root.total
+
+    with pytest.raises(ValueError, match="already bound with `builder.assign`"):
+        builder.bind_identifier(
+            source_instance="Step",
+            identifier=demand,
+            target_instance="Root",
+            to=supply,
+        )
+
+
+def test_assign_conflicts_with_bind_identifier_for_same_source_demand() -> None:
+    root = astichi.compile("total = 10\nastichi_export(total)\n")
+    step = astichi.compile("astichi_import(total)\nvalue = total + 1\n")
+    demand = step.describe().identifier_demands[0]
+    supply = root.describe().identifier_supplies[0]
+
+    builder = astichi.build()
+    builder.add.Root(root)
+    builder.add.Step(step)
+    builder.bind_identifier(
+        source_instance="Step",
+        identifier=demand,
+        target_instance="Root",
+        to=supply,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="already bound with `builder.bind_identifier`",
+    ):
+        builder.assign.Step.total.to().Root.total
+
+
+def test_bind_identifier_rejects_wrong_descriptor_types() -> None:
+    root = astichi.compile("astichi_hole(body)\n")
+    step = astichi.compile("value = 1\n")
+
+    builder = astichi.build()
+    builder.add.Root(root)
+    builder.add.Step(step)
+
+    with pytest.raises(TypeError, match="IdentifierDemandDescriptor"):
+        builder.bind_identifier(
+            source_instance="Step",
+            identifier=root.describe().single_hole_named("body"),  # type: ignore[arg-type]
+            target_instance="Root",
+            to=step.describe().productions[0],  # type: ignore[arg-type]
+        )

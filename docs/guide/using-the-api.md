@@ -163,13 +163,11 @@ stage2 = build()
 stage2.add("Pipeline", pipeline)
 stage2.add("Consumer", consumer)
 stage2.target(consumer_hole.with_root_instance("Pipeline")).add("Consumer")
-stage2.assign(
+stage2.bind_identifier(
     source_instance="Consumer",
-    source_ref_path=shared_demand.ref_path,
-    inner_name=shared_demand.name,
+    identifier=shared_demand,
     target_instance="Pipeline",
-    target_ref_path=shared_supply.ref_path,
-    outer_name=shared_supply.name,
+    to=shared_supply,
 )
 
 graph = stage2.build()
@@ -179,8 +177,9 @@ In this example, `consumer_hole.address` contains the descriptor target data:
 the descendant path inside the staged `pipeline` composable and the target hole
 name. `with_root_instance("Pipeline")` resolves that address against the
 builder instance, and `stage2.target(...)` creates the same target handle as the
-equivalent fluent path. The identifier descriptors provide the `ref_path` values
-for named `assign(...)`.
+equivalent fluent path. The identifier descriptors bind the consumer demand to
+the selected staged supply with `bind_identifier(...)`; final spelling is still
+handled by normal hygiene.
 
 External binds are also visible through descriptors:
 

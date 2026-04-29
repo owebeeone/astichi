@@ -409,7 +409,7 @@ Fields:
 | `port` | Supply-side `PortDescriptor`. |
 | `ref_path` | Descendant shell path where the supply lives. |
 
-The descriptor paths map directly to named `builder.assign(...)`:
+The descriptor paths map directly to `builder.bind_identifier(...)`:
 
 ```python
 source_desc = source_piece.describe()
@@ -417,15 +417,17 @@ target_desc = target_piece.describe()
 demand = source_desc.identifier_demands[0]
 supply = target_desc.identifier_supplies[0]
 
-builder.assign(
+builder.bind_identifier(
     source_instance="Step",
-    source_ref_path=demand.ref_path,
-    inner_name=demand.name,
+    identifier=demand,
     target_instance="Pipeline",
-    target_ref_path=supply.ref_path,
-    outer_name=supply.name,
+    to=supply,
 )
 ```
+
+`bind_identifier(...)` is scope-aware and direct: it resolves the source demand
+to the selected supply before final hygiene. Use `builder.assign(...)` instead
+when you want graph-qualified alias wiring.
 
 For simple edge-local identifier resolution, use `arg_names=...` on
 `target.add(...)`:
@@ -437,9 +439,10 @@ builder.instance("Root").target("body").add(
 )
 ```
 
-Use `assign(...)` when the source or supplier is a named builder instance or a
-descendant of a staged composable. Use edge `arg_names=...` when the identifier
-should be resolved as part of one additive edge.
+Use `bind_identifier(...)` when the demand and supply descriptors should
+participate in the same scoped identifier binding. Use `assign(...)` for the
+lower-level graph-qualified alias surface. Use edge `arg_names=...` when the
+identifier should be resolved as part of one additive edge.
 
 ## Public Exports
 
@@ -473,7 +476,7 @@ Runnable descriptor examples live under
   `description.external_binds` to bind a single composable before materializing.
 - [`staged_descriptor_targets/`](snippets/descriptor_api/staged_descriptor_targets/)
   uses descriptor hole addresses with `builder.target(...)` and descriptor
-  identifier paths with named `builder.assign(...)`.
+  identifier paths with `builder.bind_identifier(...)`.
 - [`unrolled_indexed_descriptor_targets/`](snippets/descriptor_api/unrolled_indexed_descriptor_targets/)
   resolves a descriptor target once, then uses `target[i]` and indexed source
   instances for loop-expanded holes.

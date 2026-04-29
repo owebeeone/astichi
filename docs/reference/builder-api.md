@@ -177,6 +177,14 @@ builder.assign(
     source_ref_path=(),
     target_ref_path=(),
 )
+
+builder.bind_identifier(
+    *,
+    source_instance,
+    identifier,
+    target_instance,
+    to,
+)
 ```
 
 `arg_names`, `keep_names`, and `bind` are overlays for the registered source
@@ -211,6 +219,7 @@ names collide with Python object protocol behavior.
 | `builder.assign.Step.total.to().Root.total` | `builder.assign(source_instance="Step", inner_name="total", target_instance="Root", outer_name="total")` |
 | `builder.assign.Step.total.to().Pipeline.Root.Inner.total` | `builder.assign(source_instance="Step", inner_name="total", target_instance="Pipeline", target_ref_path=("Root", "Inner"), outer_name="total")` |
 | `builder.assign.Pipeline.Root.Inner.total.to().Init.total` | `builder.assign(source_instance="Pipeline", source_ref_path=("Root", "Inner"), inner_name="total", target_instance="Init", outer_name="total")` |
+| `builder.bind_identifier.Step.total.to().Pipeline.Root.Inner.total` | `builder.bind_identifier(source_instance="Step", identifier=demand_descriptor, target_instance="Pipeline", to=supply_descriptor)` |
 
 For systems that already hold a normalized target reference, `builder.target`
 constructs the same target handle directly:
@@ -240,23 +249,26 @@ When an address object is passed, explicit keyword overrides are allowed only if
 they match the address. A conflicting `root_instance`, `target_name`,
 `ref_path`, or `leaf_path` raises before any graph edge is recorded.
 
-Descriptor data can also drive named identifier wiring. Identifier demand and
-supply descriptors carry the same descendant `ref_path` values accepted by
-`builder.assign(...)`:
+Descriptor data can also drive direct identifier binding. Identifier demand and
+supply descriptors carry the descendant `ref_path` values accepted by
+`builder.bind_identifier(...)`:
 
 ```python
 demand = step.describe().identifier_demands[0]
 supply = built.describe().identifier_supplies[0]
 
-b.assign(
+b.bind_identifier(
     source_instance="Step",
-    source_ref_path=demand.ref_path,
-    inner_name=demand.name,
+    identifier=demand,
     target_instance="Pipeline",
-    target_ref_path=supply.ref_path,
-    outer_name=supply.name,
+    to=supply,
 )
 ```
+
+`bind_identifier(...)` is direct and scope-aware: it resolves the source demand
+to the selected supply before final hygiene, and the normal hygiene pass owns
+the final spelling. Use `builder.assign(...)` when the desired behavior is the
+graph-qualified assign alias.
 
 See [descriptor-api.md](descriptor-api.md) for the full descriptor object model
 and descriptor-driven builder workflow.

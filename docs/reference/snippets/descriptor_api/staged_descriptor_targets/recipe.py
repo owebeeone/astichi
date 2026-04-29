@@ -2,8 +2,8 @@
 
 Stage 1 builds a pipeline root with a descendant ``Cell`` supplier and an open
 ``consumers`` hole. Stage 2 inspects the built pipeline descriptor, uses the
-hole's address with ``builder.target(...)``, and uses identifier descriptors to
-drive named ``builder.assign(...)`` wiring.
+hole's address with ``builder.target(...)``, and binds identifier descriptors
+with ``builder.bind_identifier(...)``.
 """
 
 
@@ -64,13 +64,11 @@ def run() -> str:
     stage2.add("Pipeline", pipeline)
     stage2.add("Consumer", consumer)
     stage2.target(consumer_hole.with_root_instance("Pipeline")).add("Consumer")
-    stage2.assign(
+    stage2.bind_identifier(
         source_instance="Consumer",
-        source_ref_path=shared_demand.ref_path,
-        inner_name=shared_demand.name,
+        identifier=shared_demand,
         target_instance="Pipeline",
-        target_ref_path=shared_supply.ref_path,
-        outer_name=shared_supply.name,
+        to=shared_supply,
     )
 
     return ast.unparse(stage2.build().materialize().tree)

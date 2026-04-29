@@ -14,6 +14,7 @@ from astichi.builder.graph import (
     AssignBinding,
     BuilderGraph,
     EdgeSourceOverlay,
+    IdentifierBinding,
     InstanceRecord,
 )
 from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
@@ -186,7 +187,11 @@ def _format_target_address(edge: AdditiveEdge) -> str:
 
 
 def _refresh_composable(
-    original: BasicComposable, tree: ast.Module
+    original: BasicComposable,
+    tree: ast.Module,
+    *,
+    arg_bindings: tuple[tuple[str, str], ...] | None = None,
+    keep_names: frozenset[str] | None = None,
 ) -> BasicComposable:
     """Re-extract markers/classification/ports against an unrolled tree."""
     markers = recognize_markers(tree)
@@ -195,13 +200,13 @@ def _refresh_composable(
         origin=original.origin,
         markers=markers,
         bound_externals=original.bound_externals,
-        arg_bindings=original.arg_bindings,
-        keep_names=original.keep_names,
+        arg_bindings=original.arg_bindings if arg_bindings is None else arg_bindings,
+        keep_names=original.keep_names if keep_names is None else keep_names,
     )
     classification = analyze_names(
         provisional,
         mode="permissive",
-        preserved_names=original.keep_names,
+        preserved_names=original.keep_names if keep_names is None else keep_names,
     )
     return BasicComposable(
         tree=tree,
@@ -211,8 +216,8 @@ def _refresh_composable(
         demand_ports=extract_demand_ports(markers, classification),
         supply_ports=extract_supply_ports(markers),
         bound_externals=original.bound_externals,
-        arg_bindings=original.arg_bindings,
-        keep_names=original.keep_names,
+        arg_bindings=original.arg_bindings if arg_bindings is None else arg_bindings,
+        keep_names=original.keep_names if keep_names is None else keep_names,
     )
 
 
@@ -400,9 +405,251 @@ def _apply_assign_bindings(
         shell_indexes[binding.source_instance] = ShellIndex.from_tree(source_tree)
 
 
+def _validate_explicit_identifier_wiring_conflicts(
+    assigns: tuple[AssignBinding, ...],
+    identifier_bindings: tuple[IdentifierBinding, ...],
+) -> None:
+    seen: dict[tuple[str, RefPath, str], str] = {}
+    for binding in assigns:
+        key = (
+            binding.source_instance,
+            normalize_ref_path(binding.source_ref_path),
+            binding.inner_name,
+        )
+        seen[key] = "builder.assign"
+    for binding in identifier_bindings:
+        key = (
+            binding.source_instance,
+            normalize_ref_path(binding.source_ref_path),
+            binding.inner_name,
+        )
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = "builder.bind_identifier"
+            continue
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                f"conflicting identifier wiring for "
+                f"`{format_instance_leaf(binding.source_instance, key[1], binding.inner_name)}`: "
+                f"already wired by {existing}, cannot also use builder.bind_identifier",
+                hint="use exactly one explicit identifier wiring surface for each source demand",
+            )
+        )
+
+
+def _apply_identifier_bindings(
+    bindings: tuple[IdentifierBinding, ...],
+    instance_records: dict[str, InstanceRecord],
+    trees: dict[str, ast.Module],
+    shell_indexes: dict[str, ShellIndex],
+) -> None:
+    """Apply direct scope-aware identifier bindings to local tree copies."""
+    resolved_names = _identifier_binding_direct_names(bindings)
+    for binding in bindings:
+        source_ref_path = normalize_ref_path(binding.source_ref_path)
+        target_ref_path = normalize_ref_path(binding.target_ref_path)
+        resolved_outer_name = resolved_names[binding]
+        src = instance_records.get(binding.source_instance)
+        if src is None:
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    "builder.bind_identifier refers to unknown source instance "
+                    f"`{binding.source_instance}`",
+                    hint="register the source instance with `builder.add` before `bind_identifier`",
+                )
+            )
+        if not isinstance(src.composable, BasicComposable):
+            raise TypeError(
+                f"builder.bind_identifier source instance `{binding.source_instance}` "
+                f"must be a BasicComposable; got {type(src.composable).__name__}"
+            )
+        dst = instance_records.get(binding.target_instance)
+        if dst is None:
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    "builder.bind_identifier refers to unknown target instance "
+                    f"`{binding.target_instance}` "
+                    f"(from {binding.source_instance}.{binding.inner_name})",
+                    hint="register the target instance with `builder.add` before resolving identifier bindings",
+                )
+            )
+        target_shell = shell_indexes[binding.target_instance].resolve(
+            target_ref_path
+        ).require(
+            instance_name=binding.target_instance,
+            role="bind_identifier target path",
+        )
+        target_body = (
+            _effective_root_body(target_shell.body)
+            if not target_ref_path
+            else target_shell.body
+        )
+        if binding.outer_name not in collect_identifier_suppliers_in_body(target_body):
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    "no readable supplier named "
+                    f"`{binding.outer_name}` at "
+                    f"`{format_instance_leaf(binding.target_instance, target_ref_path, binding.outer_name)}`",
+                    hint="publish the name with `astichi_export` or an assignable value at that path",
+                )
+            )
+        if resolved_outer_name != binding.outer_name:
+            _rewrite_identifiers_in_body(
+                target_body,
+                {binding.outer_name: resolved_outer_name},
+            )
+        _ensure_keep_marker(target_body, resolved_outer_name)
+        if not isinstance(dst.composable, BasicComposable):
+            raise TypeError(
+                f"builder.bind_identifier target instance `{binding.target_instance}` "
+                f"must be a BasicComposable; got {type(dst.composable).__name__}"
+            )
+        target_piece = _refresh_composable(
+            dst.composable,
+            trees[binding.target_instance],
+            keep_names=dst.composable.keep_names | frozenset({resolved_outer_name}),
+        )
+        instance_records[binding.target_instance] = InstanceRecord(
+            name=binding.target_instance,
+            composable=target_piece,
+        )
+        source_tree = trees[binding.source_instance]
+        source_shell = shell_indexes[binding.source_instance].resolve(
+            source_ref_path
+        ).require(
+            instance_name=binding.source_instance,
+            role="bind_identifier source path",
+        )
+        source_body = (
+            _effective_root_body(source_shell.body)
+            if not source_ref_path
+            else source_shell.body
+        )
+        local_demands = collect_identifier_demands_in_body(source_body)
+        if binding.inner_name not in local_demands:
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    f"no __astichi_arg__ / astichi_import / astichi_pass slot named "
+                    f"`{binding.inner_name}` at "
+                    f"`{format_instance_leaf(binding.source_instance, source_ref_path, binding.inner_name)}`",
+                    hint="declare the slot in the source snippet or fix the path on `bind_identifier`",
+                )
+            )
+        _rewrite_identifier_demands_in_body(
+            source_body,
+            {binding.inner_name: resolved_outer_name},
+            remove_imports=True,
+        )
+        arg_bindings = dict(src.composable.arg_bindings)
+        existing = arg_bindings.get(binding.inner_name)
+        if existing is not None and existing != resolved_outer_name:
+            raise ValueError(
+                format_astichi_error(
+                    "materialize",
+                    f"cannot re-bind identifier `{binding.inner_name}`: already "
+                    f"resolved to `{existing}`",
+                    hint="use one identifier binding per source demand",
+                )
+            )
+        arg_bindings[binding.inner_name] = resolved_outer_name
+        piece = _refresh_composable(
+            src.composable,
+            source_tree,
+            arg_bindings=tuple(sorted(arg_bindings.items())),
+            keep_names=src.composable.keep_names | frozenset({resolved_outer_name}),
+        )
+        instance_records[binding.source_instance] = InstanceRecord(
+            name=binding.source_instance, composable=piece
+        )
+        shell_indexes[binding.source_instance] = ShellIndex.from_tree(source_tree)
+
+
+def _identifier_binding_direct_names(
+    bindings: tuple[IdentifierBinding, ...],
+) -> dict[IdentifierBinding, str]:
+    by_name: dict[str, list[IdentifierBinding]] = {}
+    for binding in bindings:
+        by_name.setdefault(binding.outer_name, []).append(binding)
+    resolved: dict[IdentifierBinding, str] = {}
+    for outer_name, named_bindings in by_name.items():
+        target_keys: set[tuple[str, RefPath, str]] = set()
+        for binding in named_bindings:
+            key = (
+                binding.target_instance,
+                normalize_ref_path(binding.target_ref_path),
+                binding.outer_name,
+            )
+            if key in target_keys:
+                resolved[binding] = outer_name
+                continue
+            index = len(target_keys)
+            target_keys.add(key)
+            resolved[binding] = (
+                outer_name
+                if index == 0
+                else f"{outer_name}__astichi_scoped_{index}"
+            )
+    return resolved
+
+
+def _ensure_keep_marker(body: list[ast.stmt], name: str) -> None:
+    for stmt in body:
+        if not isinstance(stmt, ast.Expr):
+            continue
+        call = stmt.value
+        if (
+            is_call_to_marker(call, KEEP)
+            and len(call.args) == 1
+            and not call.keywords
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == name
+        ):
+            return
+    insert_at = _keep_marker_insert_index(body)
+    donor = body[insert_at] if insert_at < len(body) else (body[0] if body else None)
+    body.insert(insert_at, _make_keep_statement(name, location_donor=donor))
+
+
+def _keep_marker_insert_index(body: list[ast.stmt]) -> int:
+    index = 0
+    while index < len(body) and boundary_import_statement(body[index]) is not None:
+        index += 1
+    while index < len(body) and _is_keep_statement(body[index]):
+        index += 1
+    return index
+
+
+def _is_keep_statement(stmt: ast.stmt) -> bool:
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and is_call_to_marker(stmt.value, KEEP)
+    )
+
+
+def _rewrite_identifiers_in_body(
+    body: list[ast.stmt],
+    bindings: dict[str, str],
+) -> None:
+    renamer = _BoundaryImportRenamer(bindings)
+    for index, statement in enumerate(body):
+        rewritten = renamer.visit(statement)
+        if rewritten is None:
+            continue
+        assert isinstance(rewritten, ast.stmt)
+        body[index] = rewritten
+
+
 def _rewrite_identifier_demands_in_body(
     body: list[ast.stmt],
     bindings: dict[str, str],
+    *,
+    remove_imports: bool = False,
 ) -> None:
     import_bindings = {
         name: bindings[name]
@@ -412,15 +659,19 @@ def _rewrite_identifier_demands_in_body(
     arg_resolver = _ShellArgIdentifierResolver(bindings)
     import_resolver = _BoundaryImportRenamer(import_bindings)
     pass_resolver = _BoundaryPassRenamer(bindings)
-    for index, statement in enumerate(body):
+    rewritten_body: list[ast.stmt] = []
+    for statement in body:
         info = boundary_import_statement(statement)
         if info is not None and info[0] in import_bindings:
+            if remove_imports:
+                continue
             _rewrite_boundary_import_name(statement, import_bindings[info[0]])
         rewritten = arg_resolver.visit(statement)
         if rewritten is None:
             continue
         assert isinstance(rewritten, ast.stmt)
-        body[index] = pass_resolver.visit(import_resolver.visit(rewritten))
+        rewritten_body.append(pass_resolver.visit(import_resolver.visit(rewritten)))
+    body[:] = rewritten_body
 
 
 def _declared_import_like_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
@@ -673,7 +924,17 @@ def build_merge(
     # ``target.add.<Src>(arg_names=...)`` surface, the assign surface
     # never mutates the graph's instance records; the wiring is held as
     # ``AssignBinding`` records on the graph and applied fresh here.
+    _validate_explicit_identifier_wiring_conflicts(
+        graph.assigns,
+        graph.identifier_bindings,
+    )
     _apply_assign_bindings(graph.assigns, instance_records, trees, shell_indexes)
+    _apply_identifier_bindings(
+        graph.identifier_bindings,
+        instance_records,
+        trees,
+        shell_indexes,
+    )
 
     edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
     for idx, edge in enumerate(graph.edges):
@@ -1295,14 +1556,19 @@ def _inject_scoped_keep_markers(
         call = stmt.value
         if is_call_to_marker(call, KEEP) and len(call.args) == 1 and not call.keywords and isinstance(call.args[0], ast.Name):
             existing.add(call.args[0].id)
-    donor = target_body[0] if target_body else None
+    insert_at = _keep_marker_insert_index(target_body)
+    donor = (
+        target_body[insert_at]
+        if insert_at < len(target_body)
+        else (target_body[0] if target_body else None)
+    )
     additions = [
         _make_keep_statement(name, location_donor=donor)
         for name in sorted(keep_names)
         if name not in existing
     ]
     if additions:
-        target_body[:0] = additions
+        target_body[insert_at:insert_at] = additions
 
 
 def _extract_expression_inserts(

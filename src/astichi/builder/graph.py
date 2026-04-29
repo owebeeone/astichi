@@ -9,7 +9,7 @@ from astichi.diagnostics import format_astichi_error
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable
 from astichi.path_resolution import ShellIndex
-from astichi.shell_refs import RefPath
+from astichi.shell_refs import RefPath, normalize_ref_path
 
 
 _INDEXED_INSTANCE_NAME_RE = re.compile(
@@ -120,6 +120,18 @@ class AssignBinding:
     target_ref_path: RefPath = ()
 
 
+@dataclass(frozen=True)
+class IdentifierBinding:
+    """Direct scope-aware identifier binding for builder graphs."""
+
+    source_instance: str
+    inner_name: str
+    target_instance: str
+    outer_name: str
+    source_ref_path: RefPath = ()
+    target_ref_path: RefPath = ()
+
+
 @dataclass
 class BuilderGraph:
     """Underlying mutable graph for Astichi composition."""
@@ -127,6 +139,7 @@ class BuilderGraph:
     _instances: dict[str, InstanceRecord] = field(default_factory=dict)
     _edges: list[AdditiveEdge] = field(default_factory=list)
     _assigns: list[AssignBinding] = field(default_factory=list)
+    _identifier_bindings: list[IdentifierBinding] = field(default_factory=list)
 
     def _validate_instance_composable(
         self,
@@ -237,6 +250,66 @@ class BuilderGraph:
         self._edges.append(edge)
         return edge
 
+    def _validate_identifier_wiring_names(
+        self,
+        *,
+        surface: str,
+        source_instance: str,
+        inner_name: str,
+        target_instance: str,
+        outer_name: str,
+    ) -> None:
+        for name in (
+            source_instance,
+            inner_name,
+            target_instance,
+            outer_name,
+        ):
+            if not isinstance(name, str) or not name.isidentifier():
+                raise ValueError(
+                    format_astichi_error(
+                        "build",
+                        f"{surface} binding names must be valid Python "
+                        f"identifiers; got {name!r}",
+                        hint=(
+                            "use identifier tokens for source/target/inner/"
+                            f"outer names in `{surface}`"
+                        ),
+                    )
+                )
+
+    def _find_identifier_binding_for_source(
+        self,
+        *,
+        source_instance: str,
+        source_ref_path: RefPath,
+        inner_name: str,
+    ) -> IdentifierBinding | None:
+        for existing in self._identifier_bindings:
+            if (
+                existing.source_instance == source_instance
+                and existing.source_ref_path == source_ref_path
+                and existing.inner_name == inner_name
+            ):
+                return existing
+        return None
+
+    def _find_assign_for_source(
+        self,
+        *,
+        source_instance: str,
+        source_ref_path: RefPath,
+        inner_name: str,
+    ) -> AssignBinding | None:
+        for existing in self._assigns:
+            if (
+                existing.source_instance == source_instance
+                and existing.source_ref_path == source_ref_path
+                and existing.inner_name == inner_name
+            ):
+                return existing
+        return None
+
     def add_assign(self, binding: AssignBinding) -> AssignBinding:
         """Record an ``builder.assign`` cross-instance wiring.
 
@@ -247,41 +320,112 @@ class BuilderGraph:
         ``build_merge`` so the user may declare wirings against pieces
         that have not yet been registered.
         """
-        for name in (
-            binding.source_instance,
-            binding.inner_name,
-            binding.target_instance,
-            binding.outer_name,
-        ):
-            if not isinstance(name, str) or not name.isidentifier():
-                raise ValueError(
-                    format_astichi_error(
-                        "build",
-                        "assign binding names must be valid Python "
-                        f"identifiers; got {name!r}",
-                        hint="use identifier tokens for source/target/inner/outer names in `assign`",
-                    )
+        binding = AssignBinding(
+            source_instance=binding.source_instance,
+            inner_name=binding.inner_name,
+            target_instance=binding.target_instance,
+            outer_name=binding.outer_name,
+            source_ref_path=normalize_ref_path(binding.source_ref_path),
+            target_ref_path=normalize_ref_path(binding.target_ref_path),
+        )
+        self._validate_identifier_wiring_names(
+            surface="assign",
+            source_instance=binding.source_instance,
+            inner_name=binding.inner_name,
+            target_instance=binding.target_instance,
+            outer_name=binding.outer_name,
+        )
+        existing = self._find_assign_for_source(
+            source_instance=binding.source_instance,
+            source_ref_path=binding.source_ref_path,
+            inner_name=binding.inner_name,
+        )
+        if existing is not None:
+            if existing == binding:
+                return existing
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"conflicting assign for `{binding.source_instance}"
+                    f".{binding.inner_name}`: already bound to "
+                    f"`{existing.target_instance}.{existing.outer_name}`, "
+                    f"cannot rebind to `{binding.target_instance}"
+                    f".{binding.outer_name}`",
+                    hint="remove or reconcile duplicate `builder.assign` declarations",
                 )
-        for existing in self._assigns:
-            if (
-                existing.source_instance == binding.source_instance
-                and existing.source_ref_path == binding.source_ref_path
-                and existing.inner_name == binding.inner_name
-            ):
-                if existing == binding:
-                    return existing
-                raise ValueError(
-                    format_astichi_error(
-                        "build",
-                        f"conflicting assign for `{binding.source_instance}"
-                        f".{binding.inner_name}`: already bound to "
-                        f"`{existing.target_instance}.{existing.outer_name}`, "
-                        f"cannot rebind to `{binding.target_instance}"
-                        f".{binding.outer_name}`",
-                        hint="remove or reconcile duplicate `builder.assign` declarations",
-                    )
+            )
+        existing_binding = self._find_identifier_binding_for_source(
+            source_instance=binding.source_instance,
+            source_ref_path=binding.source_ref_path,
+            inner_name=binding.inner_name,
+        )
+        if existing_binding is not None:
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"conflicting identifier wiring for `{binding.source_instance}"
+                    f".{binding.inner_name}`: already bound with "
+                    "`builder.bind_identifier`, cannot also use `builder.assign`",
+                    hint="use exactly one explicit identifier wiring surface for each source demand",
                 )
+            )
         self._assigns.append(binding)
+        return binding
+
+    def add_identifier_binding(
+        self, binding: IdentifierBinding
+    ) -> IdentifierBinding:
+        """Record a direct scope-aware identifier binding."""
+        binding = IdentifierBinding(
+            source_instance=binding.source_instance,
+            inner_name=binding.inner_name,
+            target_instance=binding.target_instance,
+            outer_name=binding.outer_name,
+            source_ref_path=normalize_ref_path(binding.source_ref_path),
+            target_ref_path=normalize_ref_path(binding.target_ref_path),
+        )
+        self._validate_identifier_wiring_names(
+            surface="bind_identifier",
+            source_instance=binding.source_instance,
+            inner_name=binding.inner_name,
+            target_instance=binding.target_instance,
+            outer_name=binding.outer_name,
+        )
+        existing = self._find_identifier_binding_for_source(
+            source_instance=binding.source_instance,
+            source_ref_path=binding.source_ref_path,
+            inner_name=binding.inner_name,
+        )
+        if existing is not None:
+            if existing == binding:
+                return existing
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    "conflicting bind_identifier for "
+                    f"`{binding.source_instance}.{binding.inner_name}`: "
+                    f"already bound to `{existing.target_instance}."
+                    f"{existing.outer_name}`, cannot rebind to "
+                    f"`{binding.target_instance}.{binding.outer_name}`",
+                    hint="remove or reconcile duplicate `builder.bind_identifier` declarations",
+                )
+            )
+        existing_assign = self._find_assign_for_source(
+            source_instance=binding.source_instance,
+            source_ref_path=binding.source_ref_path,
+            inner_name=binding.inner_name,
+        )
+        if existing_assign is not None:
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    f"conflicting identifier wiring for `{binding.source_instance}"
+                    f".{binding.inner_name}`: already bound with "
+                    "`builder.assign`, cannot also use `builder.bind_identifier`",
+                    hint="use exactly one explicit identifier wiring surface for each source demand",
+                )
+            )
+        self._identifier_bindings.append(binding)
         return binding
 
     @property
@@ -301,3 +445,8 @@ class BuilderGraph:
     def assigns(self) -> tuple[AssignBinding, ...]:
         """Inspectable cross-instance identifier assignments."""
         return tuple(self._assigns)
+
+    @property
+    def identifier_bindings(self) -> tuple[IdentifierBinding, ...]:
+        """Inspectable direct identifier bindings."""
+        return tuple(self._identifier_bindings)

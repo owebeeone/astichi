@@ -71,7 +71,8 @@ The public builder handle supports both fluent chains and data-driven named
 calls such as `builder.add("Root", piece)`,
 `builder.instance("Root").target("body").add("Step")`, `builder.target(...)`,
 and `builder.assign(source_instance=..., inner_name=..., target_instance=...,
-outer_name=...)`.
+outer_name=...)`. Descriptor identifier demand/supply pairs can be bound with
+`builder.bind_identifier(...)`.
 
 ## Submodule: `astichi.emit`
 

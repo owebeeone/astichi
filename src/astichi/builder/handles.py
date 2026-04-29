@@ -11,6 +11,7 @@ from astichi.builder.graph import (
     AssignBinding,
     BuilderGraph,
     EdgeSourceOverlay,
+    IdentifierBinding,
     TargetRef,
     format_indexed_instance_name,
     instance_family_stem,
@@ -18,7 +19,12 @@ from astichi.builder.graph import (
 )
 from astichi.model import Composable
 from astichi.model.basic import BasicComposable, apply_source_overlay
-from astichi.model.descriptors import ComposableHole, TargetAddress
+from astichi.model.descriptors import (
+    ComposableHole,
+    IdentifierDemandDescriptor,
+    IdentifierSupplyDescriptor,
+    TargetAddress,
+)
 from astichi.path_resolution import (
     ShellIndex,
     collect_hole_names_in_body,
@@ -881,6 +887,254 @@ class AssignProxy:
         )
 
 
+@dataclass(frozen=True)
+class _BindIdentifierTargetHandle:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    source_ref_path: RefPath
+    inner_name: str
+    target_instance: str
+    target_ref_path: RefPath = ()
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_BindIdentifierTargetHandle":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        if not self.target_ref_path:
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    "bind_identifier target descendant paths may not start with index segments",
+                    hint="name the first shell segment before indexing (e.g. `to().Foo[0].bar`)",
+                )
+            )
+        candidate_ref = normalize_ref_path(self.target_ref_path + items)
+        shell_index = _registered_shell_index(self.graph, self.target_instance)
+        if shell_index is not None:
+            shell_index.resolve(candidate_ref).require(
+                instance_name=self.target_instance,
+                role="bind_identifier target path",
+            )
+        return _BindIdentifierTargetHandle(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+            target_instance=self.target_instance,
+            target_ref_path=candidate_ref,
+        )
+
+    def __getattr__(self, name: str) -> "_BindIdentifierTargetHandle | IdentifierBinding":
+        if name.startswith("_"):
+            raise AttributeError(name)
+        shell_index = _registered_shell_index(self.graph, self.target_instance)
+        candidate_ref = normalize_ref_path(self.target_ref_path + (name,))
+        if shell_index is not None:
+            resolution = shell_index.resolve(candidate_ref)
+            if resolution.is_resolved():
+                resolution.require(
+                    instance_name=self.target_instance,
+                    role="bind_identifier target path",
+                )
+                return _BindIdentifierTargetHandle(
+                    graph=self.graph,
+                    source_instance=self.source_instance,
+                    source_ref_path=self.source_ref_path,
+                    inner_name=self.inner_name,
+                    target_instance=self.target_instance,
+                    target_ref_path=candidate_ref,
+                )
+        _validate_registered_identifier_supplier(
+            graph=self.graph,
+            instance_name=self.target_instance,
+            ref_path=self.target_ref_path,
+            outer_name=name,
+        )
+        return self.graph.add_identifier_binding(
+            IdentifierBinding(
+                source_instance=self.source_instance,
+                inner_name=self.inner_name,
+                target_instance=self.target_instance,
+                outer_name=name,
+                source_ref_path=normalize_ref_path(self.source_ref_path),
+                target_ref_path=normalize_ref_path(self.target_ref_path),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class _BindIdentifierTargetPicker:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    source_ref_path: RefPath
+    inner_name: str
+
+    def __getattr__(self, target_instance: str) -> _BindIdentifierTargetHandle:
+        if target_instance.startswith("_"):
+            raise AttributeError(target_instance)
+        return _BindIdentifierTargetHandle(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+            target_instance=target_instance,
+        )
+
+
+@dataclass(frozen=True)
+class _BindIdentifierSourceReady:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    source_ref_path: RefPath
+    inner_name: str
+    leaf_path: tuple[int, ...] = ()
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_BindIdentifierSourceReady":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _BindIdentifierSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+            leaf_path=self.leaf_path + items,
+        )
+
+    def __getattr__(self, name: str) -> "_BindIdentifierSourceReady":
+        if name.startswith("_"):
+            raise AttributeError(name)
+        candidate_ref = _descend_registered_ref(
+            graph=self.graph,
+            instance_name=self.source_instance,
+            ref_path=self.source_ref_path,
+            leaf_name=self.inner_name,
+            leaf_path=self.leaf_path,
+            role="bind_identifier source path",
+        )
+        return _BindIdentifierSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=candidate_ref,
+            inner_name=name,
+        )
+
+    def to(self) -> _BindIdentifierTargetPicker:
+        _validate_registered_identifier_demand(
+            graph=self.graph,
+            instance_name=self.source_instance,
+            ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+        )
+        if self.leaf_path:
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    "bind_identifier paths may not end with index segments",
+                    hint="end the path on the identifier name, not `[i]`",
+                )
+            )
+        return _BindIdentifierTargetPicker(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=self.inner_name,
+        )
+
+
+@dataclass(frozen=True)
+class _BindIdentifierSourcePicker:
+    graph: BuilderGraph = field(compare=False, repr=False)
+    source_instance: str
+    source_ref_path: RefPath = ()
+    pending_leaf_path: tuple[int, ...] = ()
+
+    def __getitem__(self, key: int | tuple[int, ...]) -> "_BindIdentifierSourcePicker":
+        if isinstance(key, tuple):
+            items = key
+        else:
+            items = (key,)
+        if any(not isinstance(item, int) for item in items):
+            raise TypeError("target path indexes must be integers")
+        return _BindIdentifierSourcePicker(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            pending_leaf_path=self.pending_leaf_path + items,
+        )
+
+    def __getattr__(self, inner_name: str) -> _BindIdentifierSourceReady:
+        if inner_name.startswith("_"):
+            raise AttributeError(inner_name)
+        return _BindIdentifierSourceReady(
+            graph=self.graph,
+            source_instance=self.source_instance,
+            source_ref_path=self.source_ref_path,
+            inner_name=inner_name,
+            leaf_path=self.pending_leaf_path,
+        )
+
+
+@dataclass(frozen=True)
+class BindIdentifierProxy:
+    graph: BuilderGraph = field(compare=False, repr=False)
+
+    def __call__(
+        self,
+        *,
+        source_instance: str,
+        identifier: IdentifierDemandDescriptor,
+        target_instance: str,
+        to: IdentifierSupplyDescriptor,
+    ) -> IdentifierBinding:
+        if not isinstance(identifier, IdentifierDemandDescriptor):
+            raise TypeError("identifier must be an IdentifierDemandDescriptor")
+        if not isinstance(to, IdentifierSupplyDescriptor):
+            raise TypeError("to must be an IdentifierSupplyDescriptor")
+        if not isinstance(source_instance, str):
+            raise TypeError("bind_identifier source instance names must be strings")
+        if not isinstance(target_instance, str):
+            raise TypeError("bind_identifier target instance names must be strings")
+        source_ref_path = normalize_ref_path(identifier.ref_path)
+        target_ref_path = normalize_ref_path(to.ref_path)
+        _validate_registered_identifier_demand(
+            graph=self.graph,
+            instance_name=source_instance,
+            ref_path=source_ref_path,
+            inner_name=identifier.name,
+        )
+        _validate_registered_identifier_supplier(
+            graph=self.graph,
+            instance_name=target_instance,
+            ref_path=target_ref_path,
+            outer_name=to.name,
+        )
+        return self.graph.add_identifier_binding(
+            IdentifierBinding(
+                source_instance=source_instance,
+                inner_name=identifier.name,
+                target_instance=target_instance,
+                outer_name=to.name,
+                source_ref_path=source_ref_path,
+                target_ref_path=target_ref_path,
+            )
+        )
+
+    def __getattr__(self, source_instance: str) -> _BindIdentifierSourcePicker:
+        if source_instance.startswith("_"):
+            raise AttributeError(source_instance)
+        return _BindIdentifierSourcePicker(
+            graph=self.graph,
+            source_instance=source_instance,
+        )
+
+
 @dataclass
 class BuilderHandle:
     """Public builder handle layered over the raw builder graph."""
@@ -894,6 +1148,10 @@ class BuilderHandle:
     @property
     def assign(self) -> AssignProxy:
         return AssignProxy(graph=self.graph)
+
+    @property
+    def bind_identifier(self) -> BindIdentifierProxy:
+        return BindIdentifierProxy(graph=self.graph)
 
     def instance(
         self,

@@ -2,6 +2,5 @@
 
 result = []
 shared = 10
-__astichi_assign__inst__Pipeline__ref__Root__ref__Cell__name__shared = shared
-result.append(__astichi_assign__inst__Pipeline__ref__Root__ref__Cell__name__shared + 5)
+result.append(shared + 5)
 final = tuple(result)
