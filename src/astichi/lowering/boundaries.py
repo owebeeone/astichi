@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
+from astichi.asttools import AstichiScope, AstichiScopeMap, is_astichi_insert_shell
 from astichi.lowering.markers import RecognizedMarker
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
@@ -77,7 +78,7 @@ def _validate_nested(
     rule). Bare statement-form ``astichi_pass(...)`` is rejected in any
     nested statement body, regardless of scope type.
     """
-    if _is_insert_shell(node):
+    if is_astichi_insert_shell(node):
         assert isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
         )
@@ -114,7 +115,7 @@ def _flag_nested_boundaries(
                 "`astichi_import(name)` for declaration-style scope threading"
             )
             return
-    if _is_insert_shell(node):
+    if is_astichi_insert_shell(node):
         # Enter the shell as a fresh Astichi scope instead of treating
         # its contents as still inside `scope_label`.
         _validate_nested(node, scope_label, errors)
@@ -175,17 +176,6 @@ def _is_pass_call(call: ast.Call) -> bool:
         isinstance(call.func, ast.Name)
         and call.func.id == "astichi_pass"
     )
-
-
-def _is_insert_shell(node: ast.AST) -> bool:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return False
-    for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call):
-            continue
-        if isinstance(decorator.func, ast.Name) and decorator.func.id == "astichi_insert":
-            return True
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +259,8 @@ def group_markers_by_astichi_scope(
     contains its declaration site. Decorators and shell class/def names
     are visited in the **outer** scope (the scope that binds the name);
     only their bodies push a fresh scope. Expression-form
-    ``astichi_insert`` has no body and therefore never pushes a scope.
+    ``astichi_insert`` payloads are fresh Astichi scopes under the shared
+    `AstichiScopeMap`.
     """
     node_scope = _NodeScopeMap(tree)
     groups: dict[int, _ScopeMarkers] = {}
@@ -300,56 +291,16 @@ class _NodeScopeMap:
     """Per-node Astichi-scope lookup (built once per tree)."""
 
     def __init__(self, tree: ast.Module) -> None:
-        self.root = AstichiScopeKey(root_id=id(tree), label="module body")
-        self._by_id: dict[int, AstichiScopeKey] = {}
-        self._walk(tree, self.root)
+        self._scope_map = AstichiScopeMap.from_tree(tree)
+        self._keys_by_root_id: dict[int, AstichiScopeKey] = {}
+        self.root = self._key_for(self._scope_map.root)
 
     def scope_for(self, node: ast.AST) -> AstichiScopeKey:
-        return self._by_id.get(id(node), self.root)
+        return self._key_for(self._scope_map.scope_for(node))
 
-    def _walk(self, node: ast.AST, scope: AstichiScopeKey) -> None:
-        self._by_id[id(node)] = scope
-        if isinstance(node, ast.Module):
-            for child in node.body:
-                self._walk(child, scope)
-            return
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            # The def/class itself and its decorators live in the outer
-            # `scope`; its body (and its arguments, for defs) live in
-            # the inner scope when this is a shell.
-            for decorator in node.decorator_list:
-                self._walk(decorator, scope)
-            body_scope = scope
-            if _is_insert_shell(node):
-                body_scope = AstichiScopeKey(
-                    root_id=id(node), label=f"shell {node.name!r} body"
-                )
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._walk_arguments(node.args, body_scope)
-                if node.returns is not None:
-                    self._walk(node.returns, scope)
-            if isinstance(node, ast.ClassDef):
-                for base in node.bases:
-                    self._walk(base, scope)
-                for keyword in node.keywords:
-                    self._walk(keyword, scope)
-            for child in node.body:
-                self._walk(child, body_scope)
-            return
-        for child in ast.iter_child_nodes(node):
-            self._walk(child, scope)
-
-    def _walk_arguments(self, args: ast.arguments, scope: AstichiScopeKey) -> None:
-        for argument in (
-            list(args.posonlyargs)
-            + list(args.args)
-            + list(args.kwonlyargs)
-        ):
-            self._walk(argument, scope)
-        if args.vararg is not None:
-            self._walk(args.vararg, scope)
-        if args.kwarg is not None:
-            self._walk(args.kwarg, scope)
-        for default in args.defaults + args.kw_defaults:
-            if default is not None:
-                self._walk(default, scope)
+    def _key_for(self, scope: AstichiScope) -> AstichiScopeKey:
+        key = self._keys_by_root_id.get(scope.root_id)
+        if key is None:
+            key = AstichiScopeKey(root_id=scope.root_id, label=scope.label)
+            self._keys_by_root_id[scope.root_id] = key
+        return key

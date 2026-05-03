@@ -515,7 +515,9 @@ Current materialize behavior that is already in place:
 - bare statement-form `astichi_ref(...)` / `astichi_pass(...)` rejects at
   compile time; both are value-form surfaces in authored code
 - residual `astichi_keep`, `astichi_export`, and current
-  `astichi_definitional_name` markers are stripped
+  `astichi_definitional_name` markers are stripped; if stripping empties a
+  non-module Python suite, materialize leaves an explicit `pass` so emitted
+  source stays valid Python
 
 ### 5.4 Hygiene
 

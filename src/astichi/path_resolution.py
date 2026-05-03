@@ -5,6 +5,11 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from astichi.asttools import (
+    import_statement_binding_names,
+    is_astichi_insert_call,
+    is_astichi_insert_shell as _is_astichi_insert_shell,
+)
 from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.lowering.markers import (
     ARG_IDENTIFIER,
@@ -107,14 +112,7 @@ def is_astichi_insert_shell(
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> bool:
     """Whether ``node`` is decorated by ``astichi_insert(...)``."""
-    for decorator in node.decorator_list:
-        if (
-            isinstance(decorator, ast.Call)
-            and isinstance(decorator.func, ast.Name)
-            and decorator.func.id == "astichi_insert"
-        ):
-            return True
-    return False
+    return _is_astichi_insert_shell(node)
 
 
 def extract_block_insert_shell(
@@ -129,11 +127,7 @@ def extract_block_insert_shell(
     if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     for decorator in stmt.decorator_list:
-        if not isinstance(decorator, ast.Call):
-            continue
-        if not isinstance(decorator.func, ast.Name):
-            continue
-        if decorator.func.id != "astichi_insert":
+        if not is_astichi_insert_call(decorator):
             continue
         if len(decorator.args) != 1:
             continue
@@ -172,11 +166,7 @@ def extract_param_insert_shell(
     if not isinstance(stmt, ast.FunctionDef):
         return None
     for decorator in stmt.decorator_list:
-        if not isinstance(decorator, ast.Call):
-            continue
-        if not isinstance(decorator.func, ast.Name):
-            continue
-        if decorator.func.id != "astichi_insert":
+        if not is_astichi_insert_call(decorator):
             continue
         if len(decorator.args) != 1:
             continue
@@ -709,12 +699,10 @@ def collect_identifier_suppliers_in_body(body: list[ast.stmt]) -> frozenset[str]
             names.add(node.arg)
 
         def visit_Import(self, node: ast.Import) -> None:
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
+            names.update(import_statement_binding_names(node, include_star=True))
 
         def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
+            names.update(import_statement_binding_names(node, include_star=True))
 
     collector = _Collector()
     for statement in body:

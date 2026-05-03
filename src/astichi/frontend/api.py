@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable, Mapping
 
+from astichi.asttools import is_astichi_insert_call
 from astichi.frontend.source_kind import (
     AUTHORED_SOURCE,
     SourceKind,
@@ -154,11 +155,7 @@ def _validate_authored_marker_surface(
     if source_kind.allows_internal_insert_metadata():
         return
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != "astichi_insert":
+        if not is_astichi_insert_call(node):
             continue
         lineno = getattr(node, "lineno", "?")
         raise ValueError(

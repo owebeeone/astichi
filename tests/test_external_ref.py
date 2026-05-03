@@ -19,6 +19,10 @@ import ast
 import pytest
 
 import astichi
+from astichi.lowering import (
+    evaluate_restricted_path_expression,
+    extract_dotted_reference_chain,
+)
 
 
 def _materialized(source: str, **bindings: object) -> str:
@@ -26,6 +30,27 @@ def _materialized(source: str, **bindings: object) -> str:
     if bindings:
         compiled = compiled.bind(**bindings)
     return ast.unparse(compiled.materialize().tree)
+
+
+def test_reference_path_helpers_evaluate_without_lowering() -> None:
+    expr = ast.parse("f'{prefix}.field'", mode="eval").body
+    assert isinstance(expr, ast.JoinedStr)
+    expr.values[0] = ast.Constant(value="self")
+
+    assert evaluate_restricted_path_expression(expr) == ("self", "field")
+
+
+def test_extract_dotted_reference_chain_without_rewriting() -> None:
+    expr = ast.parse("pkg.mod.attr", mode="eval").body
+
+    assert extract_dotted_reference_chain(expr) == ("pkg", "mod", "attr")
+
+
+def test_extract_dotted_reference_chain_rejects_non_chain() -> None:
+    expr = ast.parse("pkg[0]", mode="eval").body
+
+    with pytest.raises(ValueError, match="dotted Name/Attribute"):
+        extract_dotted_reference_chain(expr)
 
 
 # ---------------------------------------------------------------------------

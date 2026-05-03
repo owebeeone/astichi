@@ -31,6 +31,8 @@ from astichi.lowering.external_bind import apply_external_bindings
 from astichi.lowering.external_ref import (
     apply_external_ref_lowering,
     desugar_external_ref_kwargs,
+    evaluate_restricted_path_expression,
+    extract_dotted_reference_chain,
     validate_external_ref_surface,
 )
 from astichi.lowering.marker_contexts import (
@@ -45,7 +47,11 @@ from astichi.lowering.markers import (
     MarkerSpec,
     PortTemplate,
     RecognizedMarker,
+    StatementPrefixScan,
+    marker_metadata_name_node_ids,
+    marker_metadata_name_nodes,
     recognize_markers,
+    scan_statement_prefix,
 )
 from astichi.lowering.parameters import (
     PARAMS_PAYLOAD_NAME,
@@ -78,12 +84,15 @@ __all__ = [
     "PortTemplate",
     "PositionalFuncArgItem",
     "RecognizedMarker",
+    "StatementPrefixScan",
     "StarredFuncArgItem",
     "STARRED_FUNC_ARG_REGION",
     "apply_external_bindings",
     "apply_external_ref_lowering",
     "collect_payload_local_directives",
     "desugar_external_ref_kwargs",
+    "evaluate_restricted_path_expression",
+    "extract_dotted_reference_chain",
     "direct_funcargs_directive_calls",
     "extract_funcargs_payload",
     "extract_params_payload_from_body",
@@ -92,6 +101,8 @@ __all__ = [
     "is_astichi_funcargs_call",
     "is_astichi_params_def",
     "lower_payload_for_region",
+    "marker_metadata_name_node_ids",
+    "marker_metadata_name_nodes",
     "param_hole_name",
     "recognize_markers",
     "register_explicit_keyword",
@@ -102,4 +113,5 @@ __all__ = [
     "validate_parameter_hole_surface",
     "validate_parameter_payload_surface",
     "validate_payload_for_region",
+    "scan_statement_prefix",
 ]

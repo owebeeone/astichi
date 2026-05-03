@@ -105,6 +105,31 @@ astichi_export(result)
     assert "result" in {port.name for port in materialized.supply_ports}
 
 
+def test_materialize_stripping_leaves_pass_in_marker_only_suites() -> None:
+    compiled = astichi.compile(
+        """
+def fn():
+    astichi_keep(value)
+
+
+class Box:
+    astichi_keep(value)
+
+
+if True:
+    astichi_keep(value)
+"""
+    )
+
+    materialized = compiled.materialize()
+    rendered = ast.unparse(materialized.tree)
+
+    assert "def fn():\n    pass" in rendered
+    assert "class Box:\n    pass" in rendered
+    assert "if True:\n    pass" in rendered
+    assert "astichi_keep" not in rendered
+
+
 def test_materialize_strips_keep_identifier_suffix_from_class_and_refs() -> None:
     # Issue 005 §4 / §5 step 4: the keep-identifier strip pass runs after
     # hygiene and rewrites every class/def binding and Load reference

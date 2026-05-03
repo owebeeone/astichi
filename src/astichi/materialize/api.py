@@ -8,6 +8,12 @@ import re
 from dataclasses import dataclass
 
 from astichi.ast_provenance import propagate_ast_source_locations
+from astichi.asttools import (
+    import_statement_binding_names,
+    is_astichi_insert_call,
+    is_astichi_insert_shell,
+    is_expression_insert_call as _is_expression_insert_call,
+)
 from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.builder.graph import (
     AdditiveEdge,
@@ -48,6 +54,7 @@ from astichi.lowering.markers import (
     call_name,
     is_call_to_marker,
     KEEP_IDENTIFIER,
+    scan_statement_prefix,
     set_boundary_explicit_bind_state,
     strip_identifier_suffix,
 )
@@ -76,7 +83,6 @@ from astichi.path_resolution import (
     extract_hole_name as _extract_hole_name,
     extract_param_insert_shell,
     format_instance_leaf,
-    is_astichi_insert_shell,
     promote_wrapped_root_ref_path,
     synthetic_root_scope_shell as _synthetic_root_scope_shell,
 )
@@ -1488,8 +1494,8 @@ def _lookup_parameter_supply_port(
     return matches[0]
 
 
-_BOUNDARY_EXPR_PREFIX_NAMES: frozenset[str] = frozenset(
-    marker.source_name
+_BOUNDARY_EXPR_PREFIX_SPECS = tuple(
+    marker
     for marker in ALL_MARKERS
     if marker.is_expression_prefix_directive()
 )
@@ -1505,16 +1511,11 @@ def _implicit_expression_supply_after_boundary_prefix(
     for expression targets without spelling ``astichi_insert(...)`` in source;
     merge synthesizes the insert wrapper from the edge target name.
     """
-    index = 0
-    while index < len(body):
-        stmt = body[index]
-        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
-            break
-        call = stmt.value
-        call_marker_name = call_name(call)
-        if call_marker_name not in _BOUNDARY_EXPR_PREFIX_NAMES:
-            break
-        index += 1
+    prefix = scan_statement_prefix(
+        body,
+        allowed_specs=_BOUNDARY_EXPR_PREFIX_SPECS,
+    )
+    index = prefix.first_non_prefix_index
     rest = body[index:]
     if len(rest) != 1:
         return None
@@ -1712,12 +1713,6 @@ def _contains_top_level_expression_insert(stmt: ast.stmt) -> bool:
     if not isinstance(stmt.value, ast.Call):
         return False
     return _is_expression_insert_call(stmt.value)
-
-
-def _is_expression_insert_call(node: ast.Call) -> bool:
-    if not isinstance(node.func, ast.Name):
-        return False
-    return node.func.id == "astichi_insert" and len(node.args) == 2
 
 
 def _insert_target_name(node: ast.Call) -> str | None:
@@ -2858,11 +2853,7 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
             if info is None or info.ref_path is None:
                 return
             for decorator in node.decorator_list:
-                if (
-                    isinstance(decorator, ast.Call)
-                    and isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "astichi_insert"
-                ):
+                if is_astichi_insert_call(decorator):
                     prefix_insert_ref(decorator, prefix, phase="materialize")
                     return
 
@@ -3265,6 +3256,7 @@ def _strip_residual_markers(tree: ast.AST) -> None:
     arg-unresolved gate rejects any residual `__astichi_arg__`.
     """
     _ResidualMarkerStripper().visit(tree)
+    ast.fix_missing_locations(tree)
 
 
 class _ResidualMarkerStripper(ast.NodeTransformer):
@@ -3280,6 +3272,7 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
     def generic_visit(self, node: ast.AST) -> ast.AST:
         for field, value in ast.iter_fields(node):
             if isinstance(value, list):
+                original_items = tuple(value)
                 new_items: list[object] = []
                 for item in value:
                     if isinstance(item, ast.AST):
@@ -3292,6 +3285,12 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
                         new_items.append(visited)
                     else:
                         new_items.append(item)
+                if (
+                    not new_items
+                    and _is_suite_statement_list(node, field)
+                    and any(isinstance(item, ast.stmt) for item in original_items)
+                ):
+                    new_items.append(_empty_suite_pass(node, original_items))
                 value[:] = new_items
             elif isinstance(value, ast.AST):
                 replaced = self.visit(value)
@@ -3325,6 +3324,38 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         if replacement is not None:
             return self.visit(replacement)
         return self.generic_visit(node)
+
+
+def _is_suite_statement_list(node: ast.AST, field: str) -> bool:
+    if isinstance(node, ast.Module):
+        return False
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return field == "body"
+    if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        return field in {"body", "orelse"}
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return field == "body"
+    try_star = getattr(ast, "TryStar", None)
+    try_nodes = (ast.Try,) if try_star is None else (ast.Try, try_star)
+    if isinstance(node, try_nodes):
+        return field in {"body", "orelse", "finalbody"}
+    if isinstance(node, ast.ExceptHandler):
+        return field == "body"
+    match_case = getattr(ast, "match_case", None)
+    if match_case is not None and isinstance(node, match_case):
+        return field == "body"
+    return False
+
+
+def _empty_suite_pass(
+    owner: ast.AST,
+    original_items: tuple[object, ...],
+) -> ast.Pass:
+    donor = next(
+        (item for item in original_items if isinstance(item, ast.AST)),
+        owner,
+    )
+    return ast.copy_location(ast.Pass(), donor)
 
 
 def _find_unresolved_arg_identifiers(
@@ -3466,12 +3497,10 @@ def _scope_runtime_suppliers(
                 names.add(node.id)
 
         def visit_Import(self, node: ast.Import) -> None:
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
+            names.update(import_statement_binding_names(node, include_star=True))
 
         def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
+            names.update(import_statement_binding_names(node, include_star=True))
 
     collector = _Collector()
     for statement in scope.body:
@@ -3686,15 +3715,9 @@ def _find_astichi_shell_nodes(
 ) -> list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
     shells: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            for decorator in node.decorator_list:
-                if (
-                    isinstance(decorator, ast.Call)
-                    and isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "astichi_insert"
-                ):
-                    shells.append(node)
-                    break
+        if is_astichi_insert_shell(node):
+            assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            shells.append(node)
     return shells
 
 

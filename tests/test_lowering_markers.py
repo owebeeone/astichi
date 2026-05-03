@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import ast
+
 import pytest
 
 import astichi
-from astichi.lowering import MARKERS_BY_NAME
+from astichi.lowering import (
+    MARKERS_BY_NAME,
+    marker_metadata_name_nodes,
+)
+from astichi.lowering.markers import (
+    EXPORT,
+    IMPORT,
+    KEEP,
+    scan_statement_prefix,
+)
 
 
 def test_marker_registry_exposes_behavior_objects_by_source_name() -> None:
@@ -14,6 +25,46 @@ def test_marker_registry_exposes_behavior_objects_by_source_name() -> None:
     insert = MARKERS_BY_NAME["astichi_insert"]
     assert insert.is_name_bearing() is True
     assert insert.is_decorator_only() is False
+
+
+def test_marker_metadata_name_nodes_reports_marker_owned_names() -> None:
+    compiled = astichi.compile(
+        """
+astichi_keep(pinned)
+
+@astichi_insert(target, ref=Root.Slot)
+def shell():
+    return 1
+""",
+        source_kind="astichi-emitted",
+    )
+
+    metadata_names = {
+        node.id for node in marker_metadata_name_nodes(compiled.markers)
+    }
+
+    assert {"astichi_keep", "pinned", "astichi_insert", "target", "Root"} <= (
+        metadata_names
+    )
+
+
+def test_scan_statement_prefix_stops_at_first_non_prefix_statement() -> None:
+    tree = ast.parse(
+        """
+astichi_import(value)
+astichi_keep(value)
+real_statement()
+astichi_export(value)
+"""
+    )
+
+    scan = scan_statement_prefix(
+        tree.body,
+        allowed_specs=(IMPORT, KEEP, EXPORT),
+    )
+
+    assert scan.first_non_prefix_index == 2
+    assert len(scan.prefix_statements) == 2
 
 
 def test_compile_recognizes_supported_call_markers() -> None:

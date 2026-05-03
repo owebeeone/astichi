@@ -6,6 +6,7 @@ import ast
 from typing import TypeAlias
 
 from astichi.ast_provenance import propagate_ast_source_locations
+from astichi.asttools import is_astichi_insert_call
 from astichi.diagnostics import format_astichi_error
 
 RefSegment: TypeAlias = str | int
@@ -200,11 +201,7 @@ def iter_insert_shell_ref_paths(tree: ast.AST) -> tuple[RefPath, ...]:
         ):
             continue
         for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            if not isinstance(decorator.func, ast.Name):
-                continue
-            if decorator.func.id != "astichi_insert":
+            if not is_astichi_insert_call(decorator):
                 continue
             ref = extract_insert_ref(decorator, phase="build")
             if ref is not None:

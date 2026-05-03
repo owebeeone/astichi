@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from astichi.asttools import is_astichi_insert_call
 from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
@@ -485,11 +486,7 @@ def _implicit_expression_after_boundary_prefix(
             expression = statement.value
             continue
         return None
-    if (
-        isinstance(expression, ast.Call)
-        and isinstance(expression.func, ast.Name)
-        and expression.func.id == "astichi_insert"
-    ):
+    if is_astichi_insert_call(expression):
         return None
     return expression
 

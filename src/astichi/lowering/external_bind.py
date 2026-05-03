@@ -7,6 +7,7 @@ import copy
 from contextlib import contextmanager
 from typing import Iterator
 
+from astichi.asttools import import_statement_binding_names
 from astichi.lowering.markers import BIND_EXTERNAL, is_call_to_marker, recognize_markers
 from astichi.model.external_values import value_to_ast
 
@@ -428,12 +429,10 @@ class _SameScopeBindingCollector(ast.NodeVisitor):
             self.visit(keyword)
 
     def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name.split(".")[0])
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name)
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
 
 def _collect_same_scope_bindings(body: list[ast.stmt]) -> frozenset[str]:

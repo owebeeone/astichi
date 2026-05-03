@@ -6,7 +6,13 @@ import ast
 from dataclasses import dataclass
 from itertools import count
 
-from astichi.lowering import RecognizedMarker
+from astichi.asttools import (
+    AstichiScopeMap,
+    has_astichi_insert_decorator,
+    import_statement_binding_names,
+    is_expression_insert_call,
+)
+from astichi.lowering import RecognizedMarker, marker_metadata_name_node_ids
 from astichi.model.basic import BasicComposable
 from astichi.model.semantics import SemanticSingleton
 
@@ -326,7 +332,7 @@ def assign_scope_identity(
     )
     fresh_scope_local_bindings: dict[int, frozenset[str]] = {}
     for node in effective_fresh_scope_nodes:
-        if isinstance(node, ast.Call) and _is_expression_insert(node):
+        if is_expression_insert_call(node):
             fresh_scope_local_bindings[id(node)] = _collect_expression_bindings(
                 node.args[1]
             )
@@ -544,38 +550,9 @@ def _collect_fresh_scope_trust_declarations(
     ]
     if not trust_markers:
         return {}
-    parent_scope_node: dict[int, ast.AST] = {}
-
-    def _enter(node: ast.AST, scope_node: ast.AST) -> None:
-        parent_scope_node[id(node)] = scope_node
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            child_scope = node if _has_insert_decorator(node.decorator_list) else scope_node
-            for decorator in node.decorator_list:
-                _enter(decorator, scope_node)
-            for child in node.body:
-                _enter(child, child_scope)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for argument in (
-                    list(node.args.posonlyargs)
-                    + list(node.args.args)
-                    + list(node.args.kwonlyargs)
-                ):
-                    _enter(argument, child_scope)
-            return
-        if isinstance(node, ast.Call) and _is_expression_insert(node):
-            _enter(node.func, scope_node)
-            _enter(node.args[0], scope_node)
-            _enter(node.args[1], node)
-            for keyword in node.keywords:
-                _enter(keyword, scope_node)
-            return
-        for child in ast.iter_child_nodes(node):
-            _enter(child, scope_node)
-
-    for child in tree.body:
-        _enter(child, tree)
+    scope_map = AstichiScopeMap.from_tree(tree)
     for marker in trust_markers:
-        scope_node = parent_scope_node.get(id(marker.node), tree)
+        scope_node = scope_map.scope_for(marker.node).root
         assert marker.name_id is not None
         declarations.setdefault(id(scope_node), set()).add(marker.name_id)
     return {
@@ -611,39 +588,9 @@ def _collect_fresh_scope_imports(
     ]
     if not import_markers:
         return {}
-    parent_scope_node: dict[int, ast.AST] = {}
-    stack: list[ast.AST] = [tree]
-
-    def _enter(node: ast.AST, scope_node: ast.AST) -> None:
-        parent_scope_node[id(node)] = scope_node
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            child_scope = node if _has_insert_decorator(node.decorator_list) else scope_node
-            for decorator in node.decorator_list:
-                _enter(decorator, scope_node)
-            for child in node.body:
-                _enter(child, child_scope)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for argument in (
-                    list(node.args.posonlyargs)
-                    + list(node.args.args)
-                    + list(node.args.kwonlyargs)
-                ):
-                    _enter(argument, child_scope)
-            return
-        if isinstance(node, ast.Call) and _is_expression_insert(node):
-            _enter(node.func, scope_node)
-            _enter(node.args[0], scope_node)
-            _enter(node.args[1], node)
-            for keyword in node.keywords:
-                _enter(keyword, scope_node)
-            return
-        for child in ast.iter_child_nodes(node):
-            _enter(child, scope_node)
-
-    for child in tree.body:
-        _enter(child, tree)
+    scope_map = AstichiScopeMap.from_tree(tree)
     for marker in import_markers:
-        scope_node = parent_scope_node.get(id(marker.node), tree)
+        scope_node = scope_map.scope_for(marker.node).root
         if scope_node is tree:
             continue
         assert marker.name_id is not None
@@ -664,25 +611,10 @@ def _raw_suffixed_name(node: ast.AST) -> str | None:
 
 
 def _ignored_name_nodes(markers: tuple[object, ...]) -> set[int]:
-    ignored: set[int] = set()
-    for marker in markers:
-        if not isinstance(marker, RecognizedMarker):
-            continue
-        if isinstance(marker.node, ast.Call):
-            if isinstance(marker.node.func, ast.Name):
-                ignored.add(id(marker.node.func))
-            if marker.spec.is_name_bearing():
-                first_arg = marker.node.args[0]
-                if isinstance(first_arg, ast.Name):
-                    ignored.add(id(first_arg))
-            if marker.source_name == "astichi_insert":
-                for keyword in marker.node.keywords:
-                    if keyword.arg != "ref":
-                        continue
-                    for child in ast.walk(keyword.value):
-                        if isinstance(child, ast.Name):
-                            ignored.add(id(child))
-    return ignored
+    recognized = tuple(
+        marker for marker in markers if isinstance(marker, RecognizedMarker)
+    )
+    return marker_metadata_name_node_ids(recognized)
 
 
 def _marker_fresh_scope_nodes(tree: ast.Module) -> tuple[ast.AST, ...]:
@@ -721,12 +653,10 @@ class _BindingCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name.split(".")[0])
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name)
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
 
 class _FreshScopeCollector(ast.NodeVisitor):
@@ -734,41 +664,24 @@ class _FreshScopeCollector(ast.NodeVisitor):
         self.nodes: list[ast.AST] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        if _has_insert_decorator(node.decorator_list):
+        if has_astichi_insert_decorator(node.decorator_list):
             self.nodes.append(node)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        if _has_insert_decorator(node.decorator_list):
+        if has_astichi_insert_decorator(node.decorator_list):
             self.nodes.append(node)
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        if _has_insert_decorator(node.decorator_list):
+        if has_astichi_insert_decorator(node.decorator_list):
             self.nodes.append(node)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        if _is_expression_insert(node):
+        if is_expression_insert_call(node):
             self.nodes.append(node)
         self.generic_visit(node)
-
-
-def _has_insert_decorator(decorators: list[ast.expr]) -> bool:
-    for decorator in decorators:
-        if not isinstance(decorator, ast.Call):
-            continue
-        if isinstance(decorator.func, ast.Name) and decorator.func.id == "astichi_insert":
-            return True
-    return False
-
-
-def _is_expression_insert(node: ast.Call) -> bool:
-    return (
-        isinstance(node.func, ast.Name)
-        and node.func.id == "astichi_insert"
-        and len(node.args) == 2
-    )
 
 
 def _collect_expression_bindings(node: ast.AST) -> frozenset[str]:
@@ -858,12 +771,10 @@ class _SingleScopeBindingCollector(ast.NodeVisitor):
             self.bindings.add(node.id)
 
     def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name.split(".")[0])
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        for alias in node.names:
-            self.bindings.add(alias.asname or alias.name)
+        self.bindings.update(import_statement_binding_names(node, include_star=True))
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.bindings.add(node.name)
@@ -1080,7 +991,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
     def _push_function_collision_domain_if_needed(self, node: ast.AST) -> bool:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return False
-        if _has_insert_decorator(node.decorator_list):
+        if has_astichi_insert_decorator(node.decorator_list):
             return False
         self.collision_domain_stack.append(next(self.collision_domain_counter))
         return True

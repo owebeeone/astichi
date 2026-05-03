@@ -211,8 +211,37 @@ def _extract_ref_segments(call: ast.Call) -> tuple[str, ...]:
             "after `external=` desugar (call apply_external_ref_lowering "
             "after compile() has run)"
         )
-    raw = _evaluate_path_expression(call.args[0])
-    return _validate_path_string(raw, lineno=getattr(call, "lineno", None))
+    return evaluate_restricted_path_expression(call.args[0])
+
+
+def evaluate_restricted_path_expression(node: ast.expr) -> tuple[str, ...]:
+    """Evaluate and validate a compile-time dotted reference path expression."""
+    raw = _evaluate_path_expression(node)
+    return _validate_path_string(raw, lineno=getattr(node, "lineno", None))
+
+
+def extract_dotted_reference_chain(node: ast.AST) -> tuple[str, ...]:
+    """Extract a dotted Name/Attribute chain without rewriting the AST.
+
+    Errors here are internal helper errors; user-facing validators should wrap
+    or rephrase them through the standard Astichi diagnostics path.
+    """
+    if isinstance(node, ast.Name):
+        if not node.id.isidentifier():
+            raise ValueError(
+                f"reference chain segment `{node.id}` is not a valid Python identifier"
+            )
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        if not node.attr.isidentifier():
+            raise ValueError(
+                f"reference chain segment `{node.attr}` is not a valid Python identifier"
+            )
+        return extract_dotted_reference_chain(node.value) + (node.attr,)
+    raise ValueError(
+        "reference chain must be a dotted Name/Attribute expression; got "
+        f"{type(node).__name__}"
+    )
 
 
 def _lower_ref_base_expr(node: ast.AST) -> ast.expr:

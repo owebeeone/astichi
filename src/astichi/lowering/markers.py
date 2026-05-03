@@ -6,6 +6,7 @@ import ast
 import re
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 
 from astichi.asttools import (
@@ -198,6 +199,18 @@ class MarkerSpec(ABC):
     def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
         """Return the supply-port contribution for a recognised occurrence."""
         return None
+
+    def metadata_name_nodes(self, marker: "RecognizedMarker") -> tuple[ast.Name, ...]:
+        """Return marker-owned name nodes that are not runtime loads."""
+        node = marker.node
+        if not isinstance(node, ast.Call):
+            return ()
+        if not self.is_name_bearing() or not node.args:
+            return ()
+        first_arg = node.args[0]
+        if isinstance(first_arg, ast.Name):
+            return (first_arg,)
+        return ()
 
     @abstractmethod
     def validate_node(self, node: ast.AST) -> None:
@@ -819,6 +832,74 @@ class RecognizedMarker:
             if suffix_marker is not None:
                 return base
         return None
+
+
+@dataclass(frozen=True)
+class StatementPrefixScan:
+    """Direct statement-form marker prefix scan result."""
+
+    body: tuple[ast.stmt, ...]
+    prefix_statements: tuple[ast.Expr, ...]
+    first_non_prefix_index: int
+
+
+def marker_metadata_name_nodes(
+    markers: Iterable[RecognizedMarker],
+) -> tuple[ast.Name, ...]:
+    """Return marker-owned name nodes that should not count as runtime loads."""
+    nodes: list[ast.Name] = []
+    for marker in markers:
+        if isinstance(marker.node, ast.Call):
+            if isinstance(marker.node.func, ast.Name):
+                nodes.append(marker.node.func)
+            nodes.extend(marker.spec.metadata_name_nodes(marker))
+            if marker.source_name == "astichi_insert":
+                for keyword in marker.node.keywords:
+                    if keyword.arg != "ref":
+                        continue
+                    for child in ast.walk(keyword.value):
+                        if isinstance(child, ast.Name):
+                            nodes.append(child)
+    return tuple(nodes)
+
+
+def marker_metadata_name_node_ids(
+    markers: Iterable[RecognizedMarker],
+) -> set[int]:
+    """Return id-set form for callers that compare AST nodes by identity."""
+    return {id(node) for node in marker_metadata_name_nodes(markers)}
+
+
+def scan_statement_prefix(
+    body: Sequence[ast.stmt],
+    *,
+    allowed_specs: Container[MarkerSpec],
+) -> StatementPrefixScan:
+    """Scan direct statement-form marker calls at the start of a body.
+
+    This is a classifier, not marker recognition: it matches direct calls by
+    registered marker singleton identity and does not re-validate call shape.
+    """
+    prefix: list[ast.Expr] = []
+    allowed_ids = {id(spec) for spec in allowed_specs}
+    index = 0
+    while index < len(body):
+        statement = body[index]
+        if not isinstance(statement, ast.Expr):
+            break
+        value = statement.value
+        if not isinstance(value, ast.Call):
+            break
+        marker = _marker_from_call(value)
+        if marker is None or id(marker) not in allowed_ids:
+            break
+        prefix.append(statement)
+        index += 1
+    return StatementPrefixScan(
+        body=tuple(body),
+        prefix_statements=tuple(prefix),
+        first_non_prefix_index=index,
+    )
 
 
 def _marker_from_call(node: ast.Call) -> MarkerSpec | None:
