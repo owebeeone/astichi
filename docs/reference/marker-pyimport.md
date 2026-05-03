@@ -194,6 +194,11 @@ The following shapes are rejected:
 Ordinary Python import statements still work as normal Python source, but they
 are not managed by Astichi and do not participate in pyimport synthesis.
 
+Reference snippets:
+
+- [pyimport/from_import](snippets/pyimport/from_import.py)
+- [pyimport/dynamic_module_ref](snippets/pyimport/dynamic_module_ref.py)
+
 ## See also
 
 - [marker-ref.md](marker-ref.md)
