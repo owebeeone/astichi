@@ -49,6 +49,9 @@ work.
   - Staged composition and child-scope `astichi_import(..., outer_bind=True)` /
     `astichi_pass(..., outer_bind=True)` reading an enclosing pyimport local are
     covered.
+  - Multi-stage, multi-hole pyimport composition is covered: imports from
+    distinct modules alias colliding locals, while repeated imports of the same
+    module symbol share one synthesized alias.
   - Public reference documentation now covers pyimport surface, placement,
     hygiene, materialize-time synthesis, and V1 rejections.
   - Expression-snippet pyimport prefix carriers, automatic descriptor supplies,
@@ -84,7 +87,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-03:
-  - full suite: `596 passed`
+  - full suite: `597 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:

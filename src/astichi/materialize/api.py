@@ -43,7 +43,6 @@ from astichi.lowering import (
     is_astichi_funcargs_call,
     lower_payload_for_region,
     param_hole_name,
-    pyimport_local_bindings,
     register_explicit_keyword,
     recognize_markers,
     validate_payload_for_region,
@@ -2748,11 +2747,17 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     managed_imports = collect_managed_imports(markers)
     pyimport_synthetic_bindings = tuple(
         SyntheticBindingOccurrence(
-            raw_name=binding.node.id,
-            declaration_node=binding.marker.node,
-            node=binding.node,
+            raw_name=record.local_node.id,
+            declaration_node=record.marker.node,
+            node=record.local_node,
+            collision_domain=0,
+            identity_key=(
+                "astichi_pyimport",
+                record.module_path,
+                record.original_symbol,
+            ),
         )
-        for binding in pyimport_local_bindings(markers)
+        for record in managed_imports
     )
     # Hygiene pinning is only meaningful for names that actually sit
     # at a hygiene-relevant position in the tree — `ast.Name`,

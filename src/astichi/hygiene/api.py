@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Hashable
 from dataclasses import dataclass
 from itertools import count
 
@@ -166,6 +167,8 @@ class SyntheticBindingOccurrence:
     raw_name: str
     declaration_node: ast.AST
     node: ast.AST
+    collision_domain: int | None = None
+    identity_key: Hashable | None = None
 
 
 @dataclass(frozen=True)
@@ -842,7 +845,9 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
         self.collision_domain_stack: list[int] = [0]
         self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
-        self.astichi_scope_synthetic_bindings_stack: list[set[str]] = [set()]
+        self.astichi_scope_synthetic_bindings_stack: list[dict[str, ScopeId]] = [
+            {}
+        ]
         self.astichi_scope_imports_stack: list[frozenset[str]] = []
         # Module scope (serial 1) carries its own trust declarations
         # at the base of the stack; fresh scopes push their own.
@@ -864,6 +869,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.synthetic_bindings_by_declaration_id: dict[
             int, tuple[SyntheticBindingOccurrence, ...]
         ] = {}
+        self.synthetic_scope_ids_by_key: dict[Hashable, ScopeId] = {}
         for binding in synthetic_bindings:
             self.synthetic_bindings_by_declaration_id.setdefault(
                 id(binding.declaration_node), ()
@@ -899,6 +905,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         if id(node) in self.ignored_name_nodes:
             return
         imported = self._current_imported_names()
+        collision_domain = self._current_collision_domain()
         if node.id in imported:
             # Issue 006 6c (inheritance / trust model): an import is an
             # alias-through to an enclosing Astichi scope's binding.
@@ -925,13 +932,27 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 role = INTERNAL_LEXICAL_ROLE
                 scope_id = self._import_origin_scope(node.id)
         elif isinstance(node.ctx, ast.Load):
-            role = self._load_role(node.id)
-            binding_kind = REFERENCE_OCCURRENCE
-            scope_id = (
-                self._outer_scope()
-                if role.uses_outer_scope()
-                else self._current_scope()
-            )
+            synthetic_scope = self._current_synthetic_binding_scope(node.id)
+            if (
+                synthetic_scope is not None
+                and node.id not in self._current_python_bindings()
+                and node.id not in self._current_python_parameters()
+            ):
+                # Managed imports are emitted at module head, so references to a
+                # marker-owned import binding must collide in the module import
+                # domain even when they appear inside nested function bodies.
+                role = INTERNAL_LEXICAL_ROLE
+                binding_kind = REFERENCE_OCCURRENCE
+                scope_id = synthetic_scope
+                collision_domain = 0
+            else:
+                role = self._load_role(node.id)
+                binding_kind = REFERENCE_OCCURRENCE
+                scope_id = (
+                    self._outer_scope()
+                    if role.uses_outer_scope()
+                    else self._current_scope()
+                )
         else:
             # Issue 006 6c: a Store is `preserved` only when the
             # *current* Astichi scope explicitly declares trust on the
@@ -951,7 +972,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             LexicalOccurrence(
                 raw_name=node.id,
                 scope_id=scope_id,
-                collision_domain=self._current_collision_domain(),
+                collision_domain=collision_domain,
                 role=role,
                 binding_kind=binding_kind,
                 ordinal=next(self.ordinal_counter),
@@ -961,7 +982,10 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         for binding in self.synthetic_bindings_by_declaration_id.get(id(node), ()):
-            self.astichi_scope_synthetic_bindings_stack[-1].add(binding.raw_name)
+            scope_id = self._synthetic_binding_scope(binding)
+            self.astichi_scope_synthetic_bindings_stack[-1][binding.raw_name] = (
+                scope_id
+            )
             role: LexicalRole = (
                 PRESERVED_LEXICAL_ROLE
                 if binding.raw_name in self._current_trust_declarations()
@@ -970,8 +994,12 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             self.occurrences.append(
                 LexicalOccurrence(
                     raw_name=binding.raw_name,
-                    scope_id=self._current_scope(),
-                    collision_domain=self._current_collision_domain(),
+                    scope_id=scope_id,
+                    collision_domain=(
+                        binding.collision_domain
+                        if binding.collision_domain is not None
+                        else self._current_collision_domain()
+                    ),
                     role=role,
                     binding_kind=BINDING_OCCURRENCE,
                     ordinal=next(self.ordinal_counter),
@@ -1042,7 +1070,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.scope_stack.append(ScopeId(next(self.scope_counter)))
         local = self.fresh_scope_local_bindings.get(id(node))
         self.astichi_scope_bindings_stack.append(local)
-        self.astichi_scope_synthetic_bindings_stack.append(set())
+        self.astichi_scope_synthetic_bindings_stack.append({})
         imported = self.fresh_scope_imported_names.get(id(node), frozenset())
         self.astichi_scope_imports_stack.append(imported)
         trusts = self.fresh_scope_trust_declarations.get(id(node), frozenset())
@@ -1082,6 +1110,11 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         if cached is not None:
             return cached
 
+        synthetic_scope = self._ancestor_synthetic_binding_scope(raw_name)
+        if synthetic_scope is not None:
+            self.import_origin_scope_cache[cache_key] = synthetic_scope
+            return synthetic_scope
+
         scope_index = len(self.scope_stack) - 1
         while scope_index > 1:
             parent_index = scope_index - 1
@@ -1115,7 +1148,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         return self.python_scope_owner_stack[-1]
 
     def _current_astichi_bindings(self) -> frozenset[str] | None:
-        synthetic = frozenset(self.astichi_scope_synthetic_bindings_stack[-1])
+        synthetic = self._current_synthetic_bindings()
         if self.astichi_scope_bindings_stack:
             local = self.astichi_scope_bindings_stack[-1]
             if local is not None:
@@ -1123,6 +1156,30 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         if synthetic:
             return synthetic
         return None
+
+    def _current_synthetic_bindings(self) -> frozenset[str]:
+        return frozenset(self.astichi_scope_synthetic_bindings_stack[-1])
+
+    def _current_synthetic_binding_scope(self, raw_name: str) -> ScopeId | None:
+        return self.astichi_scope_synthetic_bindings_stack[-1].get(raw_name)
+
+    def _ancestor_synthetic_binding_scope(self, raw_name: str) -> ScopeId | None:
+        for bindings in reversed(self.astichi_scope_synthetic_bindings_stack[:-1]):
+            scope_id = bindings.get(raw_name)
+            if scope_id is not None:
+                return scope_id
+        return None
+
+    def _synthetic_binding_scope(
+        self, binding: SyntheticBindingOccurrence
+    ) -> ScopeId:
+        if binding.identity_key is None:
+            return self._current_scope()
+        scope_id = self.synthetic_scope_ids_by_key.get(binding.identity_key)
+        if scope_id is None:
+            scope_id = ScopeId(next(self.scope_counter))
+            self.synthetic_scope_ids_by_key[binding.identity_key] = scope_id
+        return scope_id
 
     def _current_imported_names(self) -> frozenset[str]:
         if not self.astichi_scope_imports_stack:
