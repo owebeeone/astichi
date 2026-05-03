@@ -146,12 +146,18 @@ Recommended approach:
 
 1. Use the existing helpers to convert an AST expression into a dotted
    reference path without lowering it into a value expression.
-2. Reuse `evaluate_restricted_path_expression(...)` for
-   `module=astichi_ref(...)`.
-3. Reuse `extract_dotted_reference_chain(...)` for:
+2. Validate the authored `module=` surface before external-ref lowering, but do
+   not add a pyimport-specific `astichi_ref(...)` lowering path.
+3. After `apply_external_ref_lowering(...)`, consume the resulting ordinary
+   dotted `ast.Name` / `ast.Attribute` chain with
+   `extract_dotted_reference_chain(...)`.
+4. Reuse `extract_dotted_reference_chain(...)` for:
    - `ast.Name("foo")`
    - nested `ast.Attribute(..., attr="bar")`
-4. Reject anything else.
+5. Use `evaluate_restricted_path_expression(...)` only for direct
+   compile-time string/path expressions that have not gone through
+   `astichi_ref(...)` lowering.
+6. Reject anything else.
 
 Additional decisions:
 
@@ -899,14 +905,16 @@ Tasks:
 
 1. Add marker spec.
 2. Add parsed declaration model.
-3. Validate marker surfaces:
-   - non-empty tuple `names=`
-   - no duplicate `names=`
-   - no alias dicts in v1
-   - no dotted plain imports without `as_=`
-   - no managed `__future__`
-   - no wildcard or relative imports
-   - no pyimport inside `astichi_for(...)`
+3. Implement the full locked v1 validation list from §2.1:
+   - exact `names=` shape, element shape, and duplicate-name rejection
+   - `as_=` shape validation
+   - alias-dict rejection
+   - dotted plain import without `as_=` rejection
+   - managed `__future__`, wildcard, and relative import rejection
+   - `astichi_for(...)` body rejection
+   - top-of-Astichi-scope prefix placement and prefix interleaving
+   - function/class owner-scope allowance and nested real function/class body
+     rejection
 4. Add rejection tests only.
 
 Do not:
@@ -956,11 +964,14 @@ Tasks:
 
 1. Reuse `scan_statement_prefix(...)`; do not add another expression-prefix
    scanner.
-2. Extend expression insert metadata with pyimport carrier.
-3. Ensure `source_kind="astichi-emitted"` accepts the internal carrier.
-4. Ensure `source_kind="authored"` rejects the internal carrier.
-5. Strip the carrier before final materialized output.
-6. Let the golden harness validate recompile/materialize.
+2. Audit the remaining model/basic expression-production prefix path
+   (`_implicit_expression_after_boundary_prefix(...)`) and either migrate it to
+   the shared scanner or document why it must remain a string-name classifier.
+3. Extend expression insert metadata with pyimport carrier.
+4. Ensure `source_kind="astichi-emitted"` accepts the internal carrier.
+5. Ensure `source_kind="authored"` rejects the internal carrier.
+6. Strip the carrier before final materialized output.
+7. Let the golden harness validate recompile/materialize.
 
 ### Phase F: Deferred Descriptor Supplies And Cross-Scope Wiring
 
