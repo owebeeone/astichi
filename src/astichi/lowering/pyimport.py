@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from astichi.asttools import AstichiScope, AstichiScopeMap
@@ -91,28 +92,6 @@ def validate_pyimport_declarations(
             )
         )
     return tuple(declarations)
-
-
-def materialize_rejects_pyimport(
-    markers: tuple[RecognizedMarker, ...],
-) -> None:
-    """Phase-1 gate: pyimport is recognized but not materialized yet."""
-    pyimports = [marker for marker in markers if marker.spec is PYIMPORT]
-    if not pyimports:
-        return
-    parts = [
-        f"astichi_pyimport(...) at line {getattr(marker.node, 'lineno', 0) or 0}"
-        for marker in pyimports
-    ]
-    raise ValueError(
-        format_astichi_error(
-            "materialize",
-            "astichi_pyimport declarations are recognized but import emission "
-            "is not implemented in this phase",
-            context="; ".join(parts),
-            hint="complete the pyimport materialization phase before materializing managed imports",
-        )
-    )
 
 
 def pyimport_local_bindings(
@@ -286,7 +265,7 @@ def _validate_marker_placement(
         )
         return
     scope = scope_map.scope_for(marker.node)
-    body = _scope_body(tree, scope)
+    body = _scope_prefix_body(tree, scope)
     if body is None:
         errors.append(
             f"astichi_pyimport(...) at line {lineno} is not valid in expression "
@@ -302,10 +281,33 @@ def _validate_marker_placement(
         )
 
 
-def _scope_body(tree: ast.Module, scope: AstichiScope) -> list[ast.stmt] | None:
+def _scope_prefix_body(
+    tree: ast.Module, scope: AstichiScope
+) -> Sequence[ast.stmt] | None:
     if scope.root is tree:
-        return tree.body
+        index = 0
+        if tree.body and _is_module_docstring(tree.body[0]):
+            index = 1
+        while index < len(tree.body) and _is_future_import(tree.body[index]):
+            index += 1
+        return tree.body[index:]
     root = scope.root
     if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return root.body
     return None
+
+
+def _is_module_docstring(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    )
+
+
+def _is_future_import(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.ImportFrom)
+        and statement.module == "__future__"
+        and statement.level == 0
+    )

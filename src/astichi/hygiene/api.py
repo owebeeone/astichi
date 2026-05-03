@@ -842,6 +842,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.scope_stack: list[ScopeId] = [ScopeId(0), ScopeId(1)]
         self.collision_domain_stack: list[int] = [0]
         self.astichi_scope_bindings_stack: list[frozenset[str] | None] = []
+        self.astichi_scope_synthetic_bindings_stack: list[set[str]] = [set()]
         self.astichi_scope_imports_stack: list[frozenset[str]] = []
         # Module scope (serial 1) carries its own trust declarations
         # at the base of the stack; fresh scopes push their own.
@@ -960,6 +961,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         for binding in self.synthetic_bindings_by_declaration_id.get(id(node), ()):
+            self.astichi_scope_synthetic_bindings_stack[-1].add(binding.raw_name)
             role: LexicalRole = (
                 PRESERVED_LEXICAL_ROLE
                 if binding.raw_name in self._current_trust_declarations()
@@ -1012,6 +1014,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             if pushed_fresh:
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
+                self.astichi_scope_synthetic_bindings_stack.pop()
                 self.astichi_scope_imports_stack.pop()
                 self.astichi_scope_trusts_stack.pop()
             self.python_scope_stack.pop()
@@ -1029,6 +1032,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             if pushed_fresh:
                 self.scope_stack.pop()
                 self.astichi_scope_bindings_stack.pop()
+                self.astichi_scope_synthetic_bindings_stack.pop()
                 self.astichi_scope_imports_stack.pop()
                 self.astichi_scope_trusts_stack.pop()
 
@@ -1038,6 +1042,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.scope_stack.append(ScopeId(next(self.scope_counter)))
         local = self.fresh_scope_local_bindings.get(id(node))
         self.astichi_scope_bindings_stack.append(local)
+        self.astichi_scope_synthetic_bindings_stack.append(set())
         imported = self.fresh_scope_imported_names.get(id(node), frozenset())
         self.astichi_scope_imports_stack.append(imported)
         trusts = self.fresh_scope_trust_declarations.get(id(node), frozenset())
@@ -1110,9 +1115,13 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         return self.python_scope_owner_stack[-1]
 
     def _current_astichi_bindings(self) -> frozenset[str] | None:
-        for local in reversed(self.astichi_scope_bindings_stack):
+        synthetic = frozenset(self.astichi_scope_synthetic_bindings_stack[-1])
+        if self.astichi_scope_bindings_stack:
+            local = self.astichi_scope_bindings_stack[-1]
             if local is not None:
-                return local
+                return local | synthetic
+        if synthetic:
+            return synthetic
         return None
 
     def _current_imported_names(self) -> frozenset[str]:

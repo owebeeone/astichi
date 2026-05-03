@@ -42,7 +42,6 @@ from astichi.lowering import (
     has_params_payload,
     is_astichi_funcargs_call,
     lower_payload_for_region,
-    materialize_rejects_pyimport,
     param_hole_name,
     pyimport_local_bindings,
     register_explicit_keyword,
@@ -68,6 +67,11 @@ from astichi.lowering.markers import (
 from astichi.lowering.external_ref import apply_external_ref_lowering
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.lowering.unroll import iter_target_name, unroll_tree
+from astichi.materialize.pyimport import (
+    collect_managed_imports,
+    has_pyimport_marker,
+    insert_managed_imports,
+)
 from astichi.model.basic import BasicComposable, apply_source_overlay
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
@@ -2741,6 +2745,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
     apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
+    managed_imports = collect_managed_imports(markers)
     pyimport_synthetic_bindings = tuple(
         SyntheticBindingOccurrence(
             raw_name=binding.node.id,
@@ -2804,10 +2809,10 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         synthetic_bindings=pyimport_synthetic_bindings,
     )
     rename_scope_collisions(analysis)
-    materialize_rejects_pyimport(markers)
     payload_local_directives = collect_payload_local_directives(tree)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
+    insert_managed_imports(tree, managed_imports)
 
     pre_strip_markers = (
         recognize_markers(tree)
@@ -2830,6 +2835,8 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     _assert_no_arg_suffix_remains(tree)
 
     markers = recognize_markers(tree)
+    if has_pyimport_marker(markers):
+        raise AssertionError("astichi_pyimport marker survived materialize")
     post_strip = BasicComposable(
         tree=tree,
         origin=composable.origin,
@@ -3200,6 +3207,7 @@ _RESIDUAL_MARKER_NAMES: frozenset[str] = frozenset(
 # a bare statement. `astichi_pass(name)` is the value-form surface and is
 # lowered to the wrapped identifier only in expression positions.
 _BOUNDARY_DECLARATION_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import"})
+_PYIMPORT_DECLARATION_MARKER_NAMES: frozenset[str] = frozenset({"astichi_pyimport"})
 
 
 def _residual_marker_inner(node: ast.AST) -> ast.expr | None:
@@ -3221,6 +3229,14 @@ def _is_boundary_declaration_marker(node: ast.AST) -> bool:
     if not isinstance(node.func, ast.Name):
         return False
     return node.func.id in _BOUNDARY_DECLARATION_MARKER_NAMES
+
+
+def _is_pyimport_declaration_marker(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Name):
+        return False
+    return node.func.id in _PYIMPORT_DECLARATION_MARKER_NAMES
 
 
 def _is_pass_call(node: ast.Call) -> bool:
@@ -3324,6 +3340,8 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
             # Import declarations are compile-time-only; port records
             # and hygiene-scope classification already consumed them
             # upstream.
+            return None
+        if _is_pyimport_declaration_marker(node.value):
             return None
         return self.generic_visit(node)
 

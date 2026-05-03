@@ -65,7 +65,6 @@ from astichi.lowering.parameters import (
 from astichi.lowering.pyimport import (
     PyImportDeclaration,
     PyImportLocalBinding,
-    materialize_rejects_pyimport,
     pyimport_local_bindings,
     validate_pyimport_declarations,
 )
@@ -124,6 +123,5 @@ __all__ = [
     "validate_parameter_payload_surface",
     "validate_pyimport_declarations",
     "validate_payload_for_region",
-    "materialize_rejects_pyimport",
     "scan_statement_prefix",
 ]

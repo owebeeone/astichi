@@ -36,13 +36,16 @@ work.
     parameter binding.
 - Managed Python import support is in roll-build:
   - Phase 1 is implemented: `astichi_pyimport(...)` is a recognized marker,
-    compile-time validation rejects invalid V1 shapes and placement, and
-    `materialize()` rejects recognized pyimport declarations until import
-    binding/emission phases land.
+    compile-time validation rejects invalid V1 shapes and placement.
   - Phase 2 hygiene binding integration is implemented: pyimport locals count
     as local bindings for name analysis, and marker-owned local name nodes act
     as hygiene rename sinks.
-  - No final import synthesis behavior is implemented yet.
+  - Phase 3 import synthesis is implemented for V1 block-scope forms: final
+    materialize removes pyimport marker statements and emits ordinary Python
+    imports at module head, after a module docstring and ordinary
+    `from __future__ import ...` statements.
+  - Expression-snippet pyimport prefix carriers, automatic descriptor supplies,
+    import-position `__astichi_arg__`, and alias-dict imports remain deferred.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -74,7 +77,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-03:
-  - full suite: `584 passed`
+  - full suite: `592 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
