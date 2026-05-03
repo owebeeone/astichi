@@ -46,6 +46,9 @@ work.
     `from __future__ import ...` statements.
   - Direct dotted module paths and externally bound dynamic module paths through
     `module=astichi_ref(external=...)` are covered by goldens.
+  - Staged composition and child-scope `astichi_import(..., outer_bind=True)` /
+    `astichi_pass(..., outer_bind=True)` reading an enclosing pyimport local are
+    covered.
   - Expression-snippet pyimport prefix carriers, automatic descriptor supplies,
     import-position `__astichi_arg__`, and alias-dict imports remain deferred.
 - Implemented V2 work:
@@ -79,7 +82,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-03:
-  - full suite: `594 passed`
+  - full suite: `596 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:

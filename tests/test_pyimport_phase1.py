@@ -142,6 +142,32 @@ value: a
     )
 
 
+def test_child_boundary_markers_can_read_parent_pyimport() -> None:
+    compiled = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(tool,))
+astichi_hole(import_body)
+astichi_hole(pass_body)
+
+@astichi_insert(import_body)
+def import_child():
+    astichi_import(tool, outer_bind=True)
+    via_import = tool()
+
+@astichi_insert(pass_body)
+def pass_child():
+    via_pass = astichi_pass(tool, outer_bind=True)()
+""",
+        source_kind="astichi-emitted",
+    )
+
+    assert compiled.materialize().emit(provenance=False) == (
+        "from foo import tool\n"
+        "via_import = tool()\n"
+        "via_pass = tool()\n"
+    )
+
+
 def test_pyimport_prefix_interleaves_before_astichi_import() -> None:
     compiled = astichi.compile(
         """
