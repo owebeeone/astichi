@@ -2,6 +2,13 @@
 
 Status: pre-implementation analysis.
 
+Refactor-prep status:
+
+- The existing-code prep from `AstichiImportRefactorPrep.md` has been
+  completed before pyimport-specific production work.
+- Pyimport implementation phases should use the shared helpers named in this
+  document rather than adding new local walkers or binding collectors.
+
 Primary design docs:
 
 - [`AstichiImportProposal.md`](AstichiImportProposal.md)
@@ -131,14 +138,17 @@ Current shape:
   compile-time expression to a dotted identifier path.
 - direct dotted source like `package.submodule` is ordinary `ast.Attribute`
   / `ast.Name` AST, not currently a reusable module-path model.
+- `src/astichi/lowering/external_ref.py` now exposes reusable internal helpers:
+  - `evaluate_restricted_path_expression(node) -> tuple[str, ...]`
+  - `extract_dotted_reference_chain(node) -> tuple[str, ...]`
 
 Recommended approach:
 
-1. Extract or expose a small helper that converts an AST expression into a
-   dotted reference path without lowering it into a value expression.
-2. Reuse the existing `astichi_ref` restricted evaluator for
+1. Use the existing helpers to convert an AST expression into a dotted
+   reference path without lowering it into a value expression.
+2. Reuse `evaluate_restricted_path_expression(...)` for
    `module=astichi_ref(...)`.
-3. Add a direct AST-reference extractor for:
+3. Reuse `extract_dotted_reference_chain(...)` for:
    - `ast.Name("foo")`
    - nested `ast.Attribute(..., attr="bar")`
 4. Reject anything else.
@@ -156,27 +166,25 @@ Additional decisions:
   lowering; if the existing lowering does not produce such a chain, pyimport
   rejects the module expression.
 
-Consolidation consideration:
+Completed consolidation:
 
-- `external_ref.py` currently has private helpers for path validation and chain
-  construction. Pyimport needs path evaluation without expression replacement.
-  This is a good time to split "evaluate a path expression" from "rewrite an
-  AST expression into a `Name` / `Attribute` chain."
-- Do not duplicate the dotted-path validation logic. If necessary, move the
-  path validation helper to a small public-internal function in
-  `lowering/external_ref.py`.
+- Do not duplicate the dotted-path validation logic. Use the public-internal
+  helper functions in `lowering/external_ref.py`.
+- `extract_dotted_reference_chain(...)` raises internal helper errors; user
+  facing pyimport validators should wrap or rephrase those through the standard
+  Astichi diagnostics path.
 
-Recommended helper shape:
+Current helper shape:
 
 ```python
-def evaluate_reference_path_expression(node: ast.expr) -> tuple[str, ...]:
+def evaluate_restricted_path_expression(node: ast.expr) -> tuple[str, ...]:
     ...
 
-def extract_direct_reference_path(node: ast.expr) -> tuple[str, ...]:
+def extract_dotted_reference_chain(node: ast.AST) -> tuple[str, ...]:
     ...
 ```
 
-The exact names can change, but there should be one canonical path validator.
+These are the canonical path helpers for pyimport V1.
 
 ### 2.3 Name Classification And Local Bindings
 
@@ -193,7 +201,8 @@ Current shape:
   per Python scope for scope identity.
 - `collect_identifier_suppliers_in_body` separately collects readable supplier
   names for builder assignment / descriptors.
-- all three already know ordinary `ast.Import` and `ast.ImportFrom`.
+- ordinary `ast.Import` and `ast.ImportFrom` binding-name extraction now flows
+  through `astichi.asttools.import_statement_binding_names(...)`.
 
 Risk:
 
@@ -202,40 +211,31 @@ another consistency burden.
 
 Recommended approach:
 
-1. Before adding pyimport behavior, extract a shared concept for "binding names
-   introduced by this statement/expression in this context."
-2. Use that shared helper from:
+1. Use the existing ordinary-import helper for Python imports:
+   `astichi.asttools.import_statement_binding_names(...)`.
+2. Do not add a second ordinary import binding parser inside pyimport code.
+3. If pyimport needs marker-local binding extraction, keep that pyimport-specific
+   parsing beside the pyimport declaration model and feed its results into the
+   shared hygiene path.
+4. Current migrated users include:
    - `_BindingCollector`
    - `_SingleScopeBindingCollector`
    - `collect_identifier_suppliers_in_body`
-   - any future pyimport descriptor/supply collection
-3. For pyimport, the shared helper should return the local binding name:
+   - `lowering/external_bind.py`
+   - materialize runtime-supplier collection
+5. Future pyimport descriptor/supply collection should use the same helper for
+   ordinary Python imports.
+6. For pyimport, the declaration parser should return the local binding name:
    - from-import tuple: every imported symbol name
    - from-import alias dict: every local alias name, if implemented
    - plain import without alias: first module segment
    - plain import with alias: alias name
 
-Consolidation candidate:
+Completed consolidation:
 
-- ordinary import binding behavior is already duplicated between
-  `_BindingCollector`, `_SingleScopeBindingCollector`, and
-  `collect_identifier_suppliers_in_body`.
-- pyimport should force this consolidation rather than adding a fourth
-  implementation.
-
-Likely helper location:
-
-- `hygiene/api.py` is currently too broad, but adding a new module just for one
-  helper may also be churn.
-- A small internal module such as `astichi.asttools.bindings` or
-  `astichi.hygiene.bindings` may be justified if it replaces duplicate logic in
-  at least two existing files.
-
-Decision rule:
-
-- If the helper is used by only one call path, do not extract it yet.
-- If pyimport requires updating three or more binding collectors, extract it
-  first.
+- The helper lives in `src/astichi/asttools/imports.py`.
+- All migrated current callers pass `include_star=True` to preserve the prior
+  behavior where `from module import *` appeared as a binding-like name.
 
 ### 2.4 Astichi Scope Ownership
 
@@ -248,15 +248,17 @@ Current files:
 
 Current shape:
 
-- `lowering/boundaries.py` has `_NodeScopeMap`.
-- `hygiene/api.py` has two local `_enter(...)` walkers to map marker nodes to
-  scope nodes:
-  - `_collect_fresh_scope_trust_declarations`
-  - `_collect_fresh_scope_imports`
+- `src/astichi/asttools/scopes.py` provides `AstichiScopeMap` and
+  `AstichiScope`.
+- `lowering/boundaries.py` delegates its `_NodeScopeMap` adapter to
+  `AstichiScopeMap`.
+- `_collect_fresh_scope_trust_declarations` and
+  `_collect_fresh_scope_imports` now use `AstichiScopeMap`.
 - `path_resolution.py` has `ShellIndex` and shell traversal for addressable
   shell paths.
 - `materialize/api.py` has multiple visitors/mixins that skip
-  `astichi_insert` shells.
+  `astichi_insert` shells, now using canonical insert predicates where
+  practical.
 
 Risk:
 
@@ -265,28 +267,28 @@ or fourth local scope-map walker will make future scope semantics brittle.
 
 Recommended approach:
 
-1. Promote the existing `_NodeScopeMap` idea into a reusable internal helper.
+1. Use `AstichiScopeMap.from_tree(tree)` for owner-scope assignment.
 2. Use one helper to answer:
    - scope containing a marker node
-   - whether a scope is root or fresh insert shell
-   - body associated with a scope when needed
-3. Refactor `_collect_fresh_scope_trust_declarations` and
-   `_collect_fresh_scope_imports` to use it if practical.
-4. Use the same helper for pyimport owner-scope assignment.
+   - whether a scope is root
+   - parent scope
+   - nested real Python function/class root, when relevant
+3. Use the same helper for pyimport owner-scope assignment.
 
-Consolidation candidate:
+Completed consolidation:
 
-- This is the strongest pre-implementation consolidation candidate.
-- Current duplicated scope walkers already encode subtle rules about decorators,
-  function arguments, class bases, expression inserts, and shell bodies.
-- Pyimport should not add another copy of those rules.
+- Current duplicated scope walkers have been reduced in the boundary and hygiene
+  paths.
+- `AstichiScopeMap` intentionally treats expression-insert payloads as fresh
+  Astichi scopes. This widens the old boundary-only `_NodeScopeMap` behavior and
+  is the intended shared-scope model for future pyimport logic.
+- Signature ownership asymmetry is inherited from pre-refactor behavior:
+  function arguments/defaults are body-owned for insert shells, while
+  decorators, return annotations, and class bases/keywords remain outer-owned.
 
-Minimal acceptable fallback:
+Do not:
 
-- If extracting a shared scope map is too risky for the first pyimport phase,
-  implement the scope map helper beside the existing code and switch only
-  pyimport plus one existing helper to it. Then migrate the rest in a later
-  cleanup phase.
+- add another pyimport-specific owner-scope walker.
 
 ### 2.5 Hygiene Scope Identity
 
@@ -574,8 +576,8 @@ Recommended approach:
 
 Consolidation consideration:
 
-- Current prefix handling is named `_BOUNDARY_EXPR_PREFIX_NAMES`, but it now
-  includes all marker specs with `is_expression_prefix_directive()`.
+- Current prefix handling uses `scan_statement_prefix(...)` with the existing
+  expression-prefix marker spec set.
 - Pyimport should not become an expression-prefix directive in v1; add that
   behavior only with the deferred carrier phase.
 - If prefix metadata grows beyond boundary directives, rename the concept in
@@ -720,48 +722,55 @@ Reason:
 Future support must decide whether local binding nodes are renamed per
 iteration and whether dynamic module paths may depend on the unroll domain.
 
-## 3. Recommended Refactors Before Pyimport
+## 3. Completed Refactor Groundwork Before Pyimport
 
-These are candidates, not mandatory blockers. The guiding rule is: if a refactor
-can be made behavior-preserving and existing tests cover it, do it before
-pyimport rather than duplicating code.
+These behavior-preserving refactors have already landed. Pyimport-specific work
+should consume these helpers rather than reintroducing local copies.
 
 ### 3.1 Shared Astichi Scope Map
 
-Problem:
+Completed:
 
-- scope ownership is reimplemented in multiple places
-- the rules are subtle and pyimport needs the same answer
+- `src/astichi/asttools/scopes.py` defines `AstichiScopeMap` and
+  `AstichiScope`.
+- `lowering/boundaries.py` delegates `_NodeScopeMap` to the shared scope map.
+- `_collect_fresh_scope_imports` and
+  `_collect_fresh_scope_trust_declarations` consume the shared scope map.
+- Expression-insert payloads are represented as Astichi scopes by the shared
+  helper.
 
-Recommendation:
-
-- extract a reusable internal scope map based on `_NodeScopeMap`
-- use it first for pyimport
-- then migrate `_collect_fresh_scope_imports` and
-  `_collect_fresh_scope_trust_declarations` if the diff stays manageable
-
-Minimum API:
+Use:
 
 ```python
 scope_map = AstichiScopeMap.from_tree(tree)
 scope = scope_map.scope_for(node)
-scope.is_root()
-scope.root_node
+scope.root
+scope.root_id
 scope.label
+scope_map.parent_scope_for(scope)
+scope_map.nested_python_root_for(node)
 ```
 
-### 3.2 Shared Binding Name Collector
+Do not add a new pyimport-only scope walker.
 
-Problem:
+### 3.2 Shared Ordinary Import Binding Names
 
-- ordinary import binding logic is duplicated
-- pyimport binding logic would otherwise be duplicated too
+Completed:
 
-Recommendation:
+- `src/astichi/asttools/imports.py` defines:
+  - `import_alias_binding_name(...)`
+  - `import_statement_binding_names(...)`
+- Hygiene, path-resolution, external-bind, and materialize ordinary-import
+  binding collection now use this helper.
 
-- extract helper(s) for local binding names from ordinary statements and
-  pyimport marker statements
-- reuse from hygiene and path-resolution supplier collection
+Use:
+
+```python
+names = import_statement_binding_names(node, include_star=True)
+```
+
+Pyimport declaration parsing still needs its own marker parser, but it should
+not duplicate ordinary Python import binding-name rules.
 
 ### 3.3 Rename Result From Hygiene
 
@@ -781,7 +790,60 @@ Recommendation:
 
 This keeps Phase A smaller and still avoids raw string inference after hygiene.
 
-### 3.4 Expression Prefix Model
+### 3.4 Marker Metadata Name Nodes
+
+Completed:
+
+- `MarkerSpec.metadata_name_nodes(...)` is available for marker-owned
+  `ast.Name` metadata.
+- `marker_metadata_name_nodes(...)` returns node objects.
+- `marker_metadata_name_node_ids(...)` adapts the result for hygiene's current
+  identity-set lookup style.
+- Hygiene no longer owns the marker metadata shape logic directly.
+
+Use marker-owned local `ast.Name` nodes as final-name sinks for pyimport
+bindings in V1.
+
+### 3.5 Statement Prefix Scanner
+
+Completed:
+
+- `scan_statement_prefix(...)` and `StatementPrefixScan` live in
+  `lowering/markers.py`.
+- Materialize expression-prefix handling uses the scanner with the existing
+  expression-prefix marker spec set.
+- The scanner is a classifier only: it matches direct statement-form calls by
+  registered marker singleton identity and does not re-validate call shape.
+
+Use this helper for pyimport top-of-scope prefix placement. Each caller must
+pass an `allowed_specs` set matching its intended accepted prefix family.
+
+### 3.6 Insert Predicate Consolidation
+
+Completed:
+
+- `src/astichi/asttools/inserts.py` defines canonical predicates:
+  - `is_astichi_insert_call(...)`
+  - `is_expression_insert_call(...)`
+  - `has_astichi_insert_decorator(...)`
+  - `is_astichi_insert_shell(...)`
+- Existing duplicate raw checks across frontend, hygiene, boundary validation,
+  materialize, model, shell refs, and path resolution have been migrated.
+
+Use these predicates instead of checking `func.id == "astichi_insert"` locally.
+
+### 3.7 Residual Marker Suite Preservation
+
+Completed:
+
+- `_strip_residual_markers(...)` now leaves `ast.Pass` in non-module Python
+  suites that would otherwise become empty after marker stripping.
+- Module bodies may still become empty.
+
+Pyimport stripping should use the same valid-suite-preserving path or an
+equivalent shared helper.
+
+### 3.8 Expression Prefix Model
 
 Problem:
 
@@ -799,32 +861,34 @@ Recommendation:
 
 ## 4. Recommended Implementation Sequence
 
-### Phase A: Behavior-Preserving Consolidation
+### Phase A: Completed Behavior-Preserving Consolidation
 
-Goal: reduce duplicated traversal/binding code before adding pyimport behavior.
+Status: complete.
 
-Tasks:
+Completed tasks:
 
-1. Extract reusable Astichi scope map or scope-owner helper.
-2. Migrate at least one existing helper to prove equivalence and give the
-   helper coverage from existing tests.
-3. Extract shared binding-name helper for ordinary imports if pyimport would
-   otherwise require touching three collectors.
-4. Add marker-owned-name extraction support for marker metadata identifiers.
-5. Do not refactor `rename_scope_collisions(...)` to return a result object in
-   this phase unless another behavior-preserving cleanup independently needs
-   it.
+1. Extracted reusable Astichi scope map / scope-owner helper.
+2. Migrated existing boundary and hygiene users.
+3. Extracted shared ordinary import binding-name helper.
+4. Added marker-owned-name extraction support for marker metadata identifiers.
+5. Added reusable statement-prefix scanner.
+6. Made residual marker stripping preserve valid non-module suites.
+7. Exposed external-ref dotted path helpers.
+8. Consolidated `astichi_insert` predicates.
+9. Did not refactor `rename_scope_collisions(...)` to return a result object.
 
 Verification:
 
 ```bash
-uv run --with pytest pytest -q
+uv run --with pytest pytest -q                       # 562 passed
+uv run python tests/versioned_test_harness.py run-tests-all --pytest-args -q
+# 3.12 PASS, 3.13 PASS, 3.14 PASS, 3.15 PASS
 ```
 
-Risk:
+Next phase:
 
-- This phase can break many tests if overdone. Keep each refactor independently
-  revertible and behavior-preserving.
+- Start Phase B directly. Do not repeat Phase A work unless a pyimport-specific
+  fact reveals a real gap in the shared helpers.
 
 ### Phase B: Pyimport Marker Parse Model
 
@@ -890,7 +954,8 @@ pre-materialized source.
 
 Tasks:
 
-1. Refactor expression prefix parsing if not already done.
+1. Reuse `scan_statement_prefix(...)`; do not add another expression-prefix
+   scanner.
 2. Extend expression insert metadata with pyimport carrier.
 3. Ensure `source_kind="astichi-emitted"` accepts the internal carrier.
 4. Ensure `source_kind="authored"` rejects the internal carrier.
@@ -1009,7 +1074,9 @@ Acceptable new modules:
 
 - `lowering/pyimport.py` for marker-shape parsing and validation
 - `materialize/pyimport.py` for post-hygiene import synthesis
-- shared scope/binding helper modules if they replace duplicated code
+- additional shared helper modules only if they replace duplicated code not
+  already covered by `asttools/scopes.py`, `asttools/imports.py`,
+  `asttools/inserts.py`, or `lowering/markers.py`
 
 Avoid adding a module if it only hides five lines of one-off logic.
 
@@ -1019,16 +1086,23 @@ Astichi is still young enough that the right implementation may require small
 behavior-preserving or behavior-normalizing refactors before pyimport lands.
 The test suite is broad enough to support that, but changes should be explicit.
 
-Potential drift already visible:
+Drift already addressed by Phase A:
 
 - Multiple code paths define what "the Astichi scope containing this node"
-  means.
-- Multiple collectors define what counts as a local binding.
-- Ordinary import binding rules are duplicated in hygiene and path-resolution
-  collectors.
-- Expression-prefix handling is named around boundary markers even though the
-  marker registry already has a broader `is_expression_prefix_directive()`
-  concept.
+  means. Use `AstichiScopeMap`.
+- Ordinary import binding rules were duplicated in hygiene, path-resolution,
+  external-bind, and materialize collectors. Use
+  `import_statement_binding_names(...)`.
+- `astichi_insert` shell/expression predicates were duplicated. Use the
+  canonical predicates from `astichi.asttools`.
+- Marker-owned metadata names were handled inside hygiene. Use
+  `marker_metadata_name_nodes(...)` / `marker_metadata_name_node_ids(...)`.
+- Top-of-body prefix scanning was local to one materialize helper. Use
+  `scan_statement_prefix(...)`.
+
+Potential drift still visible:
+
+- Multiple collectors define non-import local binding sources.
 - Hygiene computes the information needed for final names but currently exposes
   it mostly through AST mutation.
 - Descriptor supplies depend on both marker-derived ports and body-level
@@ -1088,24 +1162,27 @@ For refactors:
   emitted source was already inconsistent and the design explicitly accepts the
   normalization
 
-## 9. Proposed First Engineering Spike
+## 9. Completed First Engineering Spike
 
-Before implementing pyimport, perform a small branch/phase with no public
-behavior change:
+Before implementing pyimport, the first behavior-preserving branch/phase has
+already been completed:
 
-1. Extract or prototype a reusable Astichi scope map.
-2. Extract ordinary import binding-name helper if the diff is small.
-3. Add marker-owned-name extraction support without changing existing marker
+1. Extracted reusable Astichi scope map.
+2. Extracted ordinary import binding-name helper.
+3. Added marker-owned-name extraction support without changing existing marker
    behavior.
-4. Run the full suite.
+4. Added statement-prefix scanner.
+5. Added valid-suite preservation after residual marker stripping.
+6. Exposed external-ref dotted path helpers.
+7. Consolidated `astichi_insert` predicates.
+8. Ran focused tests, the full suite, and the Python-version matrix.
 
-Success criteria:
+Result:
 
-- no public behavior changes
-- tests stay green
+- full suite: `562 passed`
+- Python-version matrix: `3.12 PASS`, `3.13 PASS`, `3.14 PASS`, `3.15 PASS`
 - code paths needed by pyimport are clearer
 - no `rename_scope_collisions(...)` return-object refactor is required for v1
-- if the refactor increases complexity, stop and reassess before continuing
 
-This spike is intentionally valuable even if pyimport is deferred, because it
-targets existing consistency drift in scope traversal and binding collection.
+The next engineering step is Phase B: pyimport marker parse model and rejection
+tests. Do not start by redoing the prep refactors.
