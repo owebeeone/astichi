@@ -6,11 +6,13 @@ import pytest
 
 import astichi
 from astichi.hygiene import (
+    SyntheticBindingOccurrence,
     analyze_names,
     assign_scope_identity,
     rename_scope_collisions,
     rewrite_hygienically,
 )
+from astichi.lowering import pyimport_local_bindings
 
 
 def test_analyze_names_classifies_locals_kept_externals_and_unresolved() -> None:
@@ -57,6 +59,52 @@ value = missing_name
 
     classification = analyze_names(compiled, mode="permissive")
     assert [item.name for item in classification.implied_demands] == ["missing_name"]
+
+
+def test_pyimport_names_are_local_bindings_for_name_analysis() -> None:
+    compiled = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(a,))
+value = a()
+"""
+    )
+
+    classification = analyze_names(compiled, mode="permissive")
+
+    assert "a" in classification.locals
+    assert "a" not in classification.unresolved_free
+
+
+def test_pyimport_synthetic_binding_node_receives_hygiene_rename() -> None:
+    compiled = astichi.compile(
+        """
+a = 1
+
+@astichi_insert(slot)
+def shell():
+    astichi_pyimport(module=foo, names=(a,))
+    value = a
+""",
+        source_kind="astichi-emitted",
+    )
+    local_bindings = pyimport_local_bindings(compiled.markers)
+    synthetic = tuple(
+        SyntheticBindingOccurrence(
+            raw_name=binding.node.id,
+            declaration_node=binding.marker.node,
+            node=binding.node,
+        )
+        for binding in local_bindings
+    )
+
+    analysis = assign_scope_identity(compiled, synthetic_bindings=synthetic)
+    rename_scope_collisions(analysis)
+
+    assert local_bindings[0].node.id == "a__astichi_scoped_1"
+    rendered = ast.unparse(compiled.tree)
+    assert "a = 1" in rendered
+    assert "names=(a__astichi_scoped_1,)" in rendered
+    assert "value = a__astichi_scoped_1" in rendered
 
 
 def test_rewrite_hygienically_renames_locals_that_collide_with_preserved_names() -> None:

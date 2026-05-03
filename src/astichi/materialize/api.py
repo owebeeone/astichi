@@ -23,7 +23,12 @@ from astichi.builder.graph import (
     IdentifierBinding,
     InstanceRecord,
 )
-from astichi.hygiene import analyze_names, assign_scope_identity, rename_scope_collisions
+from astichi.hygiene import (
+    SyntheticBindingOccurrence,
+    analyze_names,
+    assign_scope_identity,
+    rename_scope_collisions,
+)
 from astichi.lowering import (
     PayloadLocalDirective,
     DOUBLE_STAR_FUNC_ARG_REGION,
@@ -39,6 +44,7 @@ from astichi.lowering import (
     lower_payload_for_region,
     materialize_rejects_pyimport,
     param_hole_name,
+    pyimport_local_bindings,
     register_explicit_keyword,
     recognize_markers,
     validate_payload_for_region,
@@ -2735,7 +2741,14 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
     apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
-    materialize_rejects_pyimport(markers)
+    pyimport_synthetic_bindings = tuple(
+        SyntheticBindingOccurrence(
+            raw_name=binding.node.id,
+            declaration_node=binding.marker.node,
+            node=binding.node,
+        )
+        for binding in pyimport_local_bindings(markers)
+    )
     # Hygiene pinning is only meaningful for names that actually sit
     # at a hygiene-relevant position in the tree — `ast.Name`,
     # `ast.arg`, or a def/class name. Callsite `ast.keyword.arg`
@@ -2788,8 +2801,10 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         provisional,
         preserved_names=effective_keep_names,
         trust_names=explicit_keep_names,
+        synthetic_bindings=pyimport_synthetic_bindings,
     )
     rename_scope_collisions(analysis)
+    materialize_rejects_pyimport(markers)
     payload_local_directives = collect_payload_local_directives(tree)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)

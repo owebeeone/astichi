@@ -45,6 +45,14 @@ class PyImportDeclaration:
         return not self.names
 
 
+@dataclass(frozen=True)
+class PyImportLocalBinding:
+    """Marker-owned local binding node declared by pyimport."""
+
+    marker: RecognizedMarker
+    node: ast.Name
+
+
 _PYIMPORT_PREFIX_SPECS = frozenset(
     {
         BIND_EXTERNAL,
@@ -105,6 +113,37 @@ def materialize_rejects_pyimport(
             hint="complete the pyimport materialization phase before materializing managed imports",
         )
     )
+
+
+def pyimport_local_bindings(
+    markers: tuple[object, ...],
+) -> tuple[PyImportLocalBinding, ...]:
+    """Return marker-owned local binding nodes from validated pyimports."""
+    bindings: list[PyImportLocalBinding] = []
+    for marker in markers:
+        if not isinstance(marker, RecognizedMarker):
+            continue
+        if marker.spec is not PYIMPORT:
+            continue
+        node = marker.node
+        if not isinstance(node, ast.Call):
+            continue
+        names_expr = _keyword_value(node, "names")
+        if isinstance(names_expr, ast.Tuple):
+            bindings.extend(
+                PyImportLocalBinding(marker=marker, node=element)
+                for element in names_expr.elts
+                if isinstance(element, ast.Name)
+            )
+            continue
+        as_expr = _keyword_value(node, "as_")
+        if isinstance(as_expr, ast.Name):
+            bindings.append(PyImportLocalBinding(marker=marker, node=as_expr))
+            continue
+        module_expr = _keyword_value(node, "module")
+        if isinstance(module_expr, ast.Name):
+            bindings.append(PyImportLocalBinding(marker=marker, node=module_expr))
+    return tuple(bindings)
 
 
 def _parse_declaration(

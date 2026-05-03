@@ -39,6 +39,9 @@ work.
     compile-time validation rejects invalid V1 shapes and placement, and
     `materialize()` rejects recognized pyimport declarations until import
     binding/emission phases land.
+  - Phase 2 hygiene binding integration is implemented: pyimport locals count
+    as local bindings for name analysis, and marker-owned local name nodes act
+    as hygiene rename sinks.
   - No final import synthesis behavior is implemented yet.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
@@ -71,7 +74,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-03:
-  - full suite: `582 passed`
+  - full suite: `584 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:

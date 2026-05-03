@@ -160,6 +160,15 @@ class LexicalOccurrence:
 
 
 @dataclass(frozen=True)
+class SyntheticBindingOccurrence:
+    """Marker-owned binding occurrence fed into scope identity."""
+
+    raw_name: str
+    declaration_node: ast.AST
+    node: ast.AST
+
+
+@dataclass(frozen=True)
 class ScopeAnalysis:
     """Scope-identity assignment for a lowered snippet."""
 
@@ -182,7 +191,9 @@ def analyze_names(
     mode = normalize_hygiene_mode(mode)
 
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
-    local_bindings = _collect_local_bindings(composable.tree)
+    local_bindings = _collect_local_bindings(
+        composable.tree
+    ) | _collect_pyimport_local_bindings(composable.markers)
     kept = frozenset(
         marker.name_id
         for marker in composable.markers
@@ -280,6 +291,7 @@ def assign_scope_identity(
     trust_names: frozenset[str] = frozenset(),
     external_names: frozenset[str] = frozenset(),
     fresh_scope_nodes: tuple[ast.AST, ...] = (),
+    synthetic_bindings: tuple[SyntheticBindingOccurrence, ...] = (),
 ) -> ScopeAnalysis:
     """Assign scope identity to lexical name occurrences.
 
@@ -360,6 +372,7 @@ def assign_scope_identity(
         module_trust_declarations=fresh_scope_trust_declarations.get(
             id(composable.tree), frozenset()
         ),
+        synthetic_bindings=synthetic_bindings,
     )
     visitor.visit(composable.tree)
     return ScopeAnalysis(
@@ -629,6 +642,15 @@ def _collect_local_bindings(tree: ast.Module) -> set[str]:
     return collector.bindings
 
 
+def _collect_pyimport_local_bindings(markers: tuple[object, ...]) -> set[str]:
+    from astichi.lowering.pyimport import pyimport_local_bindings
+
+    return {
+        binding.node.id
+        for binding in pyimport_local_bindings(markers)
+    }
+
+
 class _BindingCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         self.bindings: set[str] = set()
@@ -805,6 +827,7 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         fresh_scope_imported_names: dict[int, frozenset[str]] | None = None,
         fresh_scope_trust_declarations: dict[int, frozenset[str]] | None = None,
         module_trust_declarations: frozenset[str] = frozenset(),
+        synthetic_bindings: tuple[SyntheticBindingOccurrence, ...] = (),
     ) -> None:
         self.ignored_name_nodes = ignored_name_nodes
         self.preserved_names = preserved_names
@@ -837,6 +860,19 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.python_scope_owner_stack: list[ScopeId] = []
         self.occurrences: list[LexicalOccurrence] = []
         self.ordinal_counter = count()
+        self.synthetic_bindings_by_declaration_id: dict[
+            int, tuple[SyntheticBindingOccurrence, ...]
+        ] = {}
+        for binding in synthetic_bindings:
+            self.synthetic_bindings_by_declaration_id.setdefault(
+                id(binding.declaration_node), ()
+            )
+            current = self.synthetic_bindings_by_declaration_id[
+                id(binding.declaration_node)
+            ]
+            self.synthetic_bindings_by_declaration_id[
+                id(binding.declaration_node)
+            ] = current + (binding,)
 
     def visit(self, node: ast.AST) -> object:
         if not self.python_scope_bindings:
@@ -921,6 +957,26 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
                 node=node,
             )
         )
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for binding in self.synthetic_bindings_by_declaration_id.get(id(node), ()):
+            role: LexicalRole = (
+                PRESERVED_LEXICAL_ROLE
+                if binding.raw_name in self._current_trust_declarations()
+                else INTERNAL_LEXICAL_ROLE
+            )
+            self.occurrences.append(
+                LexicalOccurrence(
+                    raw_name=binding.raw_name,
+                    scope_id=self._current_scope(),
+                    collision_domain=self._current_collision_domain(),
+                    role=role,
+                    binding_kind=BINDING_OCCURRENCE,
+                    ordinal=next(self.ordinal_counter),
+                    node=binding.node,
+                )
+            )
+        self.generic_visit(node)
 
     def visit_arg(self, node: ast.arg) -> None:
         self.occurrences.append(

@@ -25,6 +25,9 @@ value = a()
         marker for marker in compiled.markers if marker.source_name == "astichi_pyimport"
     ]
     assert len(pyimports) == 1
+    assert "a" in compiled.classification.locals
+    assert "b" in compiled.classification.locals
+    assert "a" not in compiled.classification.unresolved_free
 
     with pytest.raises(
         ValueError,

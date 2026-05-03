@@ -64,7 +64,9 @@ from astichi.lowering.parameters import (
 )
 from astichi.lowering.pyimport import (
     PyImportDeclaration,
+    PyImportLocalBinding,
     materialize_rejects_pyimport,
+    pyimport_local_bindings,
     validate_pyimport_declarations,
 )
 
@@ -89,6 +91,7 @@ __all__ = [
     "PortTemplate",
     "PositionalFuncArgItem",
     "PyImportDeclaration",
+    "PyImportLocalBinding",
     "RecognizedMarker",
     "StatementPrefixScan",
     "StarredFuncArgItem",
@@ -110,6 +113,7 @@ __all__ = [
     "marker_metadata_name_node_ids",
     "marker_metadata_name_nodes",
     "param_hole_name",
+    "pyimport_local_bindings",
     "recognize_markers",
     "register_explicit_keyword",
     "validate_call_argument_payload_surface",
