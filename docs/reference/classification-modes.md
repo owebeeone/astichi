@@ -41,6 +41,8 @@ markers like `astichi_keep(Client)` cannot mark a declaration name itself.
 - `name__astichi_arg__` creates an identifier demand named `name`. It must be
   resolved before materialization through `arg_names=`,
   `.bind_identifier(...)`, builder `arg_names=`, or `builder.assign...`.
+  The suffix can also appear in ordinary import module and symbol positions,
+  such as `from module_name__astichi_arg__ import symbol__astichi_arg__`.
 - `name__astichi_param_hole__` creates a parameter-list demand target named
   `name`. It is valid only on an ordinary function parameter and is consumed
   by parameter materialization.

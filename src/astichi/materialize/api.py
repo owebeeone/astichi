@@ -3493,6 +3493,19 @@ def _find_unresolved_arg_identifiers(
             # are identifier positions. `keyword.arg is None` is the
             # `**mapping` splat and carries no identifier.
             _check(node.arg, lineno)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None:
+                for segment in node.module.split("."):
+                    _check(segment, lineno)
+            for alias in node.names:
+                _check(alias.name, lineno)
+                if alias.asname is not None:
+                    _check(alias.asname, lineno)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                _check(alias.name, lineno)
+                if alias.asname is not None:
+                    _check(alias.asname, lineno)
     return [
         (name, tuple(sorted(set(lines))))
         for name, lines in sorted(by_name.items())
@@ -3701,6 +3714,9 @@ class _ArgIdentifierResolver(ast.NodeTransformer):
             return name
         return self._bindings.get(base, name)
 
+    def _resolve_dotted(self, name: str) -> str:
+        return ".".join(self._resolve(segment) for segment in name.split("."))
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         node.name = self._resolve(node.name)
         return self.generic_visit(node)
@@ -3720,6 +3736,22 @@ class _ArgIdentifierResolver(ast.NodeTransformer):
     def visit_arg(self, node: ast.arg) -> ast.AST:
         node.arg = self._resolve(node.arg)
         return self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> ast.AST:
+        for alias in node.names:
+            alias.name = self._resolve_dotted(alias.name)
+            if alias.asname is not None:
+                alias.asname = self._resolve(alias.asname)
+        return node
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.AST:
+        if node.module is not None:
+            node.module = self._resolve_dotted(node.module)
+        for alias in node.names:
+            alias.name = self._resolve(alias.name)
+            if alias.asname is not None:
+                alias.asname = self._resolve(alias.asname)
+        return node
 
     def visit_keyword(self, node: ast.keyword) -> ast.AST:
         # Issue 005 §1 extension: rewrite suffixed call-keyword names.

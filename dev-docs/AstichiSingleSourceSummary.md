@@ -55,10 +55,11 @@ work.
   - Expression-prefix pyimport carriers are implemented for staged expression
     inserts via internal expression-form `astichi_insert(..., pyimport=(...))`
     metadata; final materialize strips the carrier and emits ordinary imports.
+  - Import-position `__astichi_arg__` is implemented for ordinary import module
+    strings and imported symbol names.
   - Public reference documentation now covers pyimport surface, placement,
     hygiene, materialize-time synthesis, and V1 rejections.
-  - Automatic descriptor supplies, import-position `__astichi_arg__`, and
-    alias-dict imports remain deferred.
+  - Automatic descriptor supplies and alias-dict imports remain deferred.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -90,7 +91,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-03:
-  - full suite: `598 passed`
+  - full suite: `599 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
@@ -433,7 +434,7 @@ Current implementation reality:
 | `astichi_export(name)` | implemented | Supply-side export; stripped during materialize. |
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
 | `astichi_for(domain)` | implemented | Compile-time loop domain for `build(unroll=...)`; supports literal tuples/lists, literal `range(...)`, and bind-fed literal domains. |
-| `astichi_pyimport(module=..., names=(...))` / `astichi_pyimport(module=..., as_=...)` | implemented | Managed Python import marker. Valid only in a top-of-Astichi-scope statement prefix. Materialize emits ordinary imports at module head after docstring/future imports. Expression-prefix carriers are implemented through internal expression-insert metadata. Descriptor auto-supplies, import-position `__astichi_arg__`, and alias dicts remain deferred. |
+| `astichi_pyimport(module=..., names=(...))` / `astichi_pyimport(module=..., as_=...)` | implemented | Managed Python import marker. Valid only in a top-of-Astichi-scope statement prefix. Materialize emits ordinary imports at module head after docstring/future imports. Expression-prefix carriers are implemented through internal expression-insert metadata. Descriptor auto-supplies and alias dicts remain deferred. |
 | `astichi_bind_once(name, expr)` | rejected | Reserved and obsolete; use ordinary Python assignment for single-evaluation reuse. |
 | `astichi_bind_shared(name, expr)` | rejected | Reserved and obsolete; use enclosing Python state plus boundary wiring for shared state. |
 | `name__astichi__` / `astichi_definitional_name` | retired | Not a supported marker surface. Use `__astichi_arg__`, `__astichi_keep__`, or explicit boundary wiring. |

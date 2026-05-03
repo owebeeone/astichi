@@ -210,6 +210,7 @@ Reference snippets:
 
 - [pyimport/from_import](snippets/pyimport/from_import.py)
 - [pyimport/dynamic_module_ref](snippets/pyimport/dynamic_module_ref.py)
+- [pyimport/expression_payload](snippets/pyimport/expression_payload/recipe.py)
 
 ## See also
 

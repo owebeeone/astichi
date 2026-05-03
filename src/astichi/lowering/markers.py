@@ -397,6 +397,32 @@ class _ArgIdentifierMarker(_SuffixIdentifierMarker):
         # don't regress; per-iteration arg semantics are refined in 5b.
         return True
 
+    def validate_node(self, node: ast.AST) -> None:
+        if isinstance(node, ast.ImportFrom):
+            if node.module is None:
+                raise ValueError(
+                    f"{self.source_name} is not valid on relative import levels"
+                )
+            for segment in node.module.split("."):
+                base_name, suffix_marker = strip_identifier_suffix(segment)
+                if suffix_marker is self and base_name.isidentifier():
+                    return
+            raise ValueError(
+                f"{self.source_name} requires an identifier prefix before {self.suffix}"
+            )
+        if isinstance(node, ast.alias):
+            candidates = [node.name]
+            if node.asname is not None:
+                candidates.append(node.asname)
+            for candidate in candidates:
+                base_name, suffix_marker = strip_identifier_suffix(candidate)
+                if suffix_marker is self and base_name.isidentifier():
+                    return
+            raise ValueError(
+                f"{self.source_name} requires an identifier prefix before {self.suffix}"
+            )
+        super().validate_node(node)
+
     def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
         return PortTemplate(
             shape=IDENTIFIER, mutability=CONST_MUTABILITY, origin=ARG_IDENTIFIER_ORIGIN
@@ -911,6 +937,19 @@ class RecognizedMarker:
             base, suffix_marker = strip_identifier_suffix(self.node.arg)
             if suffix_marker is not None:
                 return base
+        if isinstance(self.node, ast.ImportFrom) and self.node.module is not None:
+            for segment in self.node.module.split("."):
+                base, suffix_marker = strip_identifier_suffix(segment)
+                if suffix_marker is not None:
+                    return base
+        if isinstance(self.node, ast.alias):
+            base, suffix_marker = strip_identifier_suffix(self.node.name)
+            if suffix_marker is not None:
+                return base
+            if self.node.asname is not None:
+                base, suffix_marker = strip_identifier_suffix(self.node.asname)
+                if suffix_marker is not None:
+                    return base
         return None
 
 
@@ -1068,6 +1107,26 @@ class _MarkerVisitor(ast.NodeVisitor):
             self._visit_identifier_occurrence(node, node.arg)
         self.generic_visit(node)
 
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self._visit_import_alias_occurrences(alias)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module is not None:
+            for segment in node.module.split("."):
+                if self._identifier_suffix_marker(segment) is not None:
+                    self._visit_identifier_occurrence(node, segment)
+                    break
+        for alias in node.names:
+            self._visit_import_alias_occurrences(alias)
+        self.generic_visit(node)
+
+    def _visit_import_alias_occurrences(self, node: ast.alias) -> None:
+        self._visit_identifier_occurrence(node, node.name)
+        if node.asname is not None:
+            self._visit_identifier_occurrence(node, node.asname)
+
     def _visit_identifier_occurrence(
         self, node: ast.AST, name: str
     ) -> None:
@@ -1084,6 +1143,10 @@ class _MarkerVisitor(ast.NodeVisitor):
                 shape=None,
             )
         )
+
+    def _identifier_suffix_marker(self, name: str) -> MarkerSpec | None:
+        _, suffix_marker = strip_identifier_suffix(name)
+        return suffix_marker
 
     def _visit_params_payload(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.name != PARAMS.source_name:
