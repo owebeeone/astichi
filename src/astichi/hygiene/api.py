@@ -1054,6 +1054,8 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             super().generic_visit(node)
             return
         pushed_fresh = self._push_fresh_scope_if_needed(node)
+        if pushed_fresh and isinstance(node, ast.Call) and is_expression_insert_call(node):
+            self._preload_expression_insert_pyimports(node)
         try:
             super().generic_visit(node)
         finally:
@@ -1181,6 +1183,14 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
             self.synthetic_scope_ids_by_key[binding.identity_key] = scope_id
         return scope_id
 
+    def _preload_expression_insert_pyimports(self, node: ast.Call) -> None:
+        for call in _expression_insert_pyimport_calls(node):
+            for binding in self.synthetic_bindings_by_declaration_id.get(id(call), ()):
+                scope_id = self._synthetic_binding_scope(binding)
+                self.astichi_scope_synthetic_bindings_stack[-1][binding.raw_name] = (
+                    scope_id
+                )
+
     def _current_imported_names(self) -> frozenset[str]:
         if not self.astichi_scope_imports_stack:
             return frozenset()
@@ -1292,3 +1302,15 @@ class _Renamer(ast.NodeTransformer):
     def _fresh(self, name: str) -> str:
         self._counter += 1
         return f"__astichi_local_{name}_{self._counter}"
+
+
+def _expression_insert_pyimport_calls(node: ast.Call) -> tuple[ast.Call, ...]:
+    calls: list[ast.Call] = []
+    for keyword in node.keywords:
+        if keyword.arg != "pyimport":
+            continue
+        value = keyword.value
+        if not isinstance(value, ast.Tuple):
+            continue
+        calls.extend(element for element in value.elts if isinstance(element, ast.Call))
+    return tuple(calls)

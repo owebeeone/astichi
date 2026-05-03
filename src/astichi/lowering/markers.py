@@ -523,6 +523,23 @@ class _InsertMarker(MarkerSpec):
                 ):
                     raise ValueError("astichi_insert order must be an integer constant")
                 continue
+            if keyword.arg == "pyimport":
+                if len(node.args) != 2:
+                    raise ValueError(
+                        "astichi_insert pyimport= is only valid on expression-form inserts"
+                    )
+                if not isinstance(keyword.value, ast.Tuple):
+                    raise ValueError("astichi_insert pyimport= must be a tuple")
+                for element in keyword.value.elts:
+                    if not (
+                        isinstance(element, ast.Call)
+                        and isinstance(element.func, ast.Name)
+                        and element.func.id == PYIMPORT.source_name
+                    ):
+                        raise ValueError(
+                            "astichi_insert pyimport= entries must be astichi_pyimport(...) calls"
+                        )
+                continue
             raise ValueError(
                 f"astichi_insert does not accept keyword `{keyword.arg}`"
             )
@@ -623,6 +640,9 @@ class _PyImportMarker(MarkerSpec):
     """`astichi_pyimport(...)` — managed Python import declaration."""
 
     source_name = "astichi_pyimport"
+
+    def is_expression_prefix_directive(self) -> bool:
+        return True
 
     def is_permitted_in_unroll_body(self) -> bool:
         return False

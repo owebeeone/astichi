@@ -104,6 +104,19 @@ in V1.
 
 `astichi_pyimport(...)` is not permitted inside an `astichi_for(...)` body.
 
+For expression-hole payloads, pyimport can appear as the statement prefix before
+the single expression payload:
+
+```python
+astichi_pyimport(module=foo, names=(a,))
+(a, 1)
+```
+
+When that payload is inserted into an expression target, pre-materialized output
+uses internal expression-form `astichi_insert(..., pyimport=(...))` metadata.
+Final materialized output strips that carrier and emits an ordinary module-head
+import.
+
 ## Hygiene
 
 Imported locals are binding names for Astichi hygiene. If two composition
@@ -187,7 +200,6 @@ The following shapes are rejected:
 - dotted plain imports without `as_=`
 - dynamic plain imports without `as_=`
 - statement placement outside the top-of-Astichi-scope prefix
-- expression-insert carrier forms
 - pyimports inside `astichi_for(...)` bodies
 - pyimports nested inside real user-authored function or class bodies
 

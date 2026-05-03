@@ -1,0 +1,8 @@
+astichi_hole(__astichi_root__Root__)
+
+@astichi_insert(__astichi_root__Root__, ref=Root)
+def __astichi_root__Root__():
+
+    def f1():
+        return astichi_insert(f1_body, (a, b, c), pyimport=(astichi_pyimport(module=mod1, names=(a, b, c)),)) + astichi_insert(f2_body, (a, b), pyimport=(astichi_pyimport(module=mod2, names=(a, b)),)) + astichi_insert(f3_body, (a, d), pyimport=(astichi_pyimport(module=mod2, names=(a, d)),))
+# astichi-provenance: eNrNls1u00oUx50PJ2nNrcqVLh8SlEhwoZQLVy0CIbricxNugIoFm8py4kmPW8djHJs0CyRYsRk2YBZIiGfgCbrkRViw7xNwxp6Jx3FuoKILKjXp/OfMOTP/+dk9L/X3bw0t+WEVaxDGrPYftSOXxO/iixvxi3iZVTvUHsWb8TJorHpv1w+yKf255UYk5hN3LNdV1vQir5vobauv5Co7dsyOYB2nC44JFOuwSjfcTUIfUMuWoR1Wcx2PeDRuldk88WxTDitsvktdk/Z6AxLGLY0t8FlVehR1WNUKtga4afgzrQx/sWOmKQsHlIamuZF8xnAcTqY14VSrDKdbFVhqaXCG57FYY4eMhjSwk2SF+UThI66misaM+3j40KHeXdJTLPG4E3AOmhgyh9uL+sQLB1mA4dMB9dyR3HlzEy/juRXgOG6z+Z2hMsmMnaFpk54VuWEy1neGaVxDUXE3OiZaERZcZuXeKuaFf4WwllaBa224jl838PdmG9bHCzVW2yBhFHjjTYKBon7b8R76yslc0gtjaIuQx/CH+GtRcX9Beu94AxKEedcrwlUDPWxi8SanLVtb762aCYQzF+HGnkR+jlyS+qDmKlmTWZZaJXF9ZcyiRHZ45LaIqYoYPR/TVWPqIqYRdYgiSzrmuHwh8bUuqMr2WuHXxxr+yOn7lPtjQEeUIbhkmqWL0tJsUR7ltHQZSy+mpvLqyxCKDENW66fPOhbL0lZRXOWpXokkJ0SSU2PejypKlk3nhA8mdq54D46S9G+R4rzqJ3hKxLKIuJiLeKZEXBIR/6R+S/mckC+P97uUKWTCmSv4kM/EqqBY4loNca0osTL1+bVWbtnKG0wPnC0Ip94dPJ1a8yymuzGN/7UZ/MtFM0z/CdwT6z8XYSeKLEGuSZDHdw+7P+YVXh4QT3hd4HKNW7B3MC7hzWwi935I5F6RSKLIkreVAm8rRd4u/R9v8hoLiuTtrHBfBmUEcuUDfIRPB0BtXfy7KqB2dQZqctGvocZKNk//dTpsX38H2OALLt8/XM72Z3L2TYmY4Gz/UDlbH3cuE4rkbF1pZvKcZUo1Uyy2YJMuDayQBtikYQuJ7Ug9SPqGATYkR8KRT7A/6/N2B8dGMvaxr+mPe6pcB2Vt6yVN2/yZ9+ZkN9ZUGz5stWZ1dnmmWCXAZi3/vuH9Yf454DiXRA4tmpq1KG3X8Tjt7UbyOZcerXBoInxytjwakLR5u/IdUKe55A==

@@ -54,6 +54,7 @@ from astichi.lowering.markers import (
     IMPORT,
     KEEP,
     PASS,
+    PYIMPORT,
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
     call_name,
@@ -109,6 +110,7 @@ from astichi.shell_refs import (
 class _ExpressionInsert:
     expr: ast.expr
     payload: object | None
+    pyimports: tuple[ast.Call, ...]
     edge_order: int
     inline_order: int
     edge_index: int
@@ -1539,6 +1541,19 @@ def _implicit_expression_supply_after_boundary_prefix(
     return final.value, index
 
 
+def _pyimport_prefix_calls(
+    body: list[ast.stmt], *, before_index: int
+) -> tuple[ast.Call, ...]:
+    calls: list[ast.Call] = []
+    for statement in body[:before_index]:
+        if not isinstance(statement, ast.Expr):
+            continue
+        call = statement.value
+        if isinstance(call, ast.Call) and is_call_to_marker(call, PYIMPORT):
+            calls.append(copy.deepcopy(call))
+    return tuple(calls)
+
+
 def _make_keep_statement(
     name: str, *, location_donor: ast.AST | None = None
 ) -> ast.Expr:
@@ -1594,11 +1609,13 @@ def _extract_expression_inserts(
     implicit = _implicit_expression_supply_after_boundary_prefix(effective_body)
     if implicit is not None:
         expr, stmt_index = implicit
+        pyimports = _pyimport_prefix_calls(effective_body, before_index=stmt_index)
         if isinstance(expr, ast.Call) and is_astichi_funcargs_call(expr):
             return [
                 _ExpressionInsert(
                     expr=copy.deepcopy(expr),
                     payload=extract_funcargs_payload(expr),
+                    pyimports=pyimports,
                     edge_order=edge_order,
                     inline_order=0,
                     edge_index=edge_index,
@@ -1616,6 +1633,7 @@ def _extract_expression_inserts(
             _ExpressionInsert(
                 expr=copy.deepcopy(call),
                 payload=extract_funcargs_payload(call),
+                pyimports=(),
                 edge_order=edge_order,
                 inline_order=0,
                 edge_index=edge_index,
@@ -1646,6 +1664,7 @@ def _extract_expression_inserts(
             _ExpressionInsert(
                 expr=copy.deepcopy(stmt.value.args[1]),
                 payload=None,
+                pyimports=(),
                 edge_order=edge_order,
                 inline_order=_extract_insert_order(stmt.value),
                 edge_index=edge_index,
@@ -1660,6 +1679,9 @@ def _extract_expression_inserts(
             _ExpressionInsert(
                 expr=copy.deepcopy(expr),
                 payload=None,
+                pyimports=_pyimport_prefix_calls(
+                    effective_body, before_index=stmt_index
+                ),
                 edge_order=edge_order,
                 inline_order=0,
                 edge_index=edge_index,
@@ -1799,16 +1821,28 @@ def _make_expression_insert_call(
     target_name: str,
     expr: ast.expr,
     *,
+    pyimports: tuple[ast.Call, ...] = (),
     location_donor: ast.AST | None = None,
 ) -> ast.Call:
     donor = location_donor if location_donor is not None else expr
+    keywords: list[ast.keyword] = []
+    if pyimports:
+        keywords.append(
+            ast.keyword(
+                arg="pyimport",
+                value=ast.Tuple(
+                    elts=[copy.deepcopy(call) for call in pyimports],
+                    ctx=ast.Load(),
+                ),
+            )
+        )
     call = ast.Call(
         func=ast.Name(id="astichi_insert", ctx=ast.Load()),
         args=[
             ast.Name(id=target_name, ctx=ast.Load()),
             copy.deepcopy(expr),
         ],
-        keywords=[],
+        keywords=keywords,
     )
     propagate_ast_source_locations(call, donor)
     return call
@@ -2216,7 +2250,10 @@ class _HoleReplacementTransformer(
                     )
                 )
             return _make_expression_insert_call(
-                hole_name, inserts[0].expr, location_donor=node
+                hole_name,
+                inserts[0].expr,
+                pyimports=inserts[0].pyimports,
+                location_donor=node,
             )
 
         node.func = self.visit(node.func)
@@ -2243,7 +2280,10 @@ class _HoleReplacementTransformer(
                 new_args.append(arg)
                 new_args.extend(
                     _make_expression_insert_call(
-                        hole_name, insert.expr, location_donor=arg
+                        hole_name,
+                        insert.expr,
+                        pyimports=insert.pyimports,
+                        location_donor=arg,
                     )
                     for insert in inserts
                 )
@@ -2259,7 +2299,10 @@ class _HoleReplacementTransformer(
                 new_args.extend(
                     ast.Starred(
                         value=_make_expression_insert_call(
-                            hole_name, insert.expr, location_donor=arg
+                            hole_name,
+                            insert.expr,
+                            pyimports=insert.pyimports,
+                            location_donor=arg,
                         ),
                         ctx=arg.ctx,
                     )
@@ -2287,7 +2330,10 @@ class _HoleReplacementTransformer(
                     ast.keyword(
                         arg=None,
                         value=_make_expression_insert_call(
-                            hole_name, insert.expr, location_donor=keyword
+                            hole_name,
+                            insert.expr,
+                            pyimports=insert.pyimports,
+                            location_donor=keyword,
                         ),
                     )
                     for insert in inserts
@@ -2309,7 +2355,10 @@ class _HoleReplacementTransformer(
             return [
                 ast.Starred(
                     value=_make_expression_insert_call(
-                        hole_name, insert.expr, location_donor=node
+                        hole_name,
+                        insert.expr,
+                        pyimports=insert.pyimports,
+                        location_donor=node,
                     ),
                     ctx=node.ctx,
                 )
@@ -2334,7 +2383,10 @@ class _HoleReplacementTransformer(
                     ast.keyword(
                         arg=None,
                         value=_make_expression_insert_call(
-                            hole_name, insert.expr, location_donor=node
+                            hole_name,
+                            insert.expr,
+                            pyimports=insert.pyimports,
+                            location_donor=node,
                         ),
                     )
                 )
@@ -2359,7 +2411,10 @@ class _HoleReplacementTransformer(
                     new_keys.append(None)
                     new_values.append(
                         _make_expression_insert_call(
-                            hole_name, insert.expr, location_donor=value
+                            hole_name,
+                            insert.expr,
+                            pyimports=insert.pyimports,
+                            location_donor=value,
                         )
                     )
                 continue

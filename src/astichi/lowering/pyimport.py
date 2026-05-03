@@ -78,9 +78,16 @@ def validate_pyimport_declarations(
     ]
     if not pyimport_markers:
         return ()
+    carrier_call_ids = _expression_insert_carrier_pyimport_call_ids(tree)
     for marker in pyimport_markers:
         declaration = _parse_declaration(marker, errors)
-        _validate_marker_placement(tree, scope_map, marker, errors)
+        _validate_marker_placement(
+            tree,
+            scope_map,
+            marker,
+            errors,
+            carrier_call_ids=carrier_call_ids,
+        )
         if declaration is not None:
             declarations.append(declaration)
     if errors:
@@ -253,8 +260,12 @@ def _validate_marker_placement(
     scope_map: AstichiScopeMap,
     marker: RecognizedMarker,
     errors: list[str],
+    *,
+    carrier_call_ids: frozenset[int],
 ) -> None:
     if not isinstance(marker.node, ast.Call):
+        return
+    if id(marker.node) in carrier_call_ids:
         return
     lineno = getattr(marker.node, "lineno", 0) or 0
     nested_root = scope_map.nested_python_root_for(marker.node)
@@ -279,6 +290,32 @@ def _validate_marker_placement(
             f"astichi_pyimport(...) at line {lineno} must appear in the "
             "contiguous top-of-Astichi-scope prefix"
         )
+
+
+def _expression_insert_carrier_pyimport_call_ids(tree: ast.AST) -> frozenset[int]:
+    call_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "astichi_insert"
+            and len(node.args) == 2
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "pyimport":
+                continue
+            value = keyword.value
+            if not isinstance(value, ast.Tuple):
+                continue
+            for element in value.elts:
+                if (
+                    isinstance(element, ast.Call)
+                    and isinstance(element.func, ast.Name)
+                    and element.func.id == PYIMPORT.source_name
+                ):
+                    call_ids.add(id(element))
+    return frozenset(call_ids)
 
 
 def _scope_prefix_body(
