@@ -619,6 +619,64 @@ class _RefMarker(MarkerSpec):
                     )
 
 
+class _PyImportMarker(MarkerSpec):
+    """`astichi_pyimport(...)` — managed Python import declaration."""
+
+    source_name = "astichi_pyimport"
+
+    def is_permitted_in_unroll_body(self) -> bool:
+        return False
+
+    def metadata_name_nodes(self, marker: "RecognizedMarker") -> tuple[ast.Name, ...]:
+        node = marker.node
+        if not isinstance(node, ast.Call):
+            return ()
+        nodes: list[ast.Name] = []
+        for keyword in node.keywords:
+            if keyword.arg == "module":
+                for child in ast.walk(keyword.value):
+                    if isinstance(child, ast.Name):
+                        nodes.append(child)
+                continue
+            if keyword.arg == "names":
+                value = keyword.value
+                if isinstance(value, ast.Tuple):
+                    nodes.extend(
+                        elt for elt in value.elts if isinstance(elt, ast.Name)
+                    )
+                continue
+            if keyword.arg == "as_" and isinstance(keyword.value, ast.Name):
+                nodes.append(keyword.value)
+        return tuple(nodes)
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError("astichi_pyimport must be recognized from an ast.Call")
+        if node.args:
+            raise ValueError(
+                "astichi_pyimport(...) accepts keyword arguments only"
+            )
+        seen: set[str] = set()
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                raise ValueError("astichi_pyimport(...) does not accept **kwargs")
+            if keyword.arg not in {"module", "names", "as_"}:
+                raise ValueError(
+                    f"astichi_pyimport(...) does not accept keyword `{keyword.arg}`"
+                )
+            if keyword.arg in seen:
+                raise ValueError(
+                    f"astichi_pyimport(...) received duplicate keyword `{keyword.arg}`"
+                )
+            seen.add(keyword.arg)
+        if "module" not in seen:
+            raise ValueError("astichi_pyimport(...) requires module=...")
+        if "names" in seen and "as_" in seen:
+            raise ValueError(
+                "astichi_pyimport(...) may not combine names= with as_="
+            )
+
+
 HOLE = _HoleMarker()
 BIND_ONCE = _ReservedMarker(
     "astichi_bind_once",
@@ -661,6 +719,7 @@ FUNCARGS = _FuncArgsMarker()
 PARAMS = _ParamsMarker()
 INSERT = _InsertMarker()
 REF = _RefMarker()
+PYIMPORT = _PyImportMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
 PARAM_HOLE_IDENTIFIER = _ParamHoleIdentifierMarker()
@@ -705,6 +764,7 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     PARAMS,
     INSERT,
     REF,
+    PYIMPORT,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,
     PARAM_HOLE_IDENTIFIER,

@@ -27,6 +27,7 @@ from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 
 _IMPORT_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import"})
+_PREFIX_NEUTRAL_MARKER_NAMES: frozenset[str] = frozenset({"astichi_pyimport"})
 
 
 def validate_boundary_marker_placement(tree: ast.Module) -> None:
@@ -63,6 +64,8 @@ def _validate_scope_body(
                 )
             # boundary-decl statement itself has no children worth
             # recursing into (its call arg is a bare `ast.Name`).
+            continue
+        if _top_level_prefix_neutral_marker(stmt) is not None:
             continue
         past_prefix = True
         _validate_nested(stmt, scope_label, errors)
@@ -133,6 +136,19 @@ def _top_level_import_marker(stmt: ast.stmt) -> tuple[str, int] | None:
         return None
     lineno = getattr(stmt, "lineno", 0) or getattr(stmt.value, "lineno", 0) or 0
     return name, lineno
+
+
+def _top_level_prefix_neutral_marker(stmt: ast.stmt) -> str | None:
+    if not isinstance(stmt, ast.Expr):
+        return None
+    value = stmt.value
+    if not isinstance(value, ast.Call):
+        return None
+    if not isinstance(value.func, ast.Name):
+        return None
+    if value.func.id not in _PREFIX_NEUTRAL_MARKER_NAMES:
+        return None
+    return value.func.id
 
 
 def _boundary_call_name(call: ast.Call) -> str | None:

@@ -34,6 +34,12 @@ work.
     parameter names are function-scope bindings and hygiene must not rename
     them to repair a signature; body-local collisions rename away from the
     parameter binding.
+- Managed Python import support is in roll-build:
+  - Phase 1 is implemented: `astichi_pyimport(...)` is a recognized marker,
+    compile-time validation rejects invalid V1 shapes and placement, and
+    `materialize()` rejects recognized pyimport declarations until import
+    binding/emission phases land.
+  - No final import synthesis behavior is implemented yet.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -64,8 +70,8 @@ work.
     `wire_identifier(...)` on builder slot handles remains deferred;
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-04-28:
-  - full suite: `543 passed`
+- Test status as of 2026-05-03:
+  - full suite: `582 passed`
   - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:

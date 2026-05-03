@@ -37,6 +37,7 @@ from astichi.lowering import (
     has_params_payload,
     is_astichi_funcargs_call,
     lower_payload_for_region,
+    materialize_rejects_pyimport,
     param_hole_name,
     register_explicit_keyword,
     recognize_markers,
@@ -2734,6 +2735,7 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         )
     apply_external_ref_lowering(tree)
     markers = recognize_markers(tree)
+    materialize_rejects_pyimport(markers)
     # Hygiene pinning is only meaningful for names that actually sit
     # at a hygiene-relevant position in the tree — `ast.Name`,
     # `ast.arg`, or a def/class name. Callsite `ast.keyword.arg`

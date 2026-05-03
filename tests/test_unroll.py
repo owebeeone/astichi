@@ -321,6 +321,16 @@ def test_reject_bind_external_in_body() -> None:
         )
 
 
+def test_reject_pyimport_in_body() -> None:
+    with pytest.raises(ValueError, match="astichi_pyimport"):
+        _unroll(
+            """
+            for x in astichi_for((1,)):
+                astichi_pyimport(module=foo, names=(a,))
+            """
+        )
+
+
 def test_reject_insert_call_in_body() -> None:
     with pytest.raises(ValueError, match="astichi_insert"):
         _unroll(

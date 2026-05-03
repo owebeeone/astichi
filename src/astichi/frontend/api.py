@@ -22,6 +22,7 @@ from astichi.lowering import (
     recognize_markers,
     validate_boundary_interaction_matrix,
     validate_boundary_marker_placement,
+    validate_pyimport_declarations,
 )
 from astichi.model import (
     BasicComposable,
@@ -116,6 +117,7 @@ def compile(
     desugar_external_ref_kwargs(tree)
     validate_external_ref_surface(tree)
     markers = recognize_markers(tree)
+    validate_pyimport_declarations(tree, markers)
     validate_parameter_hole_surface(tree, markers)
     # Issue 006 6b: reject forbidden per-scope marker combinations
     # (e.g. `import + pass` on the same name) before continuing.

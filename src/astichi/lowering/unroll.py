@@ -286,13 +286,15 @@ class _BodyValidator(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Name):
             marker = MARKERS_BY_NAME.get(node.func.id)
-            if marker is not None and marker.is_name_bearing():
+            if marker is not None and (
+                marker.is_name_bearing() or marker.source_name == "astichi_pyimport"
+            ):
                 if not marker.is_permitted_in_unroll_body():
                     self._errors.append(
                         f"{marker.source_name}(...) is not allowed inside an "
                         f"astichi_for body"
                     )
-                elif node.args:
+                elif marker.is_name_bearing() and node.args:
                     first = node.args[0]
                     if (
                         isinstance(first, ast.Name)

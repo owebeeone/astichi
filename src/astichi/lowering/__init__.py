@@ -62,6 +62,11 @@ from astichi.lowering.parameters import (
     validate_parameter_hole_surface,
     validate_parameter_payload_surface,
 )
+from astichi.lowering.pyimport import (
+    PyImportDeclaration,
+    materialize_rejects_pyimport,
+    validate_pyimport_declarations,
+)
 
 __all__ = [
     "MARKERS_BY_NAME",
@@ -83,6 +88,7 @@ __all__ = [
     "PLAIN_FUNC_ARG_REGION",
     "PortTemplate",
     "PositionalFuncArgItem",
+    "PyImportDeclaration",
     "RecognizedMarker",
     "StatementPrefixScan",
     "StarredFuncArgItem",
@@ -112,6 +118,8 @@ __all__ = [
     "validate_external_ref_surface",
     "validate_parameter_hole_surface",
     "validate_parameter_payload_surface",
+    "validate_pyimport_declarations",
     "validate_payload_for_region",
+    "materialize_rejects_pyimport",
     "scan_statement_prefix",
 ]
