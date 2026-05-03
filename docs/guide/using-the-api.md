@@ -217,6 +217,10 @@ closed = graph.materialize()
 If a required hole is missing or a name rule is violated, **`materialize`**
 raises with a diagnostic.
 
+Managed `astichi_pyimport(...)` declarations are also realized here. The marker
+is removed, the imported local participates in hygiene, and the final module
+receives an ordinary Python import statement.
+
 ## 7. Emit
 
 Produce Python **source** for inspection, tests, or downstream tools.
@@ -235,6 +239,7 @@ round-trip checks. See [Materialize and emit](../reference/materialize-and-emit.
 ## 8. Where to read next
 
 - [Reference index](../reference/README.md)
+- [Managed Python imports](../reference/marker-pyimport.md)
 - [Descriptor API](../reference/descriptor-api.md)
 - [Builder API](../reference/builder-api.md)
 - **[`AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)** — current snapshot and open gaps

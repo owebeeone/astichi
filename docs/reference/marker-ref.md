@@ -158,6 +158,21 @@ The sentinel strip is **one-shot**. Any postfix syntax after the stripped
 sentinel is preserved literally and applies to the lowered reference; prefer
 plain `astichi_ref(...)` spelling unless a target-position wrapper is required.
 
+## Managed import module paths
+
+`astichi_pyimport(...)` can use `astichi_ref(...)` in its `module=` keyword when
+the module path is externally supplied at compile time:
+
+```python
+astichi_bind_external(module_path)
+astichi_pyimport(module=astichi_ref(external=module_path), names=(thing,))
+```
+
+After binding `module_path="pkg.mod"`, pyimport consumes the lowered dotted
+reference chain and emits `from pkg.mod import thing`. Pyimport does not add
+special sentinel handling in this position; use the same absolute path strings
+accepted by ordinary `astichi_ref(...)`.
+
 ## Loop / unroll example
 
 ```python
@@ -214,5 +229,6 @@ expressions.
 - [`marker-overview.md`](marker-overview.md) — full marker vocabulary
 - [`marker-for-and-insert.md`](marker-for-and-insert.md) — `astichi_for` and
   `astichi_funcargs`
+- [`marker-pyimport.md`](marker-pyimport.md) — managed Python imports
 - [`AstichiV3ExternalRefBind.m4`](../../dev-docs/historical/AstichiV3ExternalRefBind.m4) —
   normative spec

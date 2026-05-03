@@ -110,6 +110,11 @@ See:
 
 - [scope/colliding_locals_two_inserts](snippets/scope/colliding_locals_two_inserts/)
 
+Managed pyimport locals are part of the same binding model. A marker such as
+`astichi_pyimport(module=foo, names=(a,))` owns the local binding `a`; if hygiene
+renames that binding, materialize emits an import alias and rewrites all matching
+uses.
+
 ## Preserved names
 
 A preserved name keeps its spelling. Competing locals are renamed away from it
@@ -185,6 +190,9 @@ scope boundary.
   identifier demand.
 - `astichi_pass(name)` is value-form: it participates in an expression.
 - `astichi_export(name)` supplies a binding from a snippet.
+- `astichi_pyimport(...)` can supply a local binding inside its owner scope; a
+  child scope can read that binding with `astichi_import(..., outer_bind=True)`
+  or `astichi_pass(..., outer_bind=True)`.
 - `outer_bind=True` is the explicit same-name immediate outer-scope form.
 - `builder.assign...` is the preferred explicit wiring surface for nontrivial
   cross-instance composition.
@@ -212,4 +220,5 @@ not, Astichi keeps independent locals from colliding.
 - [classification-modes.md](classification-modes.md)
 - [marker-keep.md](marker-keep.md)
 - [marker-binds-and-exports.md](marker-binds-and-exports.md)
+- [marker-pyimport.md](marker-pyimport.md)
 - [ReferenceGuide.md](ReferenceGuide.md)

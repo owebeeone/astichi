@@ -13,6 +13,7 @@ Astichi is a fit when you want to:
 - stitch block and expression fragments at named composition sites
 - bind compile-time values into source before final lowering
 - unroll compile-time loops into straight-line Python
+- synthesize managed imports that participate in hygiene
 - inspect composables with descriptors before wiring them
 - emit inspectable source with provenance instead of opaque runtime machinery
 
@@ -56,6 +57,7 @@ The core markers are:
 - `astichi_funcargs(...)` -> call-argument payload
 - `astichi_bind_external(name)` -> external/literal value slot
 - `astichi_ref(path)` -> compile-time reducible identifier / attribute path
+- `astichi_pyimport(module=..., names=(...))` -> managed Python import
 - `astichi_pass(name, outer_bind=True)` -> explicit same-name boundary read
 - `astichi_import(name)` -> explicit whole-scope boundary import
 - `astichi_export(name)` -> explicit outward supply
@@ -220,7 +222,8 @@ Astichi currently provides:
 - provenance helpers in `astichi.emit`
 
 Supported pieces today include block holes, expression inserts, external
-binding, materialization, emission, and builder-driven loop unrolling.
+binding, managed Python imports, materialization, emission, and builder-driven
+loop unrolling.
 
 ## Layout
 

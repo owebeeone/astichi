@@ -49,6 +49,8 @@ work.
   - Staged composition and child-scope `astichi_import(..., outer_bind=True)` /
     `astichi_pass(..., outer_bind=True)` reading an enclosing pyimport local are
     covered.
+  - Public reference documentation now covers pyimport surface, placement,
+    hygiene, materialize-time synthesis, and V1 rejections.
   - Expression-snippet pyimport prefix carriers, automatic descriptor supplies,
     import-position `__astichi_arg__`, and alias-dict imports remain deferred.
 - Implemented V2 work:
@@ -425,6 +427,7 @@ Current implementation reality:
 | `astichi_export(name)` | implemented | Supply-side export; stripped during materialize. |
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
 | `astichi_for(domain)` | implemented | Compile-time loop domain for `build(unroll=...)`; supports literal tuples/lists, literal `range(...)`, and bind-fed literal domains. |
+| `astichi_pyimport(module=..., names=(...))` / `astichi_pyimport(module=..., as_=...)` | implemented | Managed Python import marker. Valid only in a top-of-Astichi-scope statement prefix. Materialize emits ordinary imports at module head after docstring/future imports. Expression carriers, descriptor auto-supplies, import-position `__astichi_arg__`, and alias dicts remain deferred. |
 | `astichi_bind_once(name, expr)` | rejected | Reserved and obsolete; use ordinary Python assignment for single-evaluation reuse. |
 | `astichi_bind_shared(name, expr)` | rejected | Reserved and obsolete; use enclosing Python state plus boundary wiring for shared state. |
 | `name__astichi__` / `astichi_definitional_name` | retired | Not a supported marker surface. Use `__astichi_arg__`, `__astichi_keep__`, or explicit boundary wiring. |

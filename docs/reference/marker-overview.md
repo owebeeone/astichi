@@ -28,6 +28,8 @@ def astichi_params(...): pass
 async def astichi_params(...): pass
 astichi_ref(value)
 astichi_ref(external=name)
+astichi_pyimport(module=module_path, names=(name,))
+astichi_pyimport(module=module_path, as_=alias)
 name__astichi_keep__
 name__astichi_arg__
 name__astichi_param_hole__
@@ -79,6 +81,19 @@ Reference-path note:
   it is grammatically legal as an `Assign` / `AugAssign` / `Delete` target.
   Prefer bare `astichi_ref(...)` in ordinary expression chains.
 
+Managed import note:
+
+- `astichi_pyimport(...)` declares imports that are synthesized during
+  `materialize()` and emitted as ordinary Python imports at module head.
+- Imported local names participate in hygiene like other local bindings, so a
+  collision can turn `from foo import a` into
+  `from foo import a as a__astichi_scoped_1`.
+- Use `module=astichi_ref(external=name)` when the module path comes from an
+  externally bound compile-time string.
+- Pyimport is a top-of-Astichi-scope statement-prefix marker; it is not valid
+  inside `astichi_for(...)` bodies or nested real user-authored function/class
+  bodies.
+
 Cross-scope note:
 
 - `astichi_import(name)` is the declaration-form identifier-threading surface
@@ -126,6 +141,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
 | Parameter holes | [marker-params.md](marker-params.md) |
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
+| Managed Python imports (`astichi_pyimport`) | [marker-pyimport.md](marker-pyimport.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
 | Identifier suffixes | [classification-modes.md](classification-modes.md) |
 | Scoping and hygiene | [scoping-hygiene.md](scoping-hygiene.md) |

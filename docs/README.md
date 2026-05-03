@@ -26,6 +26,7 @@ no longer match the live implementation exactly.
 | `Composable.describe()` descriptor surfaces | [Reference: Descriptor API](reference/descriptor-api.md) |
 | Target addressing (`A.first[0]`, …) | [Reference: Addressing](reference/addressing.md) |
 | Marker vocabulary | [Reference: Markers](reference/marker-overview.md) |
+| Managed Python imports | [Reference: `astichi_pyimport`](reference/marker-pyimport.md) |
 
 ## Layout
 

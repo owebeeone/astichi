@@ -15,6 +15,11 @@ It **requires**:
 On violation it **raises**; it never returns a value that violates the contract
 (**[§10.2](../../dev-docs/historical/AstichiApiDesignV1.md)**).
 
+During materialization Astichi also consumes executable-only markers. Managed
+`astichi_pyimport(...)` statements become ordinary Python imports at module
+head, after a module docstring and after ordinary `from __future__ import ...`
+statements. No `astichi_pyimport(...)` call survives final materialized output.
+
 ## `emit(*, provenance: bool = True) -> str`
 
 Renders **source text** for debugging, tests, inspection, or downstream codegen.
@@ -50,8 +55,13 @@ Astichi **may** emit source that still contains **markers** at boundary sites so
 that **`compile`** can reconstruct a `Composable`. Whether a given emission is
 full Python or skeleton is a **documented policy** of the emit mode.
 
+Pre-materialized emission preserves source-visible markers, including
+`astichi_pyimport(...)`, for round-trip. Final materialized emission strips or
+realizes those markers into executable Python.
+
 ## See also
 
 - [Composable API](composable-api.md)
 - [Compile API](compile-api.md)
+- [Marker: astichi_pyimport](marker-pyimport.md)
 - **[§10–13](../../dev-docs/historical/AstichiApiDesignV1.md)**

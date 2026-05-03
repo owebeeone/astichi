@@ -20,7 +20,8 @@ from astichi import compile, build
 ## Marker names in compiled source
 
 Astichi recognizes marker names such as `astichi_hole`, `astichi_bind_external`,
-and `astichi_for` from the **source text** passed to `astichi.compile(...)`.
+`astichi_for`, and `astichi_pyimport` from the **source text** passed to
+`astichi.compile(...)`.
 
 `astichi_insert(...)` is reserved internal metadata. The default
 `astichi.compile(..., source_kind="authored")` rejects it; only re-ingest
