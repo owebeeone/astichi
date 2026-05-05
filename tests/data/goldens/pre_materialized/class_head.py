@@ -1,0 +1,17 @@
+astichi_hole(__astichi_root__Root__)
+
+@astichi_insert(__astichi_root__Root__, ref=Root)
+def __astichi_root__Root__():
+
+    class SingleBase(astichi_insert(single_base, BaseRoot)):
+        pass
+
+    class MultiBase(*astichi_insert(multi_bases, BaseA), *astichi_insert(multi_bases, BaseB)):
+        pass
+
+    class WithMeta(BaseRoot, metaclass=astichi_insert(meta, Meta)):
+        pass
+
+    class WithKeywords(BaseRoot, **astichi_insert(class_keywords, {metaclass: Meta, flag: True})):
+        pass
+# astichi-provenance: eNqtVk1v0zAY7tZ27ZLRjiE2EBtsQ0LAYZx22mkfcAmbEEhwmoKbuHW0NK4Sh60HEEcOvmF+ARL8A34Ov4XXjps4XcYqxKRtiv2+z2s/z+PX/tz81rRr6ofXUcIEXzimfhpi8VU8eS0+ise80aP+WJyKx6TGG88vRnEx1fyAwhQLOXGIwtDI6aeRp8ZP0NDAmg98wZegTuCRwCUU6vC6xy5U6EuK/Ekov+lOopLYc/uBjFwd0NCX38+8ECWJSzDyd0ZjkfT4QhhEOKLCmecWjnx38lnnlkdDl/b7CWbCqfGOnDWH2mSdbKQ93kDxIIFtkpVsreQ2X3XzRcSUMtd9rf4KskbuqiCZmvTIfWeePHDqZNOpka0JIOLtMzw+p7GvUCtj1KgckTPFaI3bL4A/FtDoCPcNViNJJnlEtiFkEdabDnHEkiLAHtGERuF4spXtU9DzA4rhW5xw6+zcmOT22bnr4z5KQ6a+m2fnWVzbGNUrambytw8l7+aayDNuvQmiQYgPUAISNXvwTyXe0AHLBqGdCZ1BlOCYXUGkpOQm0PFUF9+WxQsQO1H1XFlpRoQiuS2XKWWsyJzTUswVUmDyRGsnASVwDorUFBAjrfsKaCk4ua90bpRVRbzjY4/GiNEY7AlHTWrAxiPsjkChYe6Sy37Yz7lePAZdAkU1eZ5p0nrDUBxjvyhvV3FPnMsbXoA6C1Bv+S9kD2VBN1N1NoQiuSkXun8N080y0xmaRC0QK8u2po5S8P93T9J/2vHB/9jxp+pt4tx1p7nZWtpsLcNs5D2E9HL8WnnacFT7XcDIMWZIGcrY+9vLm7AAqQtIFiCtmacAXKh7XdGL6rKZ8MUhQKtuLWZXxlI1Np2HUGe32peNoVryTKlG1nF1lqlOo6xOBpbteTfv2nL0bnkUTalia1XsalUsXdKuVGVJquJMro/rlekA2i1A6wDaPVOZ7zrrx8ns9HcU0KazAWB71fR3sgs4v+BmA4FGeRR4zLjQACAR5TP3s6qlb4I0Wfe1LovaD9FAruC3Dl3RoataSXkFwjNlutAvI2VJpyznK20f0ihhKGJGX/0CCw4iX5zorDs6a31imaJ9y+GNspMyNjKN9nInSZ66Uy+HKSd1tZO61U7q6JJds0u8r76Bq+Suepdslwz3aLYHT9lwvB7DOwFcZyh15cX7QB/BLfgtXkYVJa54arVizNI4SuD1sqSuVI8O5dsIpOpdda1iHRoMIhord6S9nT9EPZDf
