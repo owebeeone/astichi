@@ -261,3 +261,7 @@ Start with:
 - `docs/` for the user-facing surface
 - `dev-docs/AstichiSingleSourceSummary.md` for the current implementation
   snapshot and known gaps
+
+## License
+
+MIT. See [LICENSE](LICENSE).

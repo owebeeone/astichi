@@ -6,12 +6,15 @@ build-backend = "hatchling.build"
 name = "astichi"
 version = "0.1.0"
 description = "AST composition helpers: markers, hygiene, lifting, and lowering for composable Python code generation"
+readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "astichi contributors" }]
+license = { file = "LICENSE" }
 keywords = ["ast", "codegen", "composition", "compiler"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -27,7 +30,7 @@ test = ["pytest>=7.0"]
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/astichi", "tests", "dev-docs", "scratch"]
+include = ["src/astichi", "tests", "dev-docs", "scratch", "LICENSE", "README.md"]
 
 # Run: uv run --with pytest pytest -q
 # Focused: uv run --with pytest pytest <test-path> -q
