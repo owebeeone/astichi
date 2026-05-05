@@ -11,7 +11,7 @@ Standalone snippets: optional first line
 Builder bundles: either
 
   - snippet.json + fragment .py files (see below), or
-  - recipe.py defining ``def run() -> str:`` returning ``ast.unparse(materialize(...).tree)``
+  - recipe.py defining ``def run() -> str:`` returning final generated source
 
 snippet.json shape:
 

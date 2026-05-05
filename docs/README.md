@@ -27,6 +27,7 @@ no longer match the live implementation exactly.
 | Target addressing (`A.first[0]`, …) | [Reference: Addressing](reference/addressing.md) |
 | Marker vocabulary | [Reference: Markers](reference/marker-overview.md) |
 | Managed Python imports | [Reference: `astichi_pyimport`](reference/marker-pyimport.md) |
+| Final generated comments | [Reference: `astichi_comment`](reference/marker-comment.md) |
 
 ## Layout
 

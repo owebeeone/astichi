@@ -15,6 +15,7 @@ categories below follow **[§15](../../dev-docs/historical/AstichiApiDesignV1.md
 | Unresolved required default hole or overfilled optional annotation hole in a parameter payload | Error at build / materialize |
 | Invalid `astichi_keep(...)` argument (not bare identifier) | Error |
 | Invalid `astichi_pyimport(...)` shape, module path, or placement | Error at compile / lowering |
+| Invalid `astichi_comment(...)` placement or non-literal payload | Error at compile / lowering |
 | Unresolved free identifier in **strict** mode | Error |
 | Same variadic target, same `order` on two inserts | Error |
 | `astichi_for` target unpacking fails at compile time | Error |

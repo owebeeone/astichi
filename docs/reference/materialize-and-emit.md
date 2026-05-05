@@ -76,5 +76,6 @@ expanded. Other brace text is emitted literally.
 
 - [Composable API](composable-api.md)
 - [Compile API](compile-api.md)
+- [Marker: astichi_comment](marker-comment.md)
 - [Marker: astichi_pyimport](marker-pyimport.md)
 - **[§10–13](../../dev-docs/historical/AstichiApiDesignV1.md)**

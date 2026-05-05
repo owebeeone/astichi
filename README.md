@@ -64,6 +64,13 @@ The core markers are:
 - `astichi_export(name)` -> explicit outward supply
 - `astichi_insert(...)` -> internal emitted metadata, not general authored API
 
+Comment marker note:
+
+- `astichi_comment("...")` is statement-only. Ordinary `materialize()` strips
+  it for executable output; `emit_commented()` renders it as real `#` comments.
+- Multi-line payloads keep the marker statement's indentation, and only exact
+  `{__file__}` / `{__line__}` substrings are expanded.
+
 Value-form target note:
 
 - `astichi_ref(...)` and `astichi_pass(...)` are ordinary value-form surfaces in

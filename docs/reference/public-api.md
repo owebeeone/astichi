@@ -61,7 +61,7 @@ composition. See [descriptor-api.md](descriptor-api.md).
 
 `.emit_commented()` runs final materialization and renders `astichi_comment(...)`
 markers as real Python comments. It returns plain source with no provenance
-tail.
+tail. See [marker-comment.md](marker-comment.md).
 
 Additional descriptor value objects for advanced inspection are exported from
 `astichi.model`, including `PortDescriptor`, `HoleDescriptor`,

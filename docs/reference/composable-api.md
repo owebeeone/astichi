@@ -45,7 +45,8 @@ before** the provenance tail by reparsing. See **[§11](../../dev-docs/historica
 Runs final materialization with `astichi_comment("...")` markers preserved long
 enough to render them as real Python `#` comments. The returned source has no
 provenance tail and is intended as final inspectable output, not as a
-marker-preserving round-trip surface.
+marker-preserving round-trip surface. See [marker-comment.md](marker-comment.md)
+for placeholder and indentation rules.
 
 ## `materialize() -> Composable`
 

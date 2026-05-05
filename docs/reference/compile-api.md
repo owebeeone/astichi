@@ -30,7 +30,9 @@ Exposed as **`astichi.compile`** and **`astichi.frontend.compile`**.
 | `source_kind` | `"authored"` | `"authored"` is the normal user-snippet mode. `"astichi-emitted"` is only for re-ingesting Astichi-emitted source that contains internal metadata such as `astichi_insert(...)`. |
 
 The compiler prepends blank lines and spaces before calling **`ast.parse`**, so
-`lineno` / `col_offset` on the parsed `ast` align with the host file.
+`lineno` / `col_offset` on the parsed `ast` align with the host file. The same
+logical filename and line metadata is used by `astichi_comment(...)`
+`{__file__}` / `{__line__}` expansion during `emit_commented()`.
 
 `source_kind="authored"` rejects internal `astichi_insert(...)` metadata. Use
 `astichi_hole(...)` plus `astichi.build()` to compose authored snippets.
@@ -61,4 +63,5 @@ types are part of the public API contract for the release).
 
 - [Composable API](composable-api.md)
 - [Classification modes](classification-modes.md)
+- [Marker: astichi_comment](marker-comment.md)
 - **[§4 — Compile API](../../dev-docs/historical/AstichiApiDesignV1.md)**

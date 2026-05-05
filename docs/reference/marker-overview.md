@@ -156,6 +156,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Reference-path values (`astichi_ref`) | [marker-ref.md](marker-ref.md) |
 | Managed Python imports (`astichi_pyimport`) | [marker-pyimport.md](marker-pyimport.md) |
 | Preserved names | [marker-keep.md](marker-keep.md) |
+| Final-source comments (`astichi_comment`) | [marker-comment.md](marker-comment.md) |
 | Identifier suffixes | [classification-modes.md](classification-modes.md) |
 | Scoping and hygiene | [scoping-hygiene.md](scoping-hygiene.md) |
 
