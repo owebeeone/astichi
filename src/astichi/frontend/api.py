@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable, Mapping
 
+from astichi.ast_provenance import attach_astichi_source_file
 from astichi.asttools import is_astichi_insert_call
 from astichi.frontend.source_kind import (
     AUTHORED_SOURCE,
@@ -14,6 +15,7 @@ from astichi.frontend.source_kind import (
 from astichi.frontend.compiled import FrontendComposable
 from astichi.hygiene import analyze_names
 from astichi.lowering import (
+    COMMENT,
     desugar_external_ref_kwargs,
     validate_call_argument_payload_surface,
     validate_external_ref_surface,
@@ -107,6 +109,7 @@ def compile(
             ),
             filename=origin.file_name,
         )
+    attach_astichi_source_file(tree, origin.file_name)
     _validate_authored_marker_surface(tree, source_kind=normalized_source_kind)
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
@@ -117,6 +120,7 @@ def compile(
     desugar_external_ref_kwargs(tree)
     validate_external_ref_surface(tree)
     markers = recognize_markers(tree)
+    _validate_comment_markers(markers)
     validate_pyimport_declarations(tree, markers)
     validate_parameter_hole_surface(tree, markers)
     # Issue 006 6b: reject forbidden per-scope marker combinations
@@ -165,6 +169,22 @@ def _validate_authored_marker_surface(
             f"cannot be authored directly at line {lineno}; use astichi.build() "
             "to add snippets into astichi_hole(...) and only compile emitted "
             "Astichi source with source_kind='astichi-emitted'"
+        )
+
+
+def _validate_comment_markers(markers: tuple[object, ...]) -> None:
+    for marker in markers:
+        spec = getattr(marker, "spec", None)
+        if spec is not COMMENT:
+            continue
+        shape = getattr(marker, "shape", None)
+        if shape is not None and shape.is_block():
+            continue
+        node = getattr(marker, "node", None)
+        lineno = getattr(node, "lineno", "?")
+        raise ValueError(
+            "astichi_comment(...) is statement-only and cannot be used as a "
+            f"value at line {lineno}"
         )
 
 

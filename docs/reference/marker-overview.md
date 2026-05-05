@@ -30,6 +30,7 @@ astichi_ref(value)
 astichi_ref(external=name)
 astichi_pyimport(module=module_path, names=(name,))
 astichi_pyimport(module=module_path, as_=alias)
+astichi_comment("comment text")
 name__astichi_keep__
 name__astichi_arg__
 name__astichi_param_hole__
@@ -93,6 +94,18 @@ Managed import note:
 - Pyimport is a top-of-Astichi-scope statement-prefix marker; it is not valid
   inside `astichi_for(...)` bodies or nested real user-authored function/class
   bodies.
+
+Comment note:
+
+- `astichi_comment("...")` is a statement-only final-output comment marker.
+- Ordinary `emit()` preserves it as a marker for round-trip. Ordinary
+  `materialize()` strips it, inserting `pass` only when a non-module suite
+  would otherwise become empty.
+- `emit_commented()` is the narrow final-output surface that materializes with
+  comments preserved long enough to render them as real `#` comment lines.
+- The literal payload may contain `{__file__}` and `{__line__}` placeholders;
+  only those exact substrings are replaced. Other braces pass through
+  unchanged.
 
 Cross-scope note:
 

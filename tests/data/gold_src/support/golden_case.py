@@ -33,6 +33,8 @@ def run_case(
     build_case: Callable[[], astichi.Composable],
     validate: Validation | None = None,
     argv: Sequence[str] | None = None,
+    *,
+    emit_commented: bool = False,
 ) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2:
@@ -46,7 +48,11 @@ def run_case(
         raise TypeError(f"{case_name}: materialize() returned {type(materialized)!r}")
 
     pre_source = composable.emit(provenance=True)
-    materialized_source = materialized.emit(provenance=False)
+    materialized_source = (
+        composable.emit_commented()
+        if emit_commented
+        else materialized.emit(provenance=False)
+    )
     if validate is not None:
         validate(composable, materialized, pre_source, materialized_source)
 

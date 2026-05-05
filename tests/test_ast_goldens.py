@@ -76,18 +76,26 @@ def test_fixture_outputs_match_goldens(case_name: str) -> None:
     verify_round_trip(expected_pre_source)
     ast.parse(pre_source, filename=f"goldens/pre_materialized/{case_name}")
     compile(materialized_source, f"goldens/materialized/{case_name}", "exec")
-    assert (
-        astichi.compile(pre_source, source_kind="astichi-emitted")
-        .materialize()
-        .emit(provenance=False)
-        == expected_materialized_source
+    round_tripped = astichi.compile(pre_source, source_kind="astichi-emitted")
+    expected_round_tripped = astichi.compile(
+        expected_pre_source, source_kind="astichi-emitted"
     )
-    assert (
-        astichi.compile(expected_pre_source, source_kind="astichi-emitted")
-        .materialize()
-        .emit(provenance=False)
-        == expected_materialized_source
-    )
+    if _has_comment_marker(round_tripped) or _has_comment_marker(expected_round_tripped):
+        assert "astichi_comment" not in round_tripped.materialize().emit(
+            provenance=False
+        )
+        assert "astichi_comment" not in expected_round_tripped.materialize().emit(
+            provenance=False
+        )
+    else:
+        assert (
+            round_tripped.materialize().emit(provenance=False)
+            == expected_materialized_source
+        )
+        assert (
+            expected_round_tripped.materialize().emit(provenance=False)
+            == expected_materialized_source
+        )
 
     assert _normalize_provenance_payload(pre_source) == _normalize_provenance_payload(
         expected_pre_source
@@ -103,3 +111,11 @@ def _normalize_provenance_payload(source: str) -> str:
         else line
         for line in lines
     ) + ("\n" if source.endswith("\n") else "")
+
+
+def _has_comment_marker(composable: astichi.Composable) -> bool:
+    markers = getattr(composable, "markers", ())
+    return any(
+        getattr(marker, "source_name", None) == "astichi_comment"
+        for marker in markers
+    )

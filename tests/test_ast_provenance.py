@@ -8,7 +8,10 @@ import pytest
 
 from astichi import compile as astichi_compile
 from astichi.ast_provenance import (
+    astichi_source_file,
+    attach_astichi_source_file,
     assert_tree_has_ast_source_locations,
+    copy_astichi_location,
     has_valid_ast_source_location,
     iter_nodes_missing_ast_source_location,
     propagate_ast_source_locations,
@@ -27,6 +30,7 @@ def test_requires_ast_source_location_excludes_module() -> None:
 def test_propagate_from_donor_fills_synthetic_expr() -> None:
     donor = ast.parse("f()").body[0].value
     assert isinstance(donor, ast.Call)
+    attach_astichi_source_file(donor, "src/donor.py")
     fresh = ast.Call(
         func=ast.Name(id="g", ctx=ast.Load()),
         args=[],
@@ -38,6 +42,19 @@ def test_propagate_from_donor_fills_synthetic_expr() -> None:
     for node in ast.walk(fresh):
         if requires_ast_source_location(node):
             assert has_valid_ast_source_location(node), type(node).__name__
+            assert astichi_source_file(node) == "src/donor.py"
+
+
+def test_copy_astichi_location_copies_private_source_file() -> None:
+    donor = ast.parse("x = 1").body[0]
+    attach_astichi_source_file(donor, "src/source.py")
+    fresh = ast.Pass()
+
+    copied = copy_astichi_location(fresh, donor)
+
+    assert copied is fresh
+    assert fresh.lineno == donor.lineno
+    assert astichi_source_file(fresh) == "src/source.py"
 
 
 def test_ref_path_to_ast_inherits_from_donor() -> None:
@@ -53,9 +70,11 @@ def test_compile_snippet_tree_has_locations() -> None:
     composable = astichi_compile(
         "astichi_bind_external(T)\n"
         "for i in astichi_for((1, 2)):\n"
-        "    astichi_hole(slot)\n"
+        "    astichi_hole(slot)\n",
+        file_name="src/snippet.py",
     )
     assert_tree_has_ast_source_locations(composable.tree)
+    assert astichi_source_file(composable.tree.body[0]) == "src/snippet.py"
 
 
 def test_unroll_tree_preserves_locations() -> None:

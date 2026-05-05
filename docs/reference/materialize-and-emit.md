@@ -19,6 +19,8 @@ During materialization Astichi also consumes executable-only markers. Managed
 `astichi_pyimport(...)` statements become ordinary Python imports at module
 head, after a module docstring and after ordinary `from __future__ import ...`
 statements. No `astichi_pyimport(...)` call survives final materialized output.
+`astichi_comment(...)` statements are also stripped from executable
+materialized output; marker-only non-module suites receive `pass`.
 
 ## `emit(*, provenance: bool = True) -> str`
 
@@ -58,6 +60,17 @@ full Python or skeleton is a **documented policy** of the emit mode.
 Pre-materialized emission preserves source-visible markers, including
 `astichi_pyimport(...)`, for round-trip. Final materialized emission strips or
 realizes those markers into executable Python.
+
+## `emit_commented() -> str`
+
+Renders final Python source with `astichi_comment("...")` statements converted
+to real `#` comments. This is a peer operation to `materialize()`, not a mode
+of ordinary `emit()`: it runs materialization with comment preservation enabled,
+renders the preserved comment markers, and returns plain source with no
+provenance trailer.
+
+Only exact `{__file__}` and `{__line__}` substrings in comment payloads are
+expanded. Other brace text is emitted literally.
 
 ## See also
 

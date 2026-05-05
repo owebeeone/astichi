@@ -19,6 +19,8 @@ import ast
 from collections.abc import Iterator
 from typing import TypeGuard
 
+ASTICHI_SRC_FILE_ATTR = "_astichi_src_file"
+
 # `ast.type_param` exists on Python 3.12+; omit when absent (e.g. older runtimes).
 _located: list[type] = [
     ast.stmt,
@@ -63,6 +65,39 @@ def first_ast_source_location_donor(tree: ast.AST) -> ast.AST | None:
     return None
 
 
+def astichi_source_file(node: ast.AST) -> str | None:
+    """Return Astichi's private source-file metadata for *node*, if present."""
+    value = getattr(node, ASTICHI_SRC_FILE_ATTR, None)
+    return value if isinstance(value, str) else None
+
+
+def attach_astichi_source_file(tree: ast.AST, file_name: str) -> None:
+    """Attach Astichi source-file metadata to every node in *tree*."""
+    for node in ast.walk(tree):
+        setattr(node, ASTICHI_SRC_FILE_ATTR, file_name)
+
+
+def copy_astichi_location(target: ast.AST, source: ast.AST) -> ast.AST:
+    """Copy Python and Astichi source location from *source* to *target*."""
+    ast.copy_location(target, source)
+    src_file = astichi_source_file(source)
+    if src_file is not None:
+        setattr(target, ASTICHI_SRC_FILE_ATTR, src_file)
+    return target
+
+
+def propagate_astichi_source_file(root: ast.AST, donor: ast.AST | None) -> None:
+    """Fill missing Astichi source-file metadata on *root* from *donor*."""
+    if donor is None:
+        return
+    src_file = astichi_source_file(donor)
+    if src_file is None:
+        return
+    for node in ast.walk(root):
+        if astichi_source_file(node) is None:
+            setattr(node, ASTICHI_SRC_FILE_ATTR, src_file)
+
+
 def propagate_ast_source_locations(root: ast.AST, donor: ast.AST | None) -> None:
     """Attach line/column info to *root* and its descendants.
 
@@ -75,13 +110,15 @@ def propagate_ast_source_locations(root: ast.AST, donor: ast.AST | None) -> None
     """
     if isinstance(root, ast.Module):
         ast.fix_missing_locations(root)
+        propagate_astichi_source_file(root, donor)
         return
     if donor is not None and _lineno_ok(donor):
         try:
-            ast.copy_location(root, donor)
+            copy_astichi_location(root, donor)
         except (TypeError, ValueError):
             pass
     ast.fix_missing_locations(root)
+    propagate_astichi_source_file(root, donor)
 
 
 def assert_tree_has_ast_source_locations(tree: ast.AST) -> None:

@@ -17,6 +17,10 @@ class Composable(ABC):
         """Emit source text for this composable."""
 
     @abstractmethod
+    def emit_commented(self) -> str:
+        """Emit final source with astichi comments rendered as Python comments."""
+
+    @abstractmethod
     def materialize(self) -> object:
         """Materialize this composable into a runnable/emittable artifact."""
 

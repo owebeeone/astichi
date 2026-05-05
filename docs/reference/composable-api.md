@@ -12,6 +12,9 @@ class Composable(ABC):
     def emit(self, *, provenance: bool = True) -> str: ...
 
     @abstractmethod
+    def emit_commented(self) -> str: ...
+
+    @abstractmethod
     def materialize(self) -> object: ...
 
     @abstractmethod
@@ -36,6 +39,13 @@ Renders **Python source** for this composable.
 
 Marker and program semantics are always recoverable from the **emitted text
 before** the provenance tail by reparsing. See **[§11](../../dev-docs/historical/AstichiApiDesignV1.md)**.
+
+## `emit_commented() -> str`
+
+Runs final materialization with `astichi_comment("...")` markers preserved long
+enough to render them as real Python `#` comments. The returned source has no
+provenance tail and is intended as final inspectable output, not as a
+marker-preserving round-trip surface.
 
 ## `materialize() -> Composable`
 

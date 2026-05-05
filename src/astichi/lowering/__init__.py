@@ -43,6 +43,7 @@ from astichi.lowering.marker_contexts import (
     MarkerContext,
 )
 from astichi.lowering.markers import (
+    COMMENT,
     MARKERS_BY_NAME,
     MarkerSpec,
     PortTemplate,
@@ -72,6 +73,7 @@ from astichi.lowering.pyimport import (
 __all__ = [
     "MARKERS_BY_NAME",
     "CALL_CONTEXT",
+    "COMMENT",
     "DECORATOR_CONTEXT",
     "DEFINITIONAL_CONTEXT",
     "DirectiveFuncArgItem",

@@ -723,6 +723,30 @@ class _PyImportMarker(MarkerSpec):
             )
 
 
+class _CommentMarker(MarkerSpec):
+    """`astichi_comment("...")` — statement-only final-output comment."""
+
+    source_name = "astichi_comment"
+
+    def is_permitted_in_unroll_body(self) -> bool:
+        return True
+
+    def validate_node(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call):
+            raise TypeError("astichi_comment must be recognized from an ast.Call")
+        if node.keywords:
+            raise ValueError("astichi_comment(...) does not accept keyword arguments")
+        if len(node.args) != 1:
+            raise ValueError(
+                "astichi_comment(...) expects exactly one positional string argument"
+            )
+        payload = node.args[0]
+        if not isinstance(payload, ast.Constant) or not isinstance(payload.value, str):
+            raise ValueError(
+                "astichi_comment(...) requires a literal string argument"
+            )
+
+
 HOLE = _HoleMarker()
 BIND_ONCE = _ReservedMarker(
     "astichi_bind_once",
@@ -766,6 +790,7 @@ PARAMS = _ParamsMarker()
 INSERT = _InsertMarker()
 REF = _RefMarker()
 PYIMPORT = _PyImportMarker()
+COMMENT = _CommentMarker()
 KEEP_IDENTIFIER = _KeepIdentifierMarker()
 ARG_IDENTIFIER = _ArgIdentifierMarker()
 PARAM_HOLE_IDENTIFIER = _ParamHoleIdentifierMarker()
@@ -811,6 +836,7 @@ ALL_MARKERS: tuple[MarkerSpec, ...] = (
     INSERT,
     REF,
     PYIMPORT,
+    COMMENT,
     KEEP_IDENTIFIER,
     ARG_IDENTIFIER,
     PARAM_HOLE_IDENTIFIER,

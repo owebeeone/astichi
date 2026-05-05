@@ -221,6 +221,10 @@ Managed `astichi_pyimport(...)` declarations are also realized here. The marker
 is removed, the imported local participates in hygiene, and the final module
 receives an ordinary Python import statement.
 
+`astichi_comment(...)` declarations are stripped from executable
+materialization. Use `emit_commented()` when final inspectable source should
+render those markers as real Python comments.
+
 ## 7. Emit
 
 Produce Python **source** for inspection, tests, or downstream tools.
@@ -229,6 +233,12 @@ Produce Python **source** for inspection, tests, or downstream tools.
 text = closed.emit(provenance=True)   # default: append provenance tail
 text_plain = closed.emit(provenance=False)
 verify_round_trip(text)
+```
+
+For final source comments:
+
+```python
+text_with_comments = graph.emit_commented()
 ```
 
 With **`provenance=True`**, emitted text ends with one trailing comment of the

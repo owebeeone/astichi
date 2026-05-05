@@ -14,6 +14,7 @@ from astichi.lowering.external_ref import (
 )
 from astichi.lowering.markers import (
     BIND_EXTERNAL,
+    COMMENT,
     EXPORT,
     IMPORT,
     KEEP,
@@ -61,6 +62,7 @@ _PYIMPORT_PREFIX_SPECS = frozenset(
         KEEP,
         EXPORT,
         PYIMPORT,
+        COMMENT,
     }
 )
 
@@ -323,9 +325,13 @@ def _scope_prefix_body(
 ) -> Sequence[ast.stmt] | None:
     if scope.root is tree:
         index = 0
-        if tree.body and _is_module_docstring(tree.body[0]):
-            index = 1
-        while index < len(tree.body) and _is_future_import(tree.body[index]):
+        index = _skip_comment_markers(tree.body, index)
+        if index < len(tree.body) and _is_module_docstring(tree.body[index]):
+            index += 1
+        while True:
+            index = _skip_comment_markers(tree.body, index)
+            if index >= len(tree.body) or not _is_future_import(tree.body[index]):
+                break
             index += 1
         return tree.body[index:]
     root = scope.root
@@ -347,4 +353,19 @@ def _is_future_import(statement: ast.stmt) -> bool:
         isinstance(statement, ast.ImportFrom)
         and statement.module == "__future__"
         and statement.level == 0
+    )
+
+
+def _skip_comment_markers(body: Sequence[ast.stmt], index: int) -> int:
+    while index < len(body) and _is_comment_marker_statement(body[index]):
+        index += 1
+    return index
+
+
+def _is_comment_marker_statement(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == COMMENT.source_name
     )

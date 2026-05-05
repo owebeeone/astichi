@@ -7,7 +7,11 @@ import copy
 import re
 from dataclasses import dataclass
 
-from astichi.ast_provenance import propagate_ast_source_locations
+from astichi.ast_provenance import (
+    astichi_source_file,
+    copy_astichi_location,
+    propagate_ast_source_locations,
+)
 from astichi.asttools import (
     import_statement_binding_names,
     is_astichi_insert_call,
@@ -51,6 +55,7 @@ from astichi.lowering.marker_contexts import CALL_CONTEXT
 from astichi.lowering.markers import (
     ALL_MARKERS,
     ARG_IDENTIFIER,
+    COMMENT,
     IMPORT,
     KEEP,
     PASS,
@@ -2639,7 +2644,37 @@ def _payload_local_directive_markers(
     return tuple(markers)
 
 
-def materialize_composable(composable: BasicComposable) -> BasicComposable:
+class _CommentMaterializationPolicy:
+    """Internal policy for final handling of astichi_comment markers."""
+
+    def removes_comment_markers(self) -> bool:
+        return True
+
+    def after_residual_strip(self, tree: ast.AST) -> None:
+        del tree
+
+
+class _ExecutableCommentPolicy(_CommentMaterializationPolicy):
+    pass
+
+
+class _CommentedSourcePolicy(_CommentMaterializationPolicy):
+    def removes_comment_markers(self) -> bool:
+        return False
+
+    def after_residual_strip(self, tree: ast.AST) -> None:
+        _ensure_pass_in_comment_only_suites(tree)
+
+
+_EXECUTABLE_COMMENT_POLICY = _ExecutableCommentPolicy()
+_COMMENTED_SOURCE_POLICY = _CommentedSourcePolicy()
+
+
+def materialize_composable(
+    composable: BasicComposable,
+    *,
+    comment_policy: _CommentMaterializationPolicy = _EXECUTABLE_COMMENT_POLICY,
+) -> BasicComposable:
     """Materialize a composable: validate completeness and apply final hygiene.
 
     The pipeline (see
@@ -2890,7 +2925,8 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
     demand_ports = extract_demand_ports(pre_strip_markers, pre_strip_classification)
     supply_ports = extract_supply_ports(pre_strip_markers)
 
-    _strip_residual_markers(tree)
+    _strip_residual_markers(tree, comment_policy=comment_policy)
+    comment_policy.after_residual_strip(tree)
     _strip_keep_identifier_suffix(tree)
     _assert_no_arg_suffix_remains(tree)
 
@@ -2918,6 +2954,117 @@ def materialize_composable(composable: BasicComposable) -> BasicComposable:
         bound_externals=composable.bound_externals,
         keep_names=effective_keep_names,
     )
+
+
+def emit_commented_composable(composable: BasicComposable) -> str:
+    """Materialize with comment preservation and render astichi comments."""
+    materialized = materialize_composable(
+        composable,
+        comment_policy=_COMMENTED_SOURCE_POLICY,
+    )
+    return _emit_commented_tree(materialized.tree)
+
+
+@dataclass(frozen=True)
+class _CommentRenderRecord:
+    payload: str
+    src_file: str
+    lineno: int
+
+
+def _emit_commented_tree(tree: ast.Module) -> str:
+    text = ast.unparse(tree)
+    if not text.endswith("\n"):
+        text += "\n"
+    records = _comment_render_records(tree)
+    if not records:
+        return text
+
+    reparsed = ast.parse(text)
+    spans = _comment_statement_spans(reparsed)
+    if len(records) != len(spans):
+        raise AssertionError(
+            "comment render mismatch: materialized AST and unparsed source "
+            f"have {len(records)} vs {len(spans)} astichi_comment statements"
+        )
+
+    lines = text.splitlines()
+    for record, (start, end) in reversed(tuple(zip(records, spans, strict=True))):
+        indent = _leading_whitespace(lines[start])
+        lines[start : end + 1] = _render_comment_lines(record, indent)
+    return "\n".join(lines) + "\n"
+
+
+def _comment_render_records(tree: ast.AST) -> tuple[_CommentRenderRecord, ...]:
+    records: list[_CommentRenderRecord] = []
+
+    class _Collector(ast.NodeVisitor):
+        def visit_Expr(self, node: ast.Expr) -> None:
+            if _is_comment_marker(node.value):
+                assert isinstance(node.value, ast.Call)
+                records.append(_comment_render_record(node, node.value))
+                return
+            self.generic_visit(node)
+
+    _Collector().visit(tree)
+    return tuple(records)
+
+
+def _comment_statement_spans(tree: ast.AST) -> tuple[tuple[int, int], ...]:
+    spans: list[tuple[int, int]] = []
+
+    class _Collector(ast.NodeVisitor):
+        def visit_Expr(self, node: ast.Expr) -> None:
+            if _is_comment_marker(node.value):
+                start = max((getattr(node, "lineno", 1) or 1) - 1, 0)
+                end_lineno = getattr(node, "end_lineno", None)
+                end = max((end_lineno or getattr(node, "lineno", 1) or 1) - 1, start)
+                spans.append((start, end))
+                return
+            self.generic_visit(node)
+
+    _Collector().visit(tree)
+    return tuple(spans)
+
+
+def _comment_render_record(stmt: ast.Expr, call: ast.Call) -> _CommentRenderRecord:
+    payload = _comment_payload(call)
+    src_file = astichi_source_file(call) or astichi_source_file(stmt) or "<astichi>"
+    lineno = getattr(call, "lineno", None) or getattr(stmt, "lineno", 0) or 0
+    return _CommentRenderRecord(
+        payload=(
+            payload.replace("{__file__}", src_file)
+            .replace("{__line__}", str(lineno))
+        ),
+        src_file=src_file,
+        lineno=lineno,
+    )
+
+
+def _comment_payload(call: ast.Call) -> str:
+    if len(call.args) != 1:
+        raise AssertionError("astichi_comment marker reached render with bad arity")
+    payload = call.args[0]
+    if not isinstance(payload, ast.Constant) or not isinstance(payload.value, str):
+        raise AssertionError("astichi_comment marker reached render with non-string payload")
+    return payload.value
+
+
+def _render_comment_lines(
+    record: _CommentRenderRecord,
+    indent: str,
+) -> list[str]:
+    payload = record.payload.replace("\r\n", "\n").replace("\r", "\n")
+    return [
+        f"{indent}#" if line == "" else f"{indent}# {line}"
+        for line in payload.split("\n")
+    ]
+
+
+def _leading_whitespace(line: str) -> str:
+    return line[: len(line) - len(line.lstrip())]
+
+
 def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
     """Prefix every builder-carried shell ref inside ``body`` in-place."""
 
@@ -3303,6 +3450,14 @@ def _is_pass_call(node: ast.Call) -> bool:
     return is_call_to_marker(node, PASS)
 
 
+def _is_comment_marker(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == COMMENT.source_name
+    )
+
+
 def _boundary_value_replacement(node: ast.AST) -> ast.expr | None:
     if (
         isinstance(node, ast.Call)
@@ -3327,11 +3482,15 @@ def _boundary_value_replacement(node: ast.AST) -> ast.expr | None:
         return None
     inner = copy.deepcopy(call.args[0])
     inner.ctx = sentinel.ctx
-    ast.copy_location(inner, node)
+    copy_astichi_location(inner, node)
     return inner
 
 
-def _strip_residual_markers(tree: ast.AST) -> None:
+def _strip_residual_markers(
+    tree: ast.AST,
+    *,
+    comment_policy: _CommentMaterializationPolicy,
+) -> None:
     """Strip `astichi_keep` / `astichi_export` call-form markers.
 
     Per `AstichiApiDesignV1-CompositionUnification.md §6`:
@@ -3348,11 +3507,15 @@ def _strip_residual_markers(tree: ast.AST) -> None:
     `_strip_keep_identifier_suffix` runs after this one, and the
     arg-unresolved gate rejects any residual `__astichi_arg__`.
     """
-    _ResidualMarkerStripper().visit(tree)
+    _ResidualMarkerStripper(comment_policy).visit(tree)
     ast.fix_missing_locations(tree)
 
 
 class _ResidualMarkerStripper(ast.NodeTransformer):
+    def __init__(self, comment_policy: _CommentMaterializationPolicy) -> None:
+        self._comment_policy = comment_policy
+        super().__init__()
+
     def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.AST:
         replacement = _boundary_value_replacement(node.value)
         if replacement is not None:
@@ -3394,6 +3557,11 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
         return node
 
     def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+        if (
+            _is_comment_marker(node.value)
+            and self._comment_policy.removes_comment_markers()
+        ):
+            return None
         if _residual_marker_inner(node.value) is not None:
             return None
         if _is_boundary_declaration_marker(node.value):
@@ -3442,6 +3610,35 @@ def _is_suite_statement_list(node: ast.AST, field: str) -> bool:
     return False
 
 
+def _ensure_pass_in_comment_only_suites(tree: ast.AST) -> None:
+    class _CommentOnlySuitePasser(ast.NodeVisitor):
+        def generic_visit(self, node: ast.AST) -> None:
+            for field, value in ast.iter_fields(node):
+                if isinstance(value, list):
+                    if (
+                        value
+                        and _is_suite_statement_list(node, field)
+                        and all(_is_comment_marker_statement(item) for item in value)
+                    ):
+                        value.append(_empty_suite_pass(node, tuple(value)))
+                    for item in tuple(value):
+                        if isinstance(item, ast.AST):
+                            self.visit(item)
+                    continue
+                if isinstance(value, ast.AST):
+                    self.visit(value)
+
+    _CommentOnlySuitePasser().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+def _is_comment_marker_statement(node: object) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and _is_comment_marker(node.value)
+    )
+
+
 def _empty_suite_pass(
     owner: ast.AST,
     original_items: tuple[object, ...],
@@ -3450,7 +3647,7 @@ def _empty_suite_pass(
         (item for item in original_items if isinstance(item, ast.AST)),
         owner,
     )
-    return ast.copy_location(ast.Pass(), donor)
+    return copy_astichi_location(ast.Pass(), donor)
 
 
 def _find_unresolved_arg_identifiers(

@@ -64,6 +64,11 @@ class BasicComposable(Composable):
             _apply_emitted_arg_bindings(tree, dict(self.arg_bindings))
         return emit_source(tree, provenance=provenance)
 
+    def emit_commented(self) -> str:
+        from astichi.materialize.api import emit_commented_composable
+
+        return emit_commented_composable(self)
+
     def materialize(self) -> "BasicComposable":
         from astichi.materialize import materialize_composable
 

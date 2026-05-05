@@ -22,12 +22,14 @@ import ast
 from dataclasses import dataclass, field
 
 from astichi.asttools import AstichiScope, AstichiScopeMap, is_astichi_insert_shell
-from astichi.lowering.markers import RecognizedMarker
+from astichi.lowering.markers import COMMENT, RecognizedMarker
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 
 _IMPORT_MARKER_NAMES: frozenset[str] = frozenset({"astichi_import"})
-_PREFIX_NEUTRAL_MARKER_NAMES: frozenset[str] = frozenset({"astichi_pyimport"})
+_PREFIX_NEUTRAL_MARKER_NAMES: frozenset[str] = frozenset(
+    {"astichi_pyimport", COMMENT.source_name}
+)
 
 
 def validate_boundary_marker_placement(tree: ast.Module) -> None:

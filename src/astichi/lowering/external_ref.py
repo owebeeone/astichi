@@ -35,6 +35,7 @@ import ast
 import copy
 from dataclasses import dataclass
 
+from astichi.ast_provenance import copy_astichi_location
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 
 
@@ -118,9 +119,9 @@ class _ExternalKwargRewriter(ast.NodeTransformer):
             args=[ast.Name(id=external_kw.value.id, ctx=ast.Load())],
             keywords=[],
         )
-        ast.copy_location(bind_call, external_kw.value)
-        ast.copy_location(bind_call.func, external_kw.value)
-        ast.copy_location(bind_call.args[0], external_kw.value)
+        copy_astichi_location(bind_call, external_kw.value)
+        copy_astichi_location(bind_call.func, external_kw.value)
+        copy_astichi_location(bind_call.args[0], external_kw.value)
         node.args = [bind_call]
         node.keywords = []
         return node
@@ -257,7 +258,7 @@ def _lower_ref_base_expr(node: ast.AST) -> ast.expr:
             attr=node.attr,
             ctx=ast.Load(),
         )
-        return ast.copy_location(lowered, node)
+        return copy_astichi_location(lowered, node)
     if isinstance(node, ast.expr):
         lowered = copy.deepcopy(node)
         lowered = _RefLowerer().visit(lowered)
@@ -266,7 +267,7 @@ def _lower_ref_base_expr(node: ast.AST) -> ast.expr:
                 "astichi_ref(...) extension base did not lower to an expression"
             )
         _force_load_context(lowered)
-        return ast.copy_location(lowered, node)
+        return copy_astichi_location(lowered, node)
     raise ValueError(
         "astichi_ref(...) extension base must be an expression"
     )

@@ -58,6 +58,7 @@ The core markers are:
 - `astichi_bind_external(name)` -> external/literal value slot
 - `astichi_ref(path)` -> compile-time reducible identifier / attribute path
 - `astichi_pyimport(module=..., names=(...))` -> managed Python import
+- `astichi_comment("...")` -> final-output source comment
 - `astichi_pass(name, outer_bind=True)` -> explicit same-name boundary read
 - `astichi_import(name)` -> explicit whole-scope boundary import
 - `astichi_export(name)` -> explicit outward supply
@@ -216,7 +217,7 @@ Astichi currently provides:
 - `astichi.compile(source, file_name=None, line_number=1, offset=0)`
 - `astichi.build()` for builder-based composition
 - concrete composables with `.bind(...)`, `.describe()`, `.materialize()`, and
-  `.emit(...)`
+  `.emit(...)` / `.emit_commented()`
 - data-driven builder calls such as `builder.add("Root", root)` and
   `builder.target(hole.with_root_instance("Root")).add("Step")`
 - provenance helpers in `astichi.emit`

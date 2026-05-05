@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from astichi.ast_provenance import propagate_ast_source_locations
 from astichi.lowering import RecognizedMarker
 from astichi.lowering.external_ref import extract_dotted_reference_chain
-from astichi.lowering.markers import PYIMPORT
+from astichi.lowering.markers import COMMENT, PYIMPORT
 
 
 @dataclass(frozen=True)
@@ -168,9 +168,13 @@ def _copy_import_location(statement: ast.stmt, record: ManagedImportRecord) -> N
 
 def _managed_import_insertion_index(body: list[ast.stmt]) -> int:
     index = 0
-    if body and _is_module_docstring(body[0]):
-        index = 1
-    while index < len(body) and _is_future_import(body[index]):
+    index = _skip_comment_markers(body, index)
+    if index < len(body) and _is_module_docstring(body[index]):
+        index += 1
+    while True:
+        index = _skip_comment_markers(body, index)
+        if index >= len(body) or not _is_future_import(body[index]):
+            break
         index += 1
     return index
 
@@ -188,6 +192,21 @@ def _is_future_import(statement: ast.stmt) -> bool:
         isinstance(statement, ast.ImportFrom)
         and statement.module == "__future__"
         and statement.level == 0
+    )
+
+
+def _skip_comment_markers(body: list[ast.stmt], index: int) -> int:
+    while index < len(body) and _is_comment_marker_statement(body[index]):
+        index += 1
+    return index
+
+
+def _is_comment_marker_statement(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == COMMENT.source_name
     )
 
 

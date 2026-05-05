@@ -20,8 +20,8 @@ from astichi import compile, build
 ## Marker names in compiled source
 
 Astichi recognizes marker names such as `astichi_hole`, `astichi_bind_external`,
-`astichi_for`, and `astichi_pyimport` from the **source text** passed to
-`astichi.compile(...)`.
+`astichi_for`, `astichi_pyimport`, and `astichi_comment` from the **source
+text** passed to `astichi.compile(...)`.
 
 `astichi_insert(...)` is reserved internal metadata. The default
 `astichi.compile(..., source_kind="authored")` rejects it; only re-ingest
@@ -58,6 +58,10 @@ substitutions and returns a new immutable composable.
 
 `.describe()` returns immutable descriptor metadata for data-driven
 composition. See [descriptor-api.md](descriptor-api.md).
+
+`.emit_commented()` runs final materialization and renders `astichi_comment(...)`
+markers as real Python comments. It returns plain source with no provenance
+tail.
 
 Additional descriptor value objects for advanced inspection are exported from
 `astichi.model`, including `PortDescriptor`, `HoleDescriptor`,

@@ -66,6 +66,20 @@ work.
     `__astichi_arg__` suffixes in import module strings, imported symbol names,
     and aliases, including relative `from .module__astichi_arg__ import ...`
     forms.
+- Comment marker support is implemented:
+  - `astichi_comment("...")` is a statement-only, literal-string marker for
+    generated comments. It has no port, hygiene, descriptor, or runtime
+    semantics.
+  - ordinary `emit()` preserves comment markers for marker-bearing round trip.
+  - `materialize()` strips comment markers for executable ASTs and inserts
+    `pass` if stripping would empty a non-module suite.
+  - `emit_commented()` is the narrow final-source surface: it materializes with
+    comment preservation, renders preserved markers as same-indentation `#`
+    comments, and does not accept a provenance option.
+  - comment payloads replace exact `{__file__}` and `{__line__}` substrings
+    only; other braces pass through. Source files are carried on private
+    `_astichi_src_file` AST metadata attached during `compile(...)` and
+    propagated by `copy_astichi_location(...)`.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -96,9 +110,10 @@ work.
     `wire_identifier(...)` on builder slot handles remains deferred;
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-05-03:
-  - full suite: `599 passed`
-  - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
+- Test status as of 2026-05-05:
+  - full suite: `608 passed`
+  - Python-version matrix: last recorded green for 3.12, 3.13, 3.14, and 3.15;
+    not rerun for the comment-marker change
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
   - Treat Phase 2 unroll, the 005 identifier cluster, 006 cross-scope
@@ -182,8 +197,11 @@ These are the rules that should not be re-litigated during implementation.
     round-trip via `emit()` -> `compile()`
   - `materialize()` closes hygiene, strips executable-only markers, and rejects
     unresolved mandatory state
-  - `materialize().emit(provenance=False)` must be executable Python with no
-    surviving marker call sites
+- `materialize().emit(provenance=False)` must be executable Python with no
+  surviving marker call sites
+- `emit_commented()` is a peer final-output surface to `materialize()`: it
+  renders `astichi_comment(...)` markers as real Python comments and does not
+  add Astichi provenance
 - Implementation stays layered.
   - `frontend -> lowering -> hygiene -> model -> builder -> materialize -> emit`
 - Do not store absolute filesystem paths in committed docs/config/examples/tests.
@@ -274,6 +292,7 @@ role) that survives a `build()` stage.
 Abstract surface:
 
 - `emit(provenance: bool = True) -> str`
+- `emit_commented() -> str`
 - `materialize() -> object`
 - `describe() -> ComposableDescription`
 
@@ -419,6 +438,9 @@ Current implementation reality:
   structurally equivalent composable
 - `materialize()` strips/realizes the executable marker surface and closes
   hygiene
+- `emit_commented()` runs the materialize pipeline with comment preservation,
+  renders preserved `astichi_comment(...)` statement markers as `#` comments,
+  and returns source without provenance
 - `materialize().emit(provenance=False)` is expected to be runnable Python
 - `emit(provenance=True)` appends one trailing comment:
   - `# astichi-provenance: <payload>`
@@ -441,6 +463,7 @@ Current implementation reality:
 | `astichi_bind_external(name)` | implemented | External literal bind demand. |
 | `astichi_for(domain)` | implemented | Compile-time loop domain for `build(unroll=...)`; supports literal tuples/lists, literal `range(...)`, and bind-fed literal domains. |
 | `astichi_pyimport(module=..., names=(...))` / `astichi_pyimport(module=..., as_=...)` | implemented | Managed Python import marker. Valid only in a top-of-Astichi-scope statement prefix. Materialize emits ordinary imports at module head after docstring/future imports. Expression-prefix carriers are implemented through internal expression-insert metadata. |
+| `astichi_comment("...")` | implemented | Statement-only generated-comment marker. `emit()` preserves it, `materialize()` strips it, and `emit_commented()` renders it as same-indentation `#` comments. Payloads replace only exact `{__file__}` and `{__line__}` substrings. |
 | `astichi_bind_once(name, expr)` | rejected | Reserved and obsolete; use ordinary Python assignment for single-evaluation reuse. |
 | `astichi_bind_shared(name, expr)` | rejected | Reserved and obsolete; use enclosing Python state plus boundary wiring for shared state. |
 | `name__astichi__` / `astichi_definitional_name` | retired | Not a supported marker surface. Use `__astichi_arg__`, `__astichi_keep__`, or explicit boundary wiring. |
@@ -547,10 +570,10 @@ Current materialize behavior that is already in place:
   lowered result
 - bare statement-form `astichi_ref(...)` / `astichi_pass(...)` rejects at
   compile time; both are value-form surfaces in authored code
-- residual `astichi_keep`, `astichi_export`, and current
-  `astichi_definitional_name` markers are stripped; if stripping empties a
-  non-module Python suite, materialize leaves an explicit `pass` so emitted
-  source stays valid Python
+- residual `astichi_keep`, `astichi_export`, `astichi_comment`, and current
+  `astichi_definitional_name` markers are stripped by executable
+  `materialize()`; if stripping empties a non-module Python suite, materialize
+  leaves an explicit `pass` so emitted source stays valid Python
 
 ### 5.4 Hygiene
 
@@ -603,6 +626,9 @@ These are the active ownership points in the codebase.
 - `src/astichi/frontend/api.py`
   - public `compile`
   - origin padding
+- `src/astichi/ast_provenance.py`
+  - AST source-file metadata
+  - Astichi-aware source-location copy helper
 - `src/astichi/lowering/markers.py`
   - marker recognition
   - marker capability objects
@@ -635,6 +661,7 @@ These are the active ownership points in the codebase.
   - materialize gate
   - insert flattening
   - parameter wrapper realization
+  - comment-marker stripping / `emit_commented()` rendering
   - hygiene closure
 - `src/astichi/emit/api.py`
   - source emission
@@ -676,6 +703,9 @@ Existing high-signal tests:
   - materialize gate and end-to-end semantics
 - `tests/test_emit.py`
   - source emission and provenance
+- `tests/test_comments.py`
+  - comment marker validation, stripping, source-location expansion, and
+    `emit_commented()` rendering
 - `tests/test_ast_goldens.py` plus `tests/data/gold_src/`
   - canonical successful behavior cases, pre-materialized provenance,
     emitted-source recompile/materialize round trip, and stable generated
