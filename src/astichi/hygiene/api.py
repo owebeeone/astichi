@@ -1009,12 +1009,17 @@ class _ScopeIdentityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_arg(self, node: ast.arg) -> None:
+        role: LexicalRole = (
+            PRESERVED_LEXICAL_ROLE
+            if node.arg in self._current_python_parameters()
+            else INTERNAL_LEXICAL_ROLE
+        )
         self.occurrences.append(
             LexicalOccurrence(
                 raw_name=node.arg,
                 scope_id=self._current_scope(),
                 collision_domain=self._current_collision_domain(),
-                role=INTERNAL_LEXICAL_ROLE,
+                role=role,
                 binding_kind=BINDING_OCCURRENCE,
                 ordinal=next(self.ordinal_counter),
                 node=node,
