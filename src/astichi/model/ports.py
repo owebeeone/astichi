@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import groupby
 from typing import TYPE_CHECKING
 
@@ -30,6 +30,7 @@ from astichi.model.semantics import (
     PortOrigin,
     PortOrigins,
     PortPlacement,
+    RejectedCompatibility,
     normalize_port_mutability,
     normalize_port_placement,
     placement_for_shape,
@@ -81,7 +82,7 @@ class DemandPort:
     shape: MarkerShape
     placement: PortPlacement
     mutability: PortMutability
-    origins: PortOrigins = field(default_factory=lambda: PortOrigins(frozenset()))
+    origins: PortOrigins = PortOrigins(frozenset())
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -92,9 +93,11 @@ class DemandPort:
         )
 
     def accepts_supply(self, supply: "SupplyPort") -> Compatibility:
-        compatibility = self.placement.accepts_supply(self, supply)
-        if not compatibility.is_accepted():
-            return compatibility
+        if not self.placement.accepts_supply_placement(supply.placement):
+            return RejectedCompatibility(
+                f"incompatible port placement for {self.name}: "
+                f"{self.placement.name} != {supply.placement.name}"
+            )
         if (
             not self.placement.is_expression_family()
             and self.shape is not supply.shape
@@ -134,7 +137,7 @@ class SupplyPort:
     shape: MarkerShape
     placement: PortPlacement
     mutability: PortMutability
-    origins: PortOrigins = field(default_factory=lambda: PortOrigins(frozenset()))
+    origins: PortOrigins = PortOrigins(frozenset())
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -287,8 +290,6 @@ def _merge_supply_ports(ports: list[SupplyPort]) -> tuple[SupplyPort, ...]:
 def _shape_rejection(
     name: str, demand_shape: MarkerShape, supply_shape: MarkerShape
 ) -> Compatibility:
-    from astichi.model.semantics import RejectedCompatibility
-
     return RejectedCompatibility(
         f"incompatible port shape for {name}: "
         f"{demand_shape.name} != {supply_shape.name}"

@@ -80,15 +80,9 @@ ACCEPTED = AcceptedCompatibility()
 class PortPlacement(SemanticSingleton):
     """Where a port is satisfied in Python structure."""
 
-    def accepts_supply(self, demand: object, supply: object) -> Compatibility:
-        demand_placement = getattr(demand, "placement")
-        supply_placement = getattr(supply, "placement")
-        if demand_placement is not supply_placement:
-            return RejectedCompatibility(
-                f"incompatible port placement for {getattr(demand, 'name')}: "
-                f"{demand_placement.name} != {supply_placement.name}"
-            )
-        return ACCEPTED
+    def accepts_supply_placement(self, supply: "PortPlacement") -> bool:
+        """Return whether a supply with `supply` placement satisfies this demand placement."""
+        return self is supply
 
     def is_expression_family(self) -> bool:
         return False
@@ -114,14 +108,8 @@ class _ExpressionPlacement(PortPlacement):
 class _CallArgumentPlacement(PortPlacement):
     name: str = "call_arg"
 
-    def accepts_supply(self, demand: object, supply: object) -> Compatibility:
-        supply_placement = getattr(supply, "placement")
-        if supply_placement.is_expression_family():
-            return ACCEPTED
-        return RejectedCompatibility(
-            f"incompatible port placement for {getattr(demand, 'name')}: "
-            f"{self.name} != {supply_placement.name}"
-        )
+    def accepts_supply_placement(self, supply: "PortPlacement") -> bool:
+        return supply.is_expression_family()
 
     def is_expression_family(self) -> bool:
         return True
