@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import astichi
 from astichi.model import (
     ClassCodePathNode,
@@ -125,6 +127,9 @@ class cname__astichi_arg__:
         "hole_map:\n"
         "  body: #1"
     )
+    assert composable.inventory.identifier_record_ids("cname") == ()
+    assert composable.inventory.identifier_record_ids("fname") == ()
+    assert composable.inventory.hole_record_ids("body") == ("#1",)
 
 
 def test_ast_backed_names_compare_by_stripped_logical_name() -> None:
@@ -143,6 +148,35 @@ def test_ast_backed_names_compare_by_stripped_logical_name() -> None:
     assert CodeNodeResourceName(left_class) == CodeNodeResourceName(right_class)
     assert left_function == right_function
     assert CodeNodeResourceName(left_function) == CodeNodeResourceName(right_function)
+
+
+def test_deepcopy_preserves_inventory_ids_and_repoints_wrappers() -> None:
+    original = astichi.compile(
+        """
+class cname__astichi_arg__:
+    def fname__astichi_arg__(
+        self,
+        params__astichi_param_hole__,
+    ):
+        pass
+"""
+    )
+
+    copied = copy.deepcopy(original)
+    copied_record = copied.inventory.records["#3"]
+    original_record = original.inventory.records["#3"]
+    class_owner = copied_record.code_owner.nodes[0]
+    function_owner = copied_record.code_owner.nodes[1]
+
+    assert copied_record.record_id == "#3"
+    assert copied_record.record_id is original_record.record_id
+    assert isinstance(class_owner, ClassCodePathNode)
+    assert class_owner.class_ast_node is copied.tree.body[0]
+    assert class_owner.class_ast_node is not original.tree.body[0]
+    assert isinstance(function_owner, FunctionCodePathNode)
+    assert function_owner.function_ast_node is copied.tree.body[0].body[0]
+    assert function_owner.function_ast_node is not original.tree.body[0].body[0]
+    assert str(copied.inventory) == str(original.inventory)
 
 
 def test_builder_inventory_prefixes_records_by_build_path() -> None:

@@ -551,3 +551,5 @@ body/payload-derived.
   without descendant record rewrites.
 - Add tests that resolved `__astichi_arg__` demands are removed from inventory
   when they become keep-preserved names.
+
+Status: implemented in `inventory/slice-5`.
