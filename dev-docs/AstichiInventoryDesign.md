@@ -116,7 +116,7 @@ class CodePathNode(ABC):
     @abstractmethod
     def logical_name(self) -> str: ...
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other) -> bool:
         return (
             isinstance(other, CodePathNode)
             and self.logical_name() == other.logical_name()
@@ -146,7 +146,7 @@ class ResourceName(ABC):
     @abstractmethod
     def logical_name(self) -> str: ...
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other) -> bool:
         return (
             isinstance(other, ResourceName)
             and self.logical_name() == other.logical_name()
@@ -225,8 +225,8 @@ not a direct node cache.
 `payload` contains the resource-specific semantic data needed for validation
 and compatibility checks.
 
-For `describe()` to become an inventory-backed projection, payloads must carry
-the data currently exposed through descriptor objects:
+`describe()` projects bindable descriptor sections from immutable inventory
+records. Payloads carry the data exposed through those descriptor objects:
 
 - hole placement and shape
 - target address ingredients derivable from build path, code owner, name, and
@@ -239,6 +239,9 @@ the data currently exposed through descriptor objects:
 
 Payloads should reuse existing semantic objects where practical rather than
 introducing parallel tags.
+
+Production descriptors are still derived from the existing body/payload checks
+because they describe what a composable can contribute, not a bindable point.
 
 ## Node Location
 
@@ -285,6 +288,16 @@ class Inventory:
         prefix: ResourcePath,
         merge_inventory: Inventory,
     ) -> Inventory: ...
+
+    def records_for_ids(
+        self,
+        record_ids: tuple[InventoryRecordId, ...],
+    ) -> tuple[InventoryRecord, ...]: ...
+
+    def resource_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]: ...
+    def port_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]: ...
+    def hole_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]: ...
+    def identifier_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]: ...
 ```
 
 `records` are the authoritative inventory contents.
@@ -303,20 +316,26 @@ record IDs.
 
 There is no comment map. Comments are not bindable.
 
-`find_resource()` filters through the relevant map first, resolves IDs through
+`records_for_ids()` resolves record IDs through `records` and returns records
+in stable inventory order.
+
+The `*_record_ids()` helpers expose the public map accessors for tools that
+already know which resource namespace they need.
+
+`find_resource()` starts from the logical resource name, resolves IDs through
 `records`, then applies build-path, code-owner, and kind constraints.
 
-`prefix_build_path()` returns a new inventory containing this inventory plus
-`merge_inventory` with `prefix` prepended to the merge records' build paths. It
-does not rescan either AST and does not rewrite code paths.
+`prefix_build_path()` returns `merge_inventory` with `prefix` prepended to the
+merge records' build paths. It does not rescan the AST and does not rewrite
+code paths.
 
 Record IDs are inventory-local until a build prefix is applied. The merge rule
-is: preserve IDs from `self`; for every record imported from
-`merge_inventory`, keep the incoming record number and prefix the ID with
-`prefix`. For example, incoming `#1` under prefix `Root/Step` becomes
-`Root/Step/#1`. Merge does not renumber imported records. If the prefixed ID
-would collide with an existing output ID, the build path is not unique enough
-and the caller must use a more specific prefix, such as an occurrence segment.
+is: for every record imported from `merge_inventory`, keep the incoming record
+number and prefix the ID with `prefix`. For example, incoming `#1` under prefix
+`Root/Step` becomes `Root/Step/#1`. Merge does not renumber imported records.
+If the prefixed ID would collide with an existing output ID, the build path is
+not unique enough and the caller must use a more specific prefix, such as an
+occurrence segment.
 
 ## Mutable Build Form
 
@@ -332,6 +351,8 @@ class MutableInventory:
     hole_map: dict[str, list[InventoryRecordId]]
     identifier_map: dict[str, list[InventoryRecordId]]
     next_record_number: int
+
+    def add_inventory(self, prefix: ResourcePath, inventory: Inventory) -> None: ...
 ```
 
 The mutable form is an implementation convenience. It should be frozen to
@@ -347,8 +368,8 @@ ID allocation.
 
 ## Pretty Printing
 
-`Inventory.__str__()` and `Inventory.__repr__()` should return the same stable
-pretty-printed inventory snapshot. Tests should compare `str(inventory)`
+`Inventory.__str__()` and `Inventory.__repr__()` return the same stable
+pretty-printed inventory snapshot. Tests compare `str(inventory)`
 directly when validating inventory contents.
 
 The `records` section always prints, even when empty. Records print one record
@@ -356,9 +377,9 @@ per line:
 
 ```text
 records:
-#1 build_path=() code_owner=() name=cname kind=identifier.demand
-#2 build_path=() code_owner=(cname) name=fname kind=identifier.demand
-#3 build_path=() code_owner=(cname, fname) name=params kind=hole.params
+  #1 build_path=. code_owner=. name=cname kind=identifier.demand locator=body[0]
+  #2 build_path=. code_owner=cname name=fname kind=identifier.demand locator=body[0]/body[0]
+  #3 build_path=. code_owner=cname/fname name=params kind=hole.params locator=body[0]/body[0]/args/args[1]
 ```
 
 Maps print only when non-empty. Map entries print one logical name per line,
@@ -392,17 +413,13 @@ This keeps snapshot tests stable across Python versions.
 
 ## Lookup Rules
 
-`find_resource()` chooses the narrowest map for the requested kind:
+Direct map access uses the explicit `*_record_ids()` helpers. Use
+`hole_record_ids()` for targetable holes, `identifier_record_ids()` for
+identifier demands and supplies, `port_record_ids()` for port-like bindables,
+and `resource_record_ids()` for all bindable resources with a logical name.
 
-```text
-hole.*       -> hole_map
-identifier.* -> identifier_map
-external.bind and other port-like kinds -> port_map
-fallback     -> resource_map
-```
-
-After selecting candidate IDs from the map, `find_resource()` resolves IDs
-through `records` and filters by build path, code owner, name, and kind.
+`find_resource()` resolves candidates through `resource_map` and filters by
+build path, code owner, logical name, and kind.
 
 ## Resource Lifecycle
 
@@ -488,7 +505,7 @@ The records do not need descendant path rewrites because `CodePathNode` and
 - Add pretty printing for records and maps.
 - Add focused tests that compare `str(inventory)` to expected snapshots.
 
-This slice should not change builder semantics or `describe()` behavior.
+Status: implemented in `inventory/slice-1`.
 
 ### Slice 2: Builder Merge Inventory
 
@@ -501,6 +518,10 @@ This slice should not change builder semantics or `describe()` behavior.
 - Reject or disambiguate any merge that would create a duplicate record ID.
 - Freeze the mutable inventory onto the built composable.
 
+Status: implemented in `inventory/slice-2`. The current builder path follows
+the tree-shaped instance occurrence path and preserves original record numbers
+for records that survive the build.
+
 ### Slice 3: Describe Over Inventory
 
 - Change `describe()` to derive its current public results from immutable
@@ -510,6 +531,10 @@ This slice should not change builder semantics or `describe()` behavior.
   them.
 - Add parity tests proving old `describe()` results match inventory-derived
   results.
+
+Status: implemented in `inventory/slice-3` for holes, external binds, and
+identifier demand/supply descriptors. Production descriptors remain
+body/payload-derived.
 
 ### Slice 4: Documentation
 

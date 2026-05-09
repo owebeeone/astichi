@@ -293,7 +293,7 @@ Abstract surface:
 
 - `emit(provenance: bool = True) -> str`
 - `emit_commented() -> str`
-- `materialize() -> object`
+- `materialize() -> Composable`
 - `describe() -> ComposableDescription`
 
 Concrete carrier:
@@ -301,7 +301,8 @@ Concrete carrier:
 - `BasicComposable`
   - immutable dataclass
   - fields: `tree`, `origin`, `markers`, `classification`,
-    `demand_ports`, `supply_ports`, `bound_externals`
+    `demand_ports`, `supply_ports`, `inventory`, `bound_externals`,
+    `arg_bindings`, `keep_names`
   - method: `bind(mapping=None, /, **values) -> BasicComposable`
 
 ### 3.4 Descriptor API
@@ -349,6 +350,12 @@ addresses (`name`, `target_name`, `root_instance`, etc.).
 - `identifier_demands` / `identifier_supplies`: explicit identifier wiring
   surfaces with descendant `ref_path`
 
+Bindable descriptor sections are projected from immutable inventory records:
+holes, external binds, and identifier demand/supply descriptors use
+`BasicComposable.inventory` as their source. Production descriptors still use
+the existing body/payload checks because they describe contribution shape, not
+a bindable resource record.
+
 Convenience methods:
 
 - `holes_named(name) -> tuple[ComposableHole, ...]`
@@ -377,10 +384,10 @@ input. Resolve it with `hole.with_root_instance("Root")` or
 directly and rejects unresolved addresses. Keyword overrides are accepted only
 when they match the descriptor address.
 
-Descriptor addresses use the same shell-ref machinery as builder target
-validation. For built/staged composables, preserved insert-shell refs become
-the descriptor `ref_path`, so a hole inside `Pipeline.Root.Inner.slot` is
-described as `ref_path=("Root", "Inner")`, `target_name="slot"`.
+Descriptor addresses use the same build paths as builder target validation.
+For built/staged composables, prefixed inventory build paths become the
+descriptor `ref_path`, so a hole inside `Pipeline.Root.Inner.slot` is described
+as `ref_path=("Root", "Inner")`, `target_name="slot"`.
 
 Unrolled holes currently describe the source-visible synthetic name rather than
 reverse-projecting to `leaf_path`. For example, `slot__iter_0` is exposed as

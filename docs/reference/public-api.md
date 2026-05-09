@@ -69,6 +69,13 @@ Additional descriptor value objects for advanced inspection are exported from
 `IdentifierDemandDescriptor`, `IdentifierSupplyDescriptor`, `SINGLE_ADD`, and
 `MULTI_ADD`.
 
+Inventory value objects for lower-level bindable-resource discovery are also
+exported from `astichi.model`, including `Inventory`, `InventoryRecord`,
+`InventoryRecordId`, `ResourcePath`, `CodePath`, and `MutableInventory`.
+Prefer `Composable.describe()` for ordinary planning. Use inventory when a tool
+needs map-backed access to bindable resource records. See
+[inventory-api.md](inventory-api.md).
+
 ## Submodule: `astichi.builder`
 
 Builder construction and graph types used by **`build()`** and advanced callers.

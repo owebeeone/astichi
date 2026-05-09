@@ -15,7 +15,7 @@ class Composable(ABC):
     def emit_commented(self) -> str: ...
 
     @abstractmethod
-    def materialize(self) -> object: ...
+    def materialize(self) -> Composable: ...
 
     @abstractmethod
     def describe(self) -> ComposableDescription: ...
@@ -66,6 +66,11 @@ Use **`describe()`** for stable public introspection. It returns immutable
 descriptor objects for additive holes, ports, external binds, identifier
 wiring surfaces, and conservative productions. See
 **[descriptor-api.md](descriptor-api.md)**.
+
+Concrete composables also expose **`inventory`**, a lower-level immutable
+record/map structure for bindable-resource discovery. `describe()` projects its
+holes, external binds, and identifier descriptor surfaces from that inventory.
+See **[inventory-api.md](inventory-api.md)**.
 
 Depending on the pipeline stage, implementations may also expose fields such
 as an internal **`ast.Module`**, origin, or marker maps for tooling. Treat

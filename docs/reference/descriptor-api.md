@@ -68,6 +68,13 @@ Build and materialize remain authoritative. Descriptor compatibility is intended
 for planning, filtering, and diagnostics before the final builder validation
 runs.
 
+Bindable descriptor sections are projected from the composable inventory:
+holes, external binds, and identifier demand/supply descriptors come from
+immutable inventory records. Production descriptors remain conservative
+body/payload projections because they describe what a composable can
+contribute, not a bindable point. See [inventory-api.md](inventory-api.md) for
+the lower-level record/map API.
+
 ## `ComposableDescription`
 
 `ComposableDescription` is the top-level return value from
@@ -189,7 +196,7 @@ match the descriptor value. Conflicting `root_instance`, `target_name`,
 
 ## Descendant Paths
 
-For built composables, descriptor addresses use the same shell-ref paths as the
+For built composables, descriptor addresses use the same build paths as the
 builder fluent API:
 
 ```python

@@ -10,6 +10,7 @@ Fast orientation:
 | [compile-api.md](compile-api.md) | `compile`, origins, lowering pipeline |
 | [composable-api.md](composable-api.md) | `Composable`, `emit`, `materialize` |
 | [descriptor-api.md](descriptor-api.md) | `Composable.describe()`, descriptor objects, compatibility, and descriptor-driven builder use |
+| [inventory-api.md](inventory-api.md) | Bindable-resource inventory records, maps, and pretty printing |
 | [builder-api.md](builder-api.md) | `build()`, fluent, handle, and data-driven named APIs |
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |
