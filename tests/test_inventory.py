@@ -225,3 +225,153 @@ astichi_hole(inner)
         "Root",
         "Step",
     )
+
+
+def test_builder_add_arg_names_removes_identifier_inventory_record() -> None:
+    step = astichi.compile(
+        """
+def step__astichi_arg__():
+    astichi_hole(body)
+"""
+    )
+
+    builder = astichi.build()
+    builder.add.Step(step, arg_names={"step": "run"})
+    built = builder.build()
+
+    assert built.inventory.identifier_record_ids("step") == ()
+    assert built.inventory.hole_record_ids("body") == ("Step/#1",)
+    assert [hole.address.ref_path for hole in built.describe().holes] == [
+        ("Step",)
+    ]
+
+
+def test_edge_arg_names_removes_identifier_record_for_occurrence_only() -> None:
+    root = astichi.compile("astichi_hole(body)\n")
+    step = astichi.compile(
+        """
+astichi_import(total)
+astichi_hole(inner)
+"""
+    )
+
+    builder = astichi.build()
+    root_handle = builder.add.Root(root)
+    builder.add.Step(step)
+    root_handle.body.add.Step(arg_names={"total": "outer_total"})
+    built = builder.build()
+    registered_step = next(
+        record.composable
+        for record in builder.graph.instances
+        if record.name == "Step"
+    )
+
+    assert registered_step.inventory.identifier_record_ids("total") == ("#1",)
+    assert built.inventory.identifier_record_ids("total") == ()
+    assert built.inventory.hole_record_ids("inner") == ("Root/Step/#2",)
+
+
+def test_edge_bind_removes_external_bind_inventory_record() -> None:
+    root = astichi.compile("astichi_hole(body)\n")
+    step = astichi.compile(
+        """
+astichi_bind_external(value)
+astichi_hole(inner)
+"""
+    )
+
+    builder = astichi.build()
+    root_handle = builder.add.Root(root)
+    builder.add.Step(step)
+    root_handle.body.add.Step(bind={"value": 10})
+    built = builder.build()
+
+    assert built.inventory.resource_record_ids("value") == ()
+    assert built.describe().external_binds == ()
+    assert built.inventory.hole_record_ids("inner") == ("Root/Step/#1",)
+
+
+def test_two_stage_bind_identifier_removes_demand_and_preserves_build_path() -> None:
+    root = astichi.compile(
+        """
+astichi_export(total)
+astichi_hole(body)
+"""
+    )
+    step = astichi.compile(
+        """
+astichi_import(total)
+astichi_hole(inner)
+"""
+    )
+    stage1 = astichi.build()
+    root_handle = stage1.add.Root(root)
+    stage1.add.Step(step)
+    root_handle.body.add.Step()
+    pipeline = stage1.build()
+    pipeline_description = pipeline.describe()
+    demand = next(
+        item
+        for item in pipeline_description.identifier_demands
+        if item.name == "total"
+    )
+    supply = next(
+        item
+        for item in pipeline_description.identifier_supplies
+        if item.name == "total"
+    )
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(pipeline)
+    stage2.bind_identifier(
+        source_instance="Pipeline",
+        identifier=demand,
+        target_instance="Pipeline",
+        to=supply,
+    )
+    built = stage2.build()
+
+    assert built.describe().identifier_demands == ()
+    assert built.inventory.identifier_record_ids("total") == ("Pipeline/Root/#1",)
+    assert built.inventory.hole_record_ids("inner") == (
+        "Pipeline/Root/Step/#2",
+    )
+    assert built.describe().single_hole_named("inner").address.ref_path == (
+        "Pipeline",
+        "Root",
+        "Step",
+    )
+
+
+def test_two_stage_assign_removes_demand_and_preserves_build_path() -> None:
+    root = astichi.compile(
+        """
+astichi_export(total)
+astichi_hole(body)
+"""
+    )
+    step = astichi.compile(
+        """
+astichi_import(total)
+astichi_hole(inner)
+"""
+    )
+    stage1 = astichi.build()
+    root_handle = stage1.add.Root(root)
+    stage1.add.Step(step)
+    root_handle.body.add.Step()
+    pipeline = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(pipeline)
+    stage2.assign.Pipeline.Root.Step.total.to().Pipeline.Root.total
+    built = stage2.build()
+
+    assert built.describe().identifier_demands == ()
+    assert built.inventory.identifier_record_ids("total") == ("Pipeline/Root/#1",)
+    assert built.inventory.hole_record_ids("inner") == (
+        "Pipeline/Root/Step/#2",
+    )
+    assert built.inventory.identifier_record_ids(
+        "__astichi_assign__inst__Pipeline__ref__Root__name__total"
+    ) == ()

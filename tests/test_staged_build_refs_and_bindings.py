@@ -82,6 +82,192 @@ def _loop_piece(domain_source: str, *, bind_external: bool):
     )
 
 
+def _inventory_text(*lines: str) -> str:
+    return "\n".join(lines)
+
+
+_NESTED_UNROLL_STAGE1_INVENTORY = _inventory_text(
+    "records:",
+    "  Root/#1 build_path=Root code_owner=. name=PREFIX "
+    "kind=external.bind locator=body[0]/value",
+    "  Root/#2 build_path=Root code_owner=. name=outer "
+    "kind=hole.block locator=body[3]/body[0]/value",
+    "  Root/#3 build_path=Root code_owner=. name=inner "
+    "kind=hole.block locator=body[3]/body[1]/body[0]/value",
+    "",
+    "resource_map:",
+    "  PREFIX: Root/#1",
+    "  inner: Root/#3",
+    "  outer: Root/#2",
+    "",
+    "port_map:",
+    "  PREFIX: Root/#1",
+    "  inner: Root/#3",
+    "  outer: Root/#2",
+    "",
+    "hole_map:",
+    "  inner: Root/#3",
+    "  outer: Root/#2",
+)
+
+_NESTED_UNROLL_STAGE2_INVENTORY = _inventory_text(
+    "records:",
+    "  Pipeline/#3 build_path=Pipeline code_owner=__astichi_root__Root__ "
+    "name=outer kind=hole.block locator=body[1]/body[2]/body[0]/value",
+    "  Pipeline/#4 build_path=Pipeline code_owner=__astichi_root__Root__ "
+    "name=inner kind=hole.block "
+    "locator=body[1]/body[2]/body[1]/body[0]/value",
+    "",
+    "resource_map:",
+    "  inner: Pipeline/#4",
+    "  outer: Pipeline/#3",
+    "",
+    "port_map:",
+    "  inner: Pipeline/#4",
+    "  outer: Pipeline/#3",
+    "",
+    "hole_map:",
+    "  inner: Pipeline/#4",
+    "  outer: Pipeline/#3",
+)
+
+_NESTED_UNROLL_STAGE3_EVENTS = (
+    "Pipeline/Inner00/#1, Pipeline/Inner01/#1, Pipeline/Inner10/#1, "
+    "Pipeline/Inner11/#1, Pipeline/Outer0/#1, Pipeline/Outer1/#1"
+)
+
+_NESTED_UNROLL_STAGE3_INVENTORY = _inventory_text(
+    "records:",
+    "  Pipeline/Inner00/#1 build_path=Pipeline/Inner00 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "  Pipeline/Inner01/#1 build_path=Pipeline/Inner01 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "  Pipeline/Inner10/#1 build_path=Pipeline/Inner10 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "  Pipeline/Inner11/#1 build_path=Pipeline/Inner11 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "  Pipeline/Outer0/#1 build_path=Pipeline/Outer0 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "  Pipeline/Outer1/#1 build_path=Pipeline/Outer1 code_owner=. "
+    "name=events kind=identifier.demand locator=body[0]/value/func/value",
+    "",
+    "resource_map:",
+    f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+    "",
+    "port_map:",
+    f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+    "",
+    "identifier_map:",
+    f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+)
+
+
+def _nested_unroll_stage1():
+    stage1 = astichi.build()
+    stage1.add.Root(
+        _piece(
+            """
+            astichi_bind_external(PREFIX)
+            events = []
+            events.append(PREFIX)
+            for outer_index in astichi_for((0, 1)):
+                astichi_hole(outer)
+                for inner_index in astichi_for((0, 1)):
+                    astichi_hole(inner)
+            result = events
+            """
+        )
+    )
+    return stage1.build()
+
+
+def _nested_unroll_stage2(stage1_result, label: str):
+    stage2 = astichi.build()
+    stage2.add.Pipeline(stage1_result.bind(PREFIX=label))
+    return stage2.build()
+
+
+def _add_nested_inner_edges(stage3) -> None:
+    stage3.add.Inner00(
+        _piece('astichi_pass(events, outer_bind=True).append("inner00")')
+    )
+    stage3.Pipeline.inner[0][0].add.Inner00(order=0)
+
+    stage3.add.Inner01(
+        _piece('astichi_pass(events, outer_bind=True).append("inner01")')
+    )
+    stage3.Pipeline.inner[0][1].add.Inner01(order=0)
+
+    stage3.add.Inner10(
+        _piece('astichi_pass(events, outer_bind=True).append("inner10")')
+    )
+    stage3.Pipeline.inner[1][0].add.Inner10(order=0)
+
+    stage3.add.Inner11(
+        _piece('astichi_pass(events, outer_bind=True).append("inner11")')
+    )
+    stage3.Pipeline.inner[1][1].add.Inner11(order=0)
+
+
+def _add_nested_outer_edges(stage3) -> None:
+    stage3.add.Outer0(
+        _piece('astichi_pass(events, outer_bind=True).append("outer0")')
+    )
+    stage3.Pipeline.outer[0].add.Outer0(order=0)
+
+    stage3.add.Outer1(
+        _piece('astichi_pass(events, outer_bind=True).append("outer1")')
+    )
+    stage3.Pipeline.outer[1].add.Outer1(order=0)
+
+
+def _build_nested_inner_first_case(label: str):
+    built_stage1 = _nested_unroll_stage1()
+    built_stage2 = _nested_unroll_stage2(built_stage1, label)
+    stage3 = astichi.build()
+    stage3.add.Pipeline(built_stage2)
+    _add_nested_inner_edges(stage3)
+    _add_nested_outer_edges(stage3)
+    return built_stage1, built_stage2, stage3.build(unroll="auto")
+
+
+def _build_nested_outer_first_case(label: str):
+    built_stage1 = _nested_unroll_stage1()
+    built_stage2 = _nested_unroll_stage2(built_stage1, label)
+    stage3 = astichi.build()
+    stage3.add.Pipeline(built_stage2)
+    _add_nested_outer_edges(stage3)
+    _add_nested_inner_edges(stage3)
+    return built_stage1, built_stage2, stage3.build(unroll="auto")
+
+
+def _assert_nested_unroll_result(merged, label: str) -> None:
+    refs = _collect_insert_refs(merged)
+    assert "Pipeline" in refs
+    assert "Pipeline.Outer0[0]" in refs
+    assert "Pipeline.Outer1[1]" in refs
+    assert "Pipeline.Inner00[0, 0]" in refs
+    assert "Pipeline.Inner01[0, 1]" in refs
+    assert "Pipeline.Inner10[1, 0]" in refs
+    assert "Pipeline.Inner11[1, 1]" in refs
+
+    materialized = merged.materialize()
+    source = materialized.emit(provenance=False)
+    assert "astichi_for" not in source
+    assert "astichi_hole" not in source
+
+    namespace = _exec_emitted(materialized)
+    assert namespace["result"] == [
+        label,
+        "outer0",
+        "inner00",
+        "inner01",
+        "outer1",
+        "inner10",
+        "inner11",
+    ]
+
+
 def _ordered_trace(stage_depth: int, first_order: int, second_order: int) -> list[str]:
     assert stage_depth in (1, 2, 3)
 
@@ -254,6 +440,26 @@ def test_v3_import_chain_threads_through_intermediate_unrolled_scope() -> None:
 
     namespace = _exec_emitted(materialized)
     assert namespace["result"] == ["first", "second", "third"]
+
+
+def test_v3_nested_unroll_after_independent_stage_resolution() -> None:
+    inner_stage1, inner_stage2, inner_merged = _build_nested_inner_first_case(
+        "inner-first"
+    )
+    assert str(inner_stage1.inventory) == _NESTED_UNROLL_STAGE1_INVENTORY
+    assert str(inner_stage2.inventory) == _NESTED_UNROLL_STAGE2_INVENTORY
+    assert "astichi_for" in ast.unparse(inner_stage2.tree)
+    assert str(inner_merged.inventory) == _NESTED_UNROLL_STAGE3_INVENTORY
+    _assert_nested_unroll_result(inner_merged, "inner-first")
+
+    outer_stage1, outer_stage2, outer_merged = _build_nested_outer_first_case(
+        "outer-first"
+    )
+    assert str(outer_stage1.inventory) == _NESTED_UNROLL_STAGE1_INVENTORY
+    assert str(outer_stage2.inventory) == _NESTED_UNROLL_STAGE2_INVENTORY
+    assert "astichi_for" in ast.unparse(outer_stage2.tree)
+    assert str(outer_merged.inventory) == _NESTED_UNROLL_STAGE3_INVENTORY
+    _assert_nested_unroll_result(outer_merged, "outer-first")
 
 
 def test_v3_spine_stage_built_import_demand_bound_later() -> None:

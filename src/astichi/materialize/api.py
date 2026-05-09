@@ -222,6 +222,7 @@ def _refresh_composable(
     arg_bindings: tuple[tuple[str, str], ...] | None = None,
     keep_names: frozenset[str] | None = None,
     filter_satisfied_holes: bool = False,
+    inventory: Inventory | None = None,
 ) -> BasicComposable:
     """Re-extract markers/classification/ports against an unrolled tree."""
     markers = recognize_markers(tree)
@@ -242,12 +243,14 @@ def _refresh_composable(
     if filter_satisfied_holes:
         demand_ports = _filter_satisfied_demands(tree, demand_ports)
     supply_ports = extract_supply_ports(markers)
-    inventory = build_inventory(
-        tree,
-        markers,
-        demand_ports,
-        supply_ports,
-    )
+    refreshed_inventory = inventory
+    if refreshed_inventory is None:
+        refreshed_inventory = build_inventory(
+            tree,
+            markers,
+            demand_ports,
+            supply_ports,
+        )
     return BasicComposable(
         tree=tree,
         origin=original.origin,
@@ -255,7 +258,7 @@ def _refresh_composable(
         classification=classification,
         demand_ports=demand_ports,
         supply_ports=supply_ports,
-        inventory=inventory,
+        inventory=refreshed_inventory,
         bound_externals=original.bound_externals,
         arg_bindings=original.arg_bindings if arg_bindings is None else arg_bindings,
         keep_names=original.keep_names if keep_names is None else keep_names,
@@ -278,6 +281,25 @@ def _filter_satisfied_demands(
             )
         )
     )
+
+
+def _without_identifier_demand_inventory(
+    inventory: Inventory,
+    *,
+    ref_path: RefPath,
+    name: str,
+) -> Inventory:
+    mutable = MutableInventory()
+    build_path = ResourcePath(normalize_ref_path(ref_path))
+    for record in inventory.records.values():
+        if (
+            record.kind == "identifier.demand"
+            and record.build_path == build_path
+            and record.name.logical_name() == name
+        ):
+            continue
+        mutable.add_existing_record(record)
+    return mutable.freeze()
 
 
 def _edge_scoped_composable(
@@ -422,7 +444,11 @@ def _apply_assign_bindings(
                     location_donor=target_body[0] if target_body else None,
                 )
                 published_target_aliases.add(alias_key)
-                target_piece = _refresh_composable(dst.composable, target_tree)
+                target_piece = _refresh_composable(
+                    dst.composable,
+                    target_tree,
+                    inventory=dst.composable.inventory,
+                )
                 instance_records[binding.target_instance] = InstanceRecord(
                     name=binding.target_instance,
                     composable=target_piece,
@@ -457,7 +483,15 @@ def _apply_assign_bindings(
             source_body,
             {binding.inner_name: resolved_outer_name},
         )
-        piece = _refresh_composable(piece, source_tree)
+        piece = _refresh_composable(
+            piece,
+            source_tree,
+            inventory=_without_identifier_demand_inventory(
+                piece.inventory,
+                ref_path=source_ref_path,
+                name=binding.inner_name,
+            ),
+        )
         instance_records[binding.source_instance] = InstanceRecord(
             name=binding.source_instance, composable=piece
         )
@@ -571,6 +605,11 @@ def _apply_identifier_bindings(
             dst.composable,
             trees[binding.target_instance],
             keep_names=dst.composable.keep_names | frozenset({resolved_outer_name}),
+            inventory=(
+                dst.composable.inventory
+                if resolved_outer_name == binding.outer_name
+                else None
+            ),
         )
         instance_records[binding.target_instance] = InstanceRecord(
             name=binding.target_instance,
@@ -621,6 +660,11 @@ def _apply_identifier_bindings(
             source_tree,
             arg_bindings=tuple(sorted(arg_bindings.items())),
             keep_names=src.composable.keep_names | frozenset({resolved_outer_name}),
+            inventory=_without_identifier_demand_inventory(
+                src.composable.inventory,
+                ref_path=source_ref_path,
+                name=binding.inner_name,
+            ),
         )
         instance_records[binding.source_instance] = InstanceRecord(
             name=binding.source_instance, composable=piece
@@ -964,12 +1008,17 @@ def build_merge(
             raise TypeError(
                 f"instance {record.name} must be a BasicComposable"
             )
-        tree = copy.deepcopy(record.composable.tree)
+        copied_composable = copy.deepcopy(record.composable)
+        tree = copied_composable.tree
         if do_unroll:
             tree = unroll_tree(tree)
         # Re-derive ports from the current tree so anchor-preserved
         # holes a prior build() marked satisfied remain addressable.
-        composable = _refresh_composable(record.composable, tree)
+        composable = _refresh_composable(
+            copied_composable,
+            tree,
+            inventory=None if do_unroll else copied_composable.inventory,
+        )
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
                 name=record.name, composable=composable
