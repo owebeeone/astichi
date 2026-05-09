@@ -83,6 +83,7 @@ from astichi.model.inventory import (
     MutableInventory,
     ResourcePath,
     build_inventory,
+    build_production_inventory,
 )
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
@@ -1334,6 +1335,8 @@ def build_merge(
         graph=graph,
         instance_records=instance_records,
         root_names=tuple(root_names),
+        merged_tree=merged_tree,
+        supply_ports=supply_ports,
     )
 
     return BasicComposable(
@@ -1354,6 +1357,8 @@ def _build_graph_inventory(
     graph: BuilderGraph,
     instance_records: dict[str, InstanceRecord],
     root_names: tuple[str, ...],
+    merged_tree: ast.Module,
+    supply_ports: tuple[SupplyPort, ...],
 ) -> Inventory:
     mutable = MutableInventory()
     edges_by_target: dict[str, list[AdditiveEdge]] = {}
@@ -1391,6 +1396,10 @@ def _build_graph_inventory(
             (root_name,),
             root_record.composable,
         )
+    mutable.add_inventory(
+        ResourcePath(),
+        build_production_inventory(merged_tree, supply_ports),
+    )
     return mutable.freeze()
 
 
@@ -1399,6 +1408,8 @@ def _occurrence_inventory(composable: BasicComposable) -> Inventory:
     satisfied_params = _locally_satisfied_param_hole_names(composable.tree)
     mutable = MutableInventory()
     for record in composable.inventory.records.values():
+        if record.kind.startswith("production."):
+            continue
         name = record.name.logical_name()
         if record.kind == "hole.params" and name in satisfied_params:
             continue

@@ -88,6 +88,8 @@ def _inventory_text(*lines: str) -> str:
 
 _NESTED_UNROLL_STAGE1_INVENTORY = _inventory_text(
     "records:",
+    "  #1 build_path=. code_owner=. name=__block__ "
+    "kind=production.block locator=.",
     "  Root/#1 build_path=Root code_owner=. name=PREFIX "
     "kind=external.bind locator=body[0]/value",
     "  Root/#2 build_path=Root code_owner=. name=outer "
@@ -97,21 +99,28 @@ _NESTED_UNROLL_STAGE1_INVENTORY = _inventory_text(
     "",
     "resource_map:",
     "  PREFIX: Root/#1",
+    "  __block__: #1",
     "  inner: Root/#3",
     "  outer: Root/#2",
     "",
     "port_map:",
     "  PREFIX: Root/#1",
+    "  __block__: #1",
     "  inner: Root/#3",
     "  outer: Root/#2",
     "",
     "hole_map:",
     "  inner: Root/#3",
     "  outer: Root/#2",
+    "",
+    "production_map:",
+    "  __block__: #1",
 )
 
 _NESTED_UNROLL_STAGE2_INVENTORY = _inventory_text(
     "records:",
+    "  #1 build_path=. code_owner=. name=__block__ "
+    "kind=production.block locator=.",
     "  Pipeline/#3 build_path=Pipeline code_owner=__astichi_root__Root__ "
     "name=outer kind=hole.block locator=body[1]/body[2]/body[0]/value",
     "  Pipeline/#4 build_path=Pipeline code_owner=__astichi_root__Root__ "
@@ -119,16 +128,21 @@ _NESTED_UNROLL_STAGE2_INVENTORY = _inventory_text(
     "locator=body[1]/body[2]/body[1]/body[0]/value",
     "",
     "resource_map:",
+    "  __block__: #1",
     "  inner: Pipeline/#4",
     "  outer: Pipeline/#3",
     "",
     "port_map:",
+    "  __block__: #1",
     "  inner: Pipeline/#4",
     "  outer: Pipeline/#3",
     "",
     "hole_map:",
     "  inner: Pipeline/#4",
     "  outer: Pipeline/#3",
+    "",
+    "production_map:",
+    "  __block__: #1",
 )
 
 _NESTED_UNROLL_STAGE3_EVENTS = (
@@ -138,6 +152,8 @@ _NESTED_UNROLL_STAGE3_EVENTS = (
 
 _NESTED_UNROLL_STAGE3_INVENTORY = _inventory_text(
     "records:",
+    "  #1 build_path=. code_owner=. name=__block__ "
+    "kind=production.block locator=.",
     "  Pipeline/Inner00/#1 build_path=Pipeline/Inner00 code_owner=. "
     "name=events kind=identifier.demand locator=body[0]/value/func/value",
     "  Pipeline/Inner01/#1 build_path=Pipeline/Inner01 code_owner=. "
@@ -152,13 +168,18 @@ _NESTED_UNROLL_STAGE3_INVENTORY = _inventory_text(
     "name=events kind=identifier.demand locator=body[0]/value/func/value",
     "",
     "resource_map:",
+    "  __block__: #1",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
     "",
     "port_map:",
+    "  __block__: #1",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
     "",
     "identifier_map:",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+    "",
+    "production_map:",
+    "  __block__: #1",
 )
 
 

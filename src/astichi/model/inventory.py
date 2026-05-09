@@ -7,9 +7,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from astichi.lowering import RecognizedMarker
-from astichi.lowering.markers import strip_identifier_suffix
+from astichi.asttools import is_astichi_insert_call
+from astichi.lowering import (
+    RecognizedMarker,
+    extract_funcargs_payload,
+    is_astichi_funcargs_call,
+)
+from astichi.lowering.call_argument_payloads import FuncArgPayload
+from astichi.lowering.markers import ALL_MARKERS, strip_identifier_suffix
+from astichi.lowering.parameters import has_params_payload
 from astichi.model.ports import DemandPort, SupplyPort
+from astichi.path_resolution import effective_root_body
 
 InventoryRecordId = str
 ResourceKind = str
@@ -147,6 +155,25 @@ class PortInventoryPayload(InventoryPayload):
 
 
 @dataclass(frozen=True)
+class BlockProductionInventoryPayload(InventoryPayload):
+    """Payload for the default block production."""
+
+
+@dataclass(frozen=True)
+class ExpressionProductionInventoryPayload(InventoryPayload):
+    """Payload for an implicit expression production."""
+
+    expression: ast.expr
+
+
+@dataclass(frozen=True)
+class FuncargsProductionInventoryPayload(InventoryPayload):
+    """Payload for an ``astichi_funcargs`` production."""
+
+    payload: FuncArgPayload
+
+
+@dataclass(frozen=True)
 class InventoryRecord:
     """One bindable resource discovered in a composable."""
 
@@ -168,6 +195,9 @@ class Inventory:
     port_map: dict[str, tuple[InventoryRecordId, ...]] = field(default_factory=dict)
     hole_map: dict[str, tuple[InventoryRecordId, ...]] = field(default_factory=dict)
     identifier_map: dict[str, tuple[InventoryRecordId, ...]] = field(
+        default_factory=dict
+    )
+    production_map: dict[str, tuple[InventoryRecordId, ...]] = field(
         default_factory=dict
     )
 
@@ -218,6 +248,10 @@ class Inventory:
         """Return identifier record IDs for ``name``."""
         return self.identifier_map.get(name, ())
 
+    def production_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]:
+        """Return production record IDs for ``name``."""
+        return self.production_map.get(name, ())
+
     def prefix_build_path(
         self, prefix: ResourcePath, merge_inv: Inventory
     ) -> Inventory:
@@ -243,6 +277,7 @@ class Inventory:
             ("port_map", self.port_map),
             ("hole_map", self.hole_map),
             ("identifier_map", self.identifier_map),
+            ("production_map", self.production_map),
         ):
             if not record_map:
                 continue
@@ -268,6 +303,7 @@ class MutableInventory:
     port_map: dict[str, list[InventoryRecordId]] = field(default_factory=dict)
     hole_map: dict[str, list[InventoryRecordId]] = field(default_factory=dict)
     identifier_map: dict[str, list[InventoryRecordId]] = field(default_factory=dict)
+    production_map: dict[str, list[InventoryRecordId]] = field(default_factory=dict)
     next_record_number: int = 1
 
     def add_record(
@@ -302,6 +338,8 @@ class MutableInventory:
             _append_map_value(self.hole_map, name, record.record_id)
         if record.kind.startswith("identifier."):
             _append_map_value(self.identifier_map, name, record.record_id)
+        if record.kind.startswith("production."):
+            _append_map_value(self.production_map, name, record.record_id)
 
     def add_inventory(self, prefix: ResourcePath, inventory: Inventory) -> None:
         """Add all records from ``inventory`` under ``prefix``."""
@@ -325,6 +363,7 @@ class MutableInventory:
             port_map=_freeze_map(self.port_map),
             hole_map=_freeze_map(self.hole_map),
             identifier_map=_freeze_map(self.identifier_map),
+            production_map=_freeze_map(self.production_map),
         )
 
 
@@ -372,6 +411,18 @@ def build_inventory(
                     kind=kind,
                     payload=PortInventoryPayload(supply_port),
                 )
+    _add_production_records(inventory, index=index, tree=tree, supply_ports=supply_ports)
+    return inventory.freeze()
+
+
+def build_production_inventory(
+    tree: ast.Module,
+    supply_ports: tuple[SupplyPort, ...],
+) -> Inventory:
+    """Build inventory records for the composable's production surface."""
+    index = _AstIndex.from_tree(tree)
+    inventory = MutableInventory()
+    _add_production_records(inventory, index=index, tree=tree, supply_ports=supply_ports)
     return inventory.freeze()
 
 
@@ -469,11 +520,117 @@ def _kind_for_demand_port(port: DemandPort) -> ResourceKind | None:
 def _kind_for_supply_port(port: SupplyPort) -> ResourceKind | None:
     if port.origins.is_identifier_supply():
         return "identifier.supply"
-    if port.is_signature_parameter_supply():
-        return "supply.parameter"
-    if port.is_expression_family_supply():
-        return "supply.expr"
+    if port.is_signature_parameter_supply() or port.is_expression_family_supply():
+        return "production.supply"
     return None
+
+
+def _add_production_records(
+    inventory: MutableInventory,
+    *,
+    index: _AstIndex,
+    tree: ast.Module,
+    supply_ports: tuple[SupplyPort, ...],
+) -> None:
+    root_body = effective_root_body(tree.body)
+    if _is_funcargs_payload_body(root_body):
+        payload = _extract_funcargs_payload_from_body(root_body)
+        if payload is not None:
+            _add_static_production_record(
+                inventory,
+                name="__funcargs__",
+                kind="production.funcargs",
+                locator=index.locator_for(root_body[0].value),
+                payload=FuncargsProductionInventoryPayload(payload),
+            )
+        return
+    if has_params_payload(root_body):
+        return
+    expression = _implicit_expression_after_boundary_prefix(root_body)
+    if expression is not None:
+        _add_static_production_record(
+            inventory,
+            name="__expr__",
+            kind="production.expression",
+            locator=index.locator_for(expression),
+            payload=ExpressionProductionInventoryPayload(expression),
+        )
+    _add_static_production_record(
+        inventory,
+        name="__block__",
+        kind="production.block",
+        locator=NodeLocator(),
+        payload=BlockProductionInventoryPayload(),
+    )
+
+
+def _add_static_production_record(
+    inventory: MutableInventory,
+    *,
+    name: str,
+    kind: ResourceKind,
+    locator: NodeLocator,
+    payload: InventoryPayload,
+) -> None:
+    inventory.add_record(
+        build_path=ResourcePath(),
+        code_owner=CodePath(),
+        name=StaticResourceName(name),
+        kind=kind,
+        locator=locator,
+        payload=payload,
+    )
+
+
+def _is_funcargs_payload_body(body: list[ast.stmt]) -> bool:
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and is_astichi_funcargs_call(body[0].value)
+    )
+
+
+def _extract_funcargs_payload_from_body(body: list[ast.stmt]) -> FuncArgPayload | None:
+    if _is_funcargs_payload_body(body):
+        return extract_funcargs_payload(body[0].value)
+    return None
+
+
+def _implicit_expression_after_boundary_prefix(body: list[ast.stmt]) -> ast.expr | None:
+    boundary_prefix_names = frozenset(
+        marker.source_name
+        for marker in ALL_MARKERS
+        if marker.is_expression_prefix_directive()
+    )
+    expression_seen = False
+    expression: ast.expr | None = None
+    for statement in body:
+        if _is_boundary_prefix_statement(statement, boundary_prefix_names):
+            continue
+        if expression_seen:
+            return None
+        if isinstance(statement, ast.Expr):
+            expression_seen = True
+            expression = statement.value
+            continue
+        return None
+    if is_astichi_insert_call(expression):
+        return None
+    return expression
+
+
+def _is_boundary_prefix_statement(
+    statement: ast.stmt, boundary_prefix_names: frozenset[str]
+) -> bool:
+    if not isinstance(statement, ast.Expr):
+        return False
+    call = statement.value
+    if not isinstance(call, ast.Call):
+        return False
+    if not isinstance(call.func, ast.Name):
+        return False
+    return call.func.id in boundary_prefix_names
 
 
 def _strip_astichi_suffix(name: str) -> str:

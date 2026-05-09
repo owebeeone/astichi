@@ -38,8 +38,10 @@ class cname__astichi_arg__:
         "  #4 build_path=. code_owner=cname/fname name=total kind=identifier.demand locator=body[0]/body[0]/body[0]/value\n"
         "  #5 build_path=. code_owner=cname/fname name=result kind=identifier.supply locator=body[0]/body[0]/body[1]/value\n"
         "  #6 build_path=. code_owner=cname/fname name=body kind=hole.block locator=body[0]/body[0]/body[2]/value\n"
+        "  #7 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
         "\n"
         "resource_map:\n"
+        "  __block__: #7\n"
         "  body: #6\n"
         "  cname: #1\n"
         "  fname: #2\n"
@@ -48,6 +50,7 @@ class cname__astichi_arg__:
         "  total: #4\n"
         "\n"
         "port_map:\n"
+        "  __block__: #7\n"
         "  body: #6\n"
         "  cname: #1\n"
         "  fname: #2\n"
@@ -63,7 +66,10 @@ class cname__astichi_arg__:
         "  cname: #1\n"
         "  fname: #2\n"
         "  result: #5\n"
-        "  total: #4"
+        "  total: #4\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #7"
     )
     assert composable.inventory.hole_record_ids("body") == ("#6",)
     assert composable.inventory.identifier_record_ids("total") == ("#4",)
@@ -78,7 +84,19 @@ class cname__astichi_arg__:
 def test_empty_inventory_prints_only_records_section() -> None:
     composable = astichi.compile("value = 1\n")
 
-    assert str(composable.inventory) == "records:"
+    assert str(composable.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #1\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #1\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #1"
+    )
 
 
 def test_describe_aggregate_ports_are_inventory_backed() -> None:
@@ -119,15 +137,21 @@ astichi_hole(body)
         "records:\n"
         "  #1 build_path=. code_owner=. name=body kind=hole.block locator=body[0]/value\n"
         "  #2 build_path=. code_owner=. name=body kind=hole.block locator=body[1]/value\n"
+        "  #3 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
         "\n"
         "resource_map:\n"
+        "  __block__: #3\n"
         "  body: #1, #2\n"
         "\n"
         "port_map:\n"
+        "  __block__: #3\n"
         "  body: #1, #2\n"
         "\n"
         "hole_map:\n"
-        "  body: #1, #2"
+        "  body: #1, #2\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #3"
     )
 
 
@@ -144,15 +168,21 @@ class cname__astichi_arg__:
     assert str(composable.inventory) == (
         "records:\n"
         "  #1 build_path=. code_owner=User/load name=body kind=hole.block locator=body[0]/body[0]/body[0]/value\n"
+        "  #2 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
         "\n"
         "resource_map:\n"
+        "  __block__: #2\n"
         "  body: #1\n"
         "\n"
         "port_map:\n"
+        "  __block__: #2\n"
         "  body: #1\n"
         "\n"
         "hole_map:\n"
-        "  body: #1"
+        "  body: #1\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #2"
     )
     assert composable.inventory.identifier_record_ids("cname") == ()
     assert composable.inventory.identifier_record_ids("fname") == ()
@@ -230,23 +260,29 @@ astichi_hole(inner)
 
     assert str(built.inventory) == (
         "records:\n"
+        "  #1 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
         "  Root/#2 build_path=Root code_owner=run name=other kind=hole.block locator=body[0]/body[1]/value\n"
         "  Root/Step/#1 build_path=Root/Step code_owner=. name=value kind=external.bind locator=body[0]/value\n"
         "  Root/Step/#2 build_path=Root/Step code_owner=. name=inner kind=hole.block locator=body[1]/value\n"
         "\n"
         "resource_map:\n"
+        "  __block__: #1\n"
         "  inner: Root/Step/#2\n"
         "  other: Root/#2\n"
         "  value: Root/Step/#1\n"
         "\n"
         "port_map:\n"
+        "  __block__: #1\n"
         "  inner: Root/Step/#2\n"
         "  other: Root/#2\n"
         "  value: Root/Step/#1\n"
         "\n"
         "hole_map:\n"
         "  inner: Root/Step/#2\n"
-        "  other: Root/#2"
+        "  other: Root/#2\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #1"
     )
     assert built.describe().single_hole_named("inner").address.ref_path == (
         "Root",

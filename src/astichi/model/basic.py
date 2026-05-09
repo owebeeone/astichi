@@ -15,6 +15,9 @@ from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
 from astichi.model.inventory import (
+    BlockProductionInventoryPayload,
+    ExpressionProductionInventoryPayload,
+    FuncargsProductionInventoryPayload,
     Inventory,
     InventoryRecord,
     PortInventoryPayload,
@@ -85,20 +88,10 @@ class BasicComposable(Composable):
     def describe(self) -> "ComposableDescription":
         from astichi.model.descriptors import (
             ComposableDescription,
-            PortDescriptor,
-            block_production,
-            expression_production,
-            expression_ast_production,
-            funcargs_production,
         )
-        from astichi.lowering import is_astichi_funcargs_call
-        from astichi.lowering.markers import ALL_MARKERS
-        from astichi.lowering.parameters import has_params_payload
-        from astichi.path_resolution import effective_root_body
 
         demand_descriptors = _describe_inventory_demand_ports(self.inventory)
         supply_descriptors = _describe_inventory_supply_ports(self.inventory)
-        root_body = effective_root_body(self.tree.body)
 
         return ComposableDescription(
             holes=_describe_inventory_holes(self.inventory),
@@ -114,24 +107,7 @@ class BasicComposable(Composable):
             identifier_supplies=_describe_inventory_identifier_supplies(
                 self.inventory
             ),
-            productions=_describe_productions(
-                body=root_body,
-                supply_descriptors=supply_descriptors,
-                is_params_payload=has_params_payload(root_body),
-                is_funcargs_payload=_is_funcargs_payload_body(
-                    root_body,
-                    is_astichi_funcargs_call=is_astichi_funcargs_call,
-                ),
-                boundary_prefix_names=frozenset(
-                    marker.source_name
-                    for marker in ALL_MARKERS
-                    if marker.is_expression_prefix_directive()
-                ),
-                block_production=block_production,
-                expression_production=expression_production,
-                expression_ast_production=expression_ast_production,
-                funcargs_production=funcargs_production,
-            ),
+            productions=_describe_inventory_productions(self.inventory),
         )
 
     def bind(
@@ -538,6 +514,84 @@ def _describe_inventory_identifier_supplies(inventory: Inventory):
             )
         )
     return tuple(descriptors)
+
+
+def _describe_inventory_productions(inventory: Inventory):
+    from astichi.model.descriptors import (
+        PortDescriptor,
+        ProductionDescriptor,
+        block_production,
+        expression_ast_production,
+        funcargs_production,
+    )
+
+    productions: list[ProductionDescriptor] = []
+    record_ids = tuple(
+        record_id
+        for ids in inventory.production_map.values()
+        for record_id in ids
+    )
+    records = _inventory_production_records_by_order(
+        inventory.records_for_ids(record_ids)
+    )
+    for record in records:
+        if record.kind == "production.supply":
+            payload = _port_payload(record)
+            if payload is None or not isinstance(payload.port, SupplyPort):
+                continue
+            productions.append(
+                ProductionDescriptor(
+                    name=record.name.logical_name(),
+                    port=PortDescriptor.from_supply(payload.port),
+                )
+            )
+            continue
+        if isinstance(record.payload, FuncargsProductionInventoryPayload):
+            productions.append(
+                funcargs_production(
+                    record.payload.payload,
+                    name=record.name.logical_name(),
+                )
+            )
+            continue
+        if isinstance(record.payload, ExpressionProductionInventoryPayload):
+            productions.append(
+                expression_ast_production(
+                    record.payload.expression,
+                    name=record.name.logical_name(),
+                )
+            )
+            continue
+        if isinstance(record.payload, BlockProductionInventoryPayload):
+            productions.append(block_production(record.name.logical_name()))
+    return tuple(productions)
+
+
+def _inventory_production_records_by_order(
+    records: Iterable[InventoryRecord],
+) -> tuple[InventoryRecord, ...]:
+    return tuple(
+        sorted(
+            records,
+            key=lambda record: (
+                _production_kind_order(record.kind),
+                record.name.logical_name(),
+                record.record_id,
+            ),
+        )
+    )
+
+
+def _production_kind_order(kind: str) -> int:
+    if kind == "production.supply":
+        return 0
+    if kind == "production.funcargs":
+        return 1
+    if kind == "production.expression":
+        return 2
+    if kind == "production.block":
+        return 3
+    return 4
 
 
 def _describe_productions(
