@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 
 import astichi
 from astichi.model import (
@@ -78,6 +79,32 @@ def test_empty_inventory_prints_only_records_section() -> None:
     composable = astichi.compile("value = 1\n")
 
     assert str(composable.inventory) == "records:"
+
+
+def test_describe_aggregate_ports_are_inventory_backed() -> None:
+    composable = astichi.compile(
+        """
+astichi_bind_external(value)
+astichi_hole(body)
+astichi_export(result)
+"""
+    )
+    params = astichi.compile(
+        """
+def astichi_params(item):
+    pass
+"""
+    )
+    inventory_only = replace(composable, demand_ports=(), supply_ports=())
+    params_inventory_only = replace(params, demand_ports=(), supply_ports=())
+    description = inventory_only.describe()
+    params_description = params_inventory_only.describe()
+
+    assert [port.name for port in description.demand_ports] == ["body", "value"]
+    assert [port.name for port in description.supply_ports] == ["result"]
+    assert [port.name for port in params_description.supply_ports] == [
+        "astichi_params"
+    ]
 
 
 def test_inventory_maps_list_multiple_record_ids() -> None:

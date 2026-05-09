@@ -469,6 +469,10 @@ def _kind_for_demand_port(port: DemandPort) -> ResourceKind | None:
 def _kind_for_supply_port(port: SupplyPort) -> ResourceKind | None:
     if port.origins.is_identifier_supply():
         return "identifier.supply"
+    if port.is_signature_parameter_supply():
+        return "supply.parameter"
+    if port.is_expression_family_supply():
+        return "supply.expr"
     return None
 
 

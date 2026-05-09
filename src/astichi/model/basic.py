@@ -96,12 +96,8 @@ class BasicComposable(Composable):
         from astichi.lowering.parameters import has_params_payload
         from astichi.path_resolution import effective_root_body
 
-        demand_descriptors = tuple(
-            PortDescriptor.from_demand(port) for port in self.demand_ports
-        )
-        supply_descriptors = tuple(
-            PortDescriptor.from_supply(port) for port in self.supply_ports
-        )
+        demand_descriptors = _describe_inventory_demand_ports(self.inventory)
+        supply_descriptors = _describe_inventory_supply_ports(self.inventory)
         root_body = effective_root_body(self.tree.body)
 
         return ComposableDescription(
@@ -369,6 +365,40 @@ def _port_payload(record: InventoryRecord) -> PortInventoryPayload | None:
     if isinstance(record.payload, PortInventoryPayload):
         return record.payload
     return None
+
+
+def _describe_inventory_demand_ports(inventory: Inventory):
+    from astichi.model.descriptors import PortDescriptor
+
+    descriptors: list[PortDescriptor] = []
+    seen: set[PortDescriptor] = set()
+    for record in _inventory_records_by_ref_and_name(inventory.records.values()):
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, DemandPort):
+            continue
+        descriptor = PortDescriptor.from_demand(payload.port)
+        if descriptor in seen:
+            continue
+        seen.add(descriptor)
+        descriptors.append(descriptor)
+    return tuple(sorted(descriptors, key=lambda descriptor: descriptor.name))
+
+
+def _describe_inventory_supply_ports(inventory: Inventory):
+    from astichi.model.descriptors import PortDescriptor
+
+    descriptors: list[PortDescriptor] = []
+    seen: set[PortDescriptor] = set()
+    for record in _inventory_records_by_ref_and_name(inventory.records.values()):
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, SupplyPort):
+            continue
+        descriptor = PortDescriptor.from_supply(payload.port)
+        if descriptor in seen:
+            continue
+        seen.add(descriptor)
+        descriptors.append(descriptor)
+    return tuple(sorted(descriptors, key=lambda descriptor: descriptor.name))
 
 
 def _inventory_ref_path(record: InventoryRecord) -> tuple[str, ...]:
