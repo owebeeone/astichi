@@ -440,6 +440,13 @@ astichi_hole(inner)
     assert built.inventory.hole_record_ids("inner") == ("Root/Step/#1",)
 
 
+def test_describe_external_binds_ignore_bound_externals_field() -> None:
+    composable = astichi.compile("astichi_bind_external(value)\n")
+    stale_bound_state = replace(composable, bound_externals=frozenset({"value"}))
+
+    assert stale_bound_state.describe().external_binds[0].already_bound is False
+
+
 def test_two_stage_bind_identifier_removes_demand_and_preserves_build_path() -> None:
     root = astichi.compile(
         """

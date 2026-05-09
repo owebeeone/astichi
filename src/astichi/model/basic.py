@@ -97,10 +97,7 @@ class BasicComposable(Composable):
             holes=_describe_inventory_holes(self.inventory),
             demand_ports=demand_descriptors,
             supply_ports=supply_descriptors,
-            external_binds=_describe_inventory_external_binds(
-                self.inventory,
-                bound_externals=self.bound_externals,
-            ),
+            external_binds=_describe_inventory_external_binds(self.inventory),
             identifier_demands=_describe_inventory_identifier_demands(
                 self.inventory
             ),
@@ -426,11 +423,7 @@ def _describe_inventory_holes(inventory: Inventory):
     return tuple(holes)
 
 
-def _describe_inventory_external_binds(
-    inventory: Inventory,
-    *,
-    bound_externals: frozenset[str],
-):
+def _describe_inventory_external_binds(inventory: Inventory):
     from astichi.model.descriptors import ExternalBindDescriptor, PortDescriptor
 
     descriptors: list[ExternalBindDescriptor] = []
@@ -446,7 +439,6 @@ def _describe_inventory_external_binds(
             ExternalBindDescriptor(
                 name=name,
                 port=PortDescriptor.from_demand(payload.port),
-                already_bound=name in bound_externals,
             )
         )
     return tuple(descriptors)
