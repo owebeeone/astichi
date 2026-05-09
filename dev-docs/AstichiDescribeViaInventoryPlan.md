@@ -78,22 +78,32 @@ as record ids.
 
 Production records need payload data sufficient to rebuild the corresponding
 `ProductionDescriptor`. The payload should not force a source re-scan during
-`describe()`. For expression and function-arguments productions, this means the
-payload must carry either the AST expression/payload data already needed by the
-descriptor or a locator-backed reference that can be resolved without walking the
-tree.
+`describe()`.
+
+"How much AST" means this specific question: should a production record carry a
+direct AST payload, or should it carry only metadata and force `describe()` to
+look back into the tree?
+
+Accepted direction: carry the data the descriptor needs.
+
+- Block production records do not need an AST payload.
+- Supply-backed production records can carry a port payload.
+- Expression production records should carry the expression AST used by the
+  production descriptor.
+- Function-arguments production records should carry the extracted function
+  argument payload used by the descriptor.
+
+This keeps `describe()` as a pure inventory adapter. Inventory construction and
+rebuild paths are responsible for any AST inspection needed to produce those
+payloads.
 
 ### External Bind Bound-State
 
 Inventory-only `describe()` should not need `BasicComposable.bound_externals`.
 
-Preferred direction: when an external bind is resolved, remove that demand record
+Accepted direction: when an external bind is resolved, remove that demand record
 from inventory. That matches the current direction for resolved identifier
 demands and keeps inventory as "what remains externally bindable".
-
-If a legacy descriptor must continue reporting already-bound externals, the
-bound-state should live in the inventory payload. That is a compatibility path,
-not the preferred long-term shape.
 
 ## Work Slices
 
@@ -129,15 +139,23 @@ shapes, not only descriptor tuples.
 
 ### Slice 3: Build-Path Semantics For Productions
 
-Decide and enforce how production records are represented after a build merge.
+Enforce how production records are represented after a build merge.
 
 Bindable occurrence records use build paths like `Root` or `Pipeline/Step`.
 Composable-level productions describe what the resulting composable can provide
-to a future builder. These may need a separate convention so they are not
-confused with child occurrence resources.
+to a future builder. These use build path `.` because they belong to the
+resulting composable surface, not to one nested occurrence inside it.
 
-Candidate rule: final composable productions use build path `.` and occurrence
-resources use concrete build paths.
+Example:
+
+- Compile `Step` from the source expression `make_step()`.
+- `Step` has a production record for `__expr__` at build path `.`.
+- Build `Pipeline` by adding `Step` into `Root.body`.
+- The resulting built composable may still contain occurrence records under
+  `Root/Step` for bindable resources that remain inside that occurrence.
+- The resulting built composable's own productions are still at build path `.`,
+  because a later builder sees the built composable as one source named by the
+  later builder, not as `Root/Step`.
 
 This slice should include tests for a built composable being added to a later
 builder stage.
@@ -149,6 +167,9 @@ they are no longer externally bindable.
 
 Once this is done, `describe().external_binds` can be derived from inventory
 without consulting `bound_externals`.
+
+There is no compatibility requirement to keep already-bound externals visible in
+`describe().external_binds`.
 
 ### Slice 5: Make `describe()` A Thin Wrapper
 
@@ -176,26 +197,113 @@ for `describe()`.
 validation, and compatibility. Do not remove them until those call sites are
 audited separately.
 
-## Open Design Decisions
+## Accepted Decisions
 
 ### Production Payload Shape
 
-The main unresolved design detail is how much AST data a production record should
-carry. The important constraint is that `describe()` must not perform a fresh AST
-walk.
+Production payloads carry the descriptor data directly. `describe()` does not
+walk the AST to recover expression or function-arguments production payloads.
 
 ### Production Build Path
 
-Production records need a clear build-path convention. They are not the same as
-occurrence records, because they describe the resulting composable's future
-builder surface.
+Composable-surface production records use build path `.`. Occurrence records use
+their concrete build path.
 
-### Bound External Compatibility
+### Bound External Records
 
-If existing users depend on seeing already-bound externals in
-`describe().external_binds`, removing resolved external bind records will be a
-behavior change. If that compatibility matters, use inventory payload state as a
-transition.
+Resolved external bind records are removed from inventory. Already-bound
+externals do not need to remain visible in `describe().external_binds`.
+
+## Implementation Plan
+
+This should not be implemented as one large change. The behavior spans inventory
+shape, descriptor reconstruction, compile-time inventory creation, build-merge
+inventory creation, and bind mutation behavior.
+
+### Plan Slice 1: Ports From Inventory
+
+Make `describe().demand_ports` and `describe().supply_ports` derive from
+inventory records.
+
+This slice should not add production records. It should only prove that aggregate
+ports can be reconstructed from existing `PortInventoryPayload` records in a
+deterministic order.
+
+Expected result:
+
+- `BasicComposable.describe()` still has production-specific logic.
+- Holes, external binds, identifier resources, and aggregate ports are
+  inventory-backed.
+- Existing descriptor output remains equivalent.
+
+### Plan Slice 2: Production Records
+
+Add production record kinds, production payloads, and `production_map`.
+
+Inventory construction should create production records for:
+
+- `__block__`
+- `__expr__`
+- `__funcargs__`
+- non-identifier supply-backed productions
+
+Compile and rebuild paths should populate those records. Inventory string tests
+should pin the record ids, build paths, kinds, names, and maps for representative
+production shapes.
+
+Expected result:
+
+- Production data exists in inventory.
+- `describe().productions` can be reconstructed from inventory.
+- AST inspection for production detection happens before `describe()`.
+
+### Plan Slice 3: Staged Build Production Semantics
+
+Pin production build-path behavior across staged builds.
+
+Composable-surface productions should remain at build path `.`. Occurrence
+resources inside built graphs should keep concrete build paths such as `Root` or
+`Root/Step`.
+
+Expected result:
+
+- A built composable added to a later builder stage exposes its own productions
+  as that composable's surface.
+- Nested occurrence resources remain addressable through their build paths.
+- Production inventory does not accidentally describe one nested occurrence as
+  the final composable's future builder surface.
+
+### Plan Slice 4: Remove Bound-External Describe Dependency
+
+Update bind operations so resolved external bind records are removed from
+inventory.
+
+Expected result:
+
+- `describe().external_binds` is derived only from inventory.
+- `BasicComposable.bound_externals` is no longer needed by `describe()`.
+
+### Plan Slice 5: Thin Describe Wrapper
+
+Move descriptor reconstruction into an inventory adapter and reduce
+`BasicComposable.describe()` to a call into that adapter.
+
+Expected result:
+
+- `describe()` does not walk AST body shape.
+- `describe()` does not read parallel descriptor source fields.
+- `ComposableDescription` is reconstructed from inventory records and maps.
+
+### Plan Slice 6: Audit Parallel Port Fields
+
+Audit `BasicComposable.demand_ports` and `BasicComposable.supply_ports` after
+`describe()` stops using them.
+
+Expected result:
+
+- Fields that are still useful for lowering, validation, or transforms remain.
+- Fields that only existed for descriptor output can be retired in a separate
+  cleanup.
 
 ## Non-Goals
 
