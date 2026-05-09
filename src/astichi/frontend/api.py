@@ -30,6 +30,7 @@ from astichi.model import (
     BasicComposable,
     Composable,
     CompileOrigin,
+    build_inventory,
     extract_demand_ports,
     extract_supply_ports,
 )
@@ -138,6 +139,7 @@ def compile(
     )
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
+    inventory = build_inventory(tree, markers, demand_ports, supply_ports)
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
     compiled = FrontendComposable(
         tree=tree,
@@ -146,6 +148,7 @@ def compile(
         classification=classification,
         demand_ports=demand_ports,
         supply_ports=supply_ports,
+        inventory=inventory,
         arg_bindings=validated_arg_bindings,
         keep_names=validated_keep_names,
     )

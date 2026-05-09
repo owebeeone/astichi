@@ -14,6 +14,7 @@ from astichi.lowering import RecognizedMarker, apply_external_bindings, recogniz
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
+from astichi.model.inventory import Inventory, build_inventory, empty_inventory
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     DemandPort,
@@ -41,6 +42,7 @@ class BasicComposable(Composable):
     classification: NameClassification | None = None
     demand_ports: tuple[DemandPort, ...] = field(default_factory=tuple)
     supply_ports: tuple[SupplyPort, ...] = field(default_factory=tuple)
+    inventory: Inventory = field(default_factory=empty_inventory)
     bound_externals: frozenset[str] = field(default_factory=frozenset)
     # Issue 005 §6 / 5d: user-supplied resolutions for `__astichi_arg__`
     # slots, keyed by stripped name -> target Python identifier. Stored as
@@ -583,13 +585,17 @@ def _rebuild_composable(
     classification = analyze_names(
         provisional, mode="permissive", preserved_names=keep_names
     )
+    demand_ports = extract_demand_ports(markers, classification)
+    supply_ports = extract_supply_ports(markers)
+    inventory = build_inventory(tree, markers, demand_ports, supply_ports)
     return BasicComposable(
         tree=tree,
         origin=origin,
         markers=markers,
         classification=classification,
-        demand_ports=extract_demand_ports(markers, classification),
-        supply_ports=extract_supply_ports(markers),
+        demand_ports=demand_ports,
+        supply_ports=supply_ports,
+        inventory=inventory,
         bound_externals=bound_externals,
         arg_bindings=arg_bindings,
         keep_names=keep_names,
