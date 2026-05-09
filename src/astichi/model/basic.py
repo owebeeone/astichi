@@ -4,26 +4,21 @@ from __future__ import annotations
 
 import ast
 import copy
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from astichi.asttools import is_astichi_insert_call
 from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
 from astichi.model.inventory import (
-    BlockProductionInventoryPayload,
-    ExpressionProductionInventoryPayload,
-    FuncargsProductionInventoryPayload,
     Inventory,
-    InventoryRecord,
-    PortInventoryPayload,
     build_inventory,
     empty_inventory,
 )
+from astichi.model.inventory_describe import describe_inventory
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     DemandPort,
@@ -34,11 +29,7 @@ from astichi.model.ports import (
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
-    from astichi.model.descriptors import (
-        ComposableDescription,
-        PortDescriptor,
-        ProductionDescriptor,
-    )
+    from astichi.model.descriptors import ComposableDescription
 
 
 @dataclass(frozen=True)
@@ -86,26 +77,7 @@ class BasicComposable(Composable):
         return materialize_composable(self)
 
     def describe(self) -> "ComposableDescription":
-        from astichi.model.descriptors import (
-            ComposableDescription,
-        )
-
-        demand_descriptors = _describe_inventory_demand_ports(self.inventory)
-        supply_descriptors = _describe_inventory_supply_ports(self.inventory)
-
-        return ComposableDescription(
-            holes=_describe_inventory_holes(self.inventory),
-            demand_ports=demand_descriptors,
-            supply_ports=supply_descriptors,
-            external_binds=_describe_inventory_external_binds(self.inventory),
-            identifier_demands=_describe_inventory_identifier_demands(
-                self.inventory
-            ),
-            identifier_supplies=_describe_inventory_identifier_supplies(
-                self.inventory
-            ),
-            productions=_describe_inventory_productions(self.inventory),
-        )
+        return describe_inventory(self.inventory)
 
     def bind(
         self,
@@ -317,365 +289,6 @@ def _resolve_bindings(
             resolved[key] = value
     resolved.update(values)
     return resolved
-
-
-def _inventory_records_by_ref_and_name(
-    records: Iterable[InventoryRecord],
-) -> tuple[InventoryRecord, ...]:
-    return tuple(
-        sorted(
-            records,
-            key=lambda record: (
-                record.build_path.parts,
-                record.name.logical_name(),
-                record.record_id,
-            ),
-        )
-    )
-
-
-def _port_payload(record: InventoryRecord) -> PortInventoryPayload | None:
-    if isinstance(record.payload, PortInventoryPayload):
-        return record.payload
-    return None
-
-
-def _describe_inventory_demand_ports(inventory: Inventory):
-    from astichi.model.descriptors import PortDescriptor
-
-    descriptors: list[PortDescriptor] = []
-    seen: set[PortDescriptor] = set()
-    for record in _inventory_records_by_ref_and_name(inventory.records.values()):
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, DemandPort):
-            continue
-        descriptor = PortDescriptor.from_demand(payload.port)
-        if descriptor in seen:
-            continue
-        seen.add(descriptor)
-        descriptors.append(descriptor)
-    return tuple(sorted(descriptors, key=lambda descriptor: descriptor.name))
-
-
-def _describe_inventory_supply_ports(inventory: Inventory):
-    from astichi.model.descriptors import PortDescriptor
-
-    descriptors: list[PortDescriptor] = []
-    seen: set[PortDescriptor] = set()
-    for record in _inventory_records_by_ref_and_name(inventory.records.values()):
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, SupplyPort):
-            continue
-        descriptor = PortDescriptor.from_supply(payload.port)
-        if descriptor in seen:
-            continue
-        seen.add(descriptor)
-        descriptors.append(descriptor)
-    return tuple(sorted(descriptors, key=lambda descriptor: descriptor.name))
-
-
-def _inventory_ref_path(record: InventoryRecord) -> tuple[str, ...]:
-    return record.build_path.parts
-
-
-def _describe_inventory_holes(inventory: Inventory):
-    from astichi.model.descriptors import (
-        ComposableHole,
-        HoleDescriptor,
-        PortDescriptor,
-        TargetAddress,
-        add_policy_for_demand,
-    )
-
-    holes: list[ComposableHole] = []
-    records = _inventory_records_by_ref_and_name(
-        inventory.records_for_ids(
-            tuple(
-                record_id
-                for ids in inventory.hole_map.values()
-                for record_id in ids
-            )
-        )
-    )
-    for record in records:
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, DemandPort):
-            continue
-        port = payload.port
-        if not (port.is_additive_hole_demand() or port.is_parameter_hole_demand()):
-            continue
-        name = record.name.logical_name()
-        port_descriptor = PortDescriptor.from_demand(port)
-        hole_descriptor = HoleDescriptor(port=port_descriptor)
-        holes.append(
-            ComposableHole(
-                name=name,
-                descriptor=hole_descriptor,
-                address=TargetAddress(
-                    root_instance=None,
-                    ref_path=_inventory_ref_path(record),
-                    target_name=name,
-                ),
-                port=port_descriptor,
-                add_policy=add_policy_for_demand(port),
-            )
-        )
-    return tuple(holes)
-
-
-def _describe_inventory_external_binds(inventory: Inventory):
-    from astichi.model.descriptors import ExternalBindDescriptor, PortDescriptor
-
-    descriptors: list[ExternalBindDescriptor] = []
-    records = _inventory_records_by_ref_and_name(inventory.records.values())
-    for record in records:
-        if record.kind != "external.bind":
-            continue
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, DemandPort):
-            continue
-        name = record.name.logical_name()
-        descriptors.append(
-            ExternalBindDescriptor(
-                name=name,
-                port=PortDescriptor.from_demand(payload.port),
-            )
-        )
-    return tuple(descriptors)
-
-
-def _describe_inventory_identifier_demands(inventory: Inventory):
-    from astichi.model.descriptors import (
-        IdentifierDemandDescriptor,
-        PortDescriptor,
-    )
-
-    descriptors: list[IdentifierDemandDescriptor] = []
-    records = _inventory_records_by_ref_and_name(
-        inventory.records_for_ids(
-            tuple(
-                record_id
-                for ids in inventory.identifier_map.values()
-                for record_id in ids
-            )
-        )
-    )
-    for record in records:
-        if record.kind != "identifier.demand":
-            continue
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, DemandPort):
-            continue
-        descriptors.append(
-            IdentifierDemandDescriptor(
-                name=record.name.logical_name(),
-                port=PortDescriptor.from_demand(payload.port),
-                ref_path=_inventory_ref_path(record),
-            )
-        )
-    return tuple(descriptors)
-
-
-def _describe_inventory_identifier_supplies(inventory: Inventory):
-    from astichi.model.descriptors import (
-        IdentifierSupplyDescriptor,
-        PortDescriptor,
-    )
-
-    descriptors: list[IdentifierSupplyDescriptor] = []
-    records = _inventory_records_by_ref_and_name(
-        inventory.records_for_ids(
-            tuple(
-                record_id
-                for ids in inventory.identifier_map.values()
-                for record_id in ids
-            )
-        )
-    )
-    for record in records:
-        if record.kind != "identifier.supply":
-            continue
-        payload = _port_payload(record)
-        if payload is None or not isinstance(payload.port, SupplyPort):
-            continue
-        descriptors.append(
-            IdentifierSupplyDescriptor(
-                name=record.name.logical_name(),
-                port=PortDescriptor.from_supply(payload.port),
-                ref_path=_inventory_ref_path(record),
-            )
-        )
-    return tuple(descriptors)
-
-
-def _describe_inventory_productions(inventory: Inventory):
-    from astichi.model.descriptors import (
-        PortDescriptor,
-        ProductionDescriptor,
-        block_production,
-        expression_ast_production,
-        funcargs_production,
-    )
-
-    productions: list[ProductionDescriptor] = []
-    record_ids = tuple(
-        record_id
-        for ids in inventory.production_map.values()
-        for record_id in ids
-    )
-    records = _inventory_production_records_by_order(
-        inventory.records_for_ids(record_ids)
-    )
-    for record in records:
-        if record.kind == "production.supply":
-            payload = _port_payload(record)
-            if payload is None or not isinstance(payload.port, SupplyPort):
-                continue
-            productions.append(
-                ProductionDescriptor(
-                    name=record.name.logical_name(),
-                    port=PortDescriptor.from_supply(payload.port),
-                )
-            )
-            continue
-        if isinstance(record.payload, FuncargsProductionInventoryPayload):
-            productions.append(
-                funcargs_production(
-                    record.payload.payload,
-                    name=record.name.logical_name(),
-                )
-            )
-            continue
-        if isinstance(record.payload, ExpressionProductionInventoryPayload):
-            productions.append(
-                expression_ast_production(
-                    record.payload.expression,
-                    name=record.name.logical_name(),
-                )
-            )
-            continue
-        if isinstance(record.payload, BlockProductionInventoryPayload):
-            productions.append(block_production(record.name.logical_name()))
-    return tuple(productions)
-
-
-def _inventory_production_records_by_order(
-    records: Iterable[InventoryRecord],
-) -> tuple[InventoryRecord, ...]:
-    return tuple(
-        sorted(
-            records,
-            key=lambda record: (
-                _production_kind_order(record.kind),
-                record.name.logical_name(),
-                record.record_id,
-            ),
-        )
-    )
-
-
-def _production_kind_order(kind: str) -> int:
-    if kind == "production.supply":
-        return 0
-    if kind == "production.funcargs":
-        return 1
-    if kind == "production.expression":
-        return 2
-    if kind == "production.block":
-        return 3
-    return 4
-
-
-def _describe_productions(
-    *,
-    body: list[ast.stmt],
-    supply_descriptors: tuple["PortDescriptor", ...],
-    is_params_payload: bool,
-    is_funcargs_payload: bool,
-    boundary_prefix_names: frozenset[str],
-    block_production: Callable[[str], "ProductionDescriptor"],
-    expression_production: Callable[[str], "ProductionDescriptor"],
-    expression_ast_production: Callable[..., "ProductionDescriptor"],
-    funcargs_production: Callable[..., "ProductionDescriptor"],
-) -> tuple["ProductionDescriptor", ...]:
-    from astichi.model.descriptors import ProductionDescriptor
-
-    productions: list[ProductionDescriptor] = [
-        ProductionDescriptor(name=descriptor.name, port=descriptor)
-        for descriptor in supply_descriptors
-        if not descriptor.is_identifier_supply()
-    ]
-    if is_funcargs_payload:
-        payload = _extract_funcargs_payload_from_body(body)
-        if payload is not None:
-            productions.append(funcargs_production(payload, name="__funcargs__"))
-        return tuple(productions)
-    if is_params_payload:
-        return tuple(productions)
-    expression = _implicit_expression_after_boundary_prefix(body, boundary_prefix_names)
-    if expression is not None:
-        productions.append(expression_ast_production(expression, name="__expr__"))
-    productions.append(block_production("__block__"))
-    return tuple(productions)
-
-
-def _is_funcargs_payload_body(
-    body: list[ast.stmt],
-    *,
-    is_astichi_funcargs_call: Callable[[ast.AST], bool],
-) -> bool:
-    return (
-        len(body) == 1
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Call)
-        and is_astichi_funcargs_call(body[0].value)
-    )
-
-
-def _extract_funcargs_payload_from_body(body: list[ast.stmt]) -> object | None:
-    from astichi.lowering import extract_funcargs_payload, is_astichi_funcargs_call
-
-    if (
-        len(body) == 1
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Call)
-        and is_astichi_funcargs_call(body[0].value)
-    ):
-        return extract_funcargs_payload(body[0].value)
-    return None
-
-
-def _implicit_expression_after_boundary_prefix(
-    body: list[ast.stmt], boundary_prefix_names: frozenset[str]
-) -> ast.expr | None:
-    expression_seen = False
-    expression: ast.expr | None = None
-    for statement in body:
-        if _is_boundary_prefix_statement(statement, boundary_prefix_names):
-            continue
-        if expression_seen:
-            return None
-        if isinstance(statement, ast.Expr):
-            expression_seen = True
-            expression = statement.value
-            continue
-        return None
-    if is_astichi_insert_call(expression):
-        return None
-    return expression
-
-
-def _is_boundary_prefix_statement(
-    statement: ast.stmt, boundary_prefix_names: frozenset[str]
-) -> bool:
-    if not isinstance(statement, ast.Expr):
-        return False
-    call = statement.value
-    if not isinstance(call, ast.Call):
-        return False
-    if not isinstance(call.func, ast.Name):
-        return False
-    return call.func.id in boundary_prefix_names
 
 
 def _resolve_identifier_bindings(
