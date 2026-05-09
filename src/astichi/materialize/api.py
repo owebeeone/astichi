@@ -78,6 +78,12 @@ from astichi.materialize.pyimport import (
     insert_managed_imports,
 )
 from astichi.model.basic import BasicComposable, apply_source_overlay
+from astichi.model.inventory import (
+    Inventory,
+    MutableInventory,
+    ResourcePath,
+    build_inventory,
+)
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     DemandPort,
@@ -215,6 +221,7 @@ def _refresh_composable(
     *,
     arg_bindings: tuple[tuple[str, str], ...] | None = None,
     keep_names: frozenset[str] | None = None,
+    filter_satisfied_holes: bool = False,
 ) -> BasicComposable:
     """Re-extract markers/classification/ports against an unrolled tree."""
     markers = recognize_markers(tree)
@@ -231,16 +238,45 @@ def _refresh_composable(
         mode="permissive",
         preserved_names=original.keep_names if keep_names is None else keep_names,
     )
+    demand_ports = extract_demand_ports(markers, classification)
+    if filter_satisfied_holes:
+        demand_ports = _filter_satisfied_demands(tree, demand_ports)
+    supply_ports = extract_supply_ports(markers)
+    inventory = build_inventory(
+        tree,
+        markers,
+        demand_ports,
+        supply_ports,
+    )
     return BasicComposable(
         tree=tree,
         origin=original.origin,
         markers=markers,
         classification=classification,
-        demand_ports=extract_demand_ports(markers, classification),
-        supply_ports=extract_supply_ports(markers),
+        demand_ports=demand_ports,
+        supply_ports=supply_ports,
+        inventory=inventory,
         bound_externals=original.bound_externals,
         arg_bindings=original.arg_bindings if arg_bindings is None else arg_bindings,
         keep_names=original.keep_names if keep_names is None else keep_names,
+    )
+
+
+def _filter_satisfied_demands(
+    tree: ast.AST, demand_ports: tuple[DemandPort, ...]
+) -> tuple[DemandPort, ...]:
+    satisfied = _locally_satisfied_hole_names(tree)
+    satisfied_params = _locally_satisfied_param_hole_names(tree)
+    return tuple(
+        port
+        for port in demand_ports
+        if not (
+            (port.is_additive_hole_demand() and port.name in satisfied)
+            or (
+                port.is_parameter_hole_demand()
+                and port.name in satisfied_params
+            )
+        )
     )
 
 
@@ -1241,19 +1277,14 @@ def build_merge(
     classification = analyze_names(
         provisional, mode="permissive", preserved_names=frozenset(merged_keep_names)
     )
-    raw_demands = extract_demand_ports(markers, classification)
-    satisfied = _locally_satisfied_hole_names(merged_tree)
-    satisfied_params = _locally_satisfied_param_hole_names(merged_tree)
-    demand_ports = tuple(
-        port
-        for port in raw_demands
-        if not (
-            (port.is_additive_hole_demand() and port.name in satisfied)
-            or (
-                port.is_parameter_hole_demand()
-                and port.name in satisfied_params
-            )
-        )
+    demand_ports = _filter_satisfied_demands(
+        merged_tree, extract_demand_ports(markers, classification)
+    )
+    supply_ports = extract_supply_ports(markers)
+    inventory = _build_graph_inventory(
+        graph=graph,
+        instance_records=instance_records,
+        root_names=tuple(root_names),
     )
 
     return BasicComposable(
@@ -1262,10 +1293,74 @@ def build_merge(
         markers=markers,
         classification=classification,
         demand_ports=demand_ports,
-        supply_ports=extract_supply_ports(markers),
+        supply_ports=supply_ports,
+        inventory=inventory,
         arg_bindings=tuple(sorted(merged_arg_binding_pairs)),
         keep_names=frozenset(merged_keep_names),
     )
+
+
+def _build_graph_inventory(
+    *,
+    graph: BuilderGraph,
+    instance_records: dict[str, InstanceRecord],
+    root_names: tuple[str, ...],
+) -> Inventory:
+    mutable = MutableInventory()
+    edges_by_target: dict[str, list[AdditiveEdge]] = {}
+    for edge in graph.edges:
+        edges_by_target.setdefault(edge.target.root_instance, []).append(edge)
+    for edges in edges_by_target.values():
+        edges.sort(key=lambda edge: (edge.order, edge.source_instance))
+
+    def add_occurrence(
+        instance_name: str,
+        build_path: tuple[str, ...],
+        composable: BasicComposable,
+    ) -> None:
+        mutable.add_inventory(
+            ResourcePath(build_path),
+            _occurrence_inventory(composable),
+        )
+        for edge in edges_by_target.get(instance_name, ()):
+            source_record = instance_records[edge.source_instance]
+            source_piece = _edge_scoped_composable(source_record, edge)
+            add_occurrence(
+                edge.source_instance,
+                build_path + (edge.source_instance,),
+                source_piece,
+            )
+
+    for root_name in root_names:
+        root_record = instance_records[root_name]
+        if not isinstance(root_record.composable, BasicComposable):
+            raise TypeError(
+                f"instance {root_record.name} must be a BasicComposable"
+            )
+        add_occurrence(
+            root_name,
+            (root_name,),
+            root_record.composable,
+        )
+    return mutable.freeze()
+
+
+def _occurrence_inventory(composable: BasicComposable) -> Inventory:
+    satisfied_holes = _locally_satisfied_hole_names(composable.tree)
+    satisfied_params = _locally_satisfied_param_hole_names(composable.tree)
+    mutable = MutableInventory()
+    for record in composable.inventory.records.values():
+        name = record.name.logical_name()
+        if record.kind == "hole.params" and name in satisfied_params:
+            continue
+        if (
+            record.kind.startswith("hole.")
+            and record.kind != "hole.params"
+            and name in satisfied_holes
+        ):
+            continue
+        mutable.add_existing_record(record)
+    return mutable.freeze()
 
 
 def _topo_sort_targets(graph: BuilderGraph) -> list[str]:

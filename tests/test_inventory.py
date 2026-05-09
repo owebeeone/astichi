@@ -135,3 +135,45 @@ def test_ast_backed_names_compare_by_stripped_logical_name() -> None:
     assert CodeNodeResourceName(left_class) == CodeNodeResourceName(right_class)
     assert left_function == right_function
     assert CodeNodeResourceName(left_function) == CodeNodeResourceName(right_function)
+
+
+def test_builder_inventory_prefixes_records_by_build_path() -> None:
+    root = astichi.compile(
+        """
+def run():
+    astichi_hole(body)
+    astichi_hole(other)
+"""
+    )
+    step = astichi.compile(
+        """
+astichi_bind_external(value)
+astichi_hole(inner)
+"""
+    )
+
+    builder = astichi.build()
+    root_handle = builder.add.Root(root)
+    builder.add.Step(step)
+    root_handle.body.add.Step()
+
+    assert str(builder.build().inventory) == (
+        "records:\n"
+        "  Root/#2 build_path=Root code_owner=run name=other kind=hole.block locator=body[0]/body[1]/value\n"
+        "  Root/Step/#1 build_path=Root/Step code_owner=. name=value kind=external.bind locator=body[0]/value\n"
+        "  Root/Step/#2 build_path=Root/Step code_owner=. name=inner kind=hole.block locator=body[1]/value\n"
+        "\n"
+        "resource_map:\n"
+        "  inner: Root/Step/#2\n"
+        "  other: Root/#2\n"
+        "  value: Root/Step/#1\n"
+        "\n"
+        "port_map:\n"
+        "  inner: Root/Step/#2\n"
+        "  other: Root/#2\n"
+        "  value: Root/Step/#1\n"
+        "\n"
+        "hole_map:\n"
+        "  inner: Root/Step/#2\n"
+        "  other: Root/#2"
+    )

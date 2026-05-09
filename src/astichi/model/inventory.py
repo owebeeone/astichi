@@ -198,18 +198,7 @@ class Inventory:
     ) -> Inventory:
         """Return ``merge_inv`` with all record IDs and build paths prefixed."""
         mutable = MutableInventory()
-        for record in _sorted_records(merge_inv.records.values()):
-            mutable.add_existing_record(
-                InventoryRecord(
-                    record_id=_prefixed_record_id(prefix, record.record_id),
-                    build_path=record.build_path.prefixed(prefix),
-                    code_owner=record.code_owner,
-                    name=record.name,
-                    kind=record.kind,
-                    locator=record.locator,
-                    payload=record.payload,
-                )
-            )
+        mutable.add_inventory(prefix, merge_inv)
         return mutable.freeze()
 
     def __str__(self) -> str:
@@ -288,6 +277,21 @@ class MutableInventory:
             _append_map_value(self.hole_map, name, record.record_id)
         if record.kind.startswith("identifier."):
             _append_map_value(self.identifier_map, name, record.record_id)
+
+    def add_inventory(self, prefix: ResourcePath, inventory: Inventory) -> None:
+        """Add all records from ``inventory`` under ``prefix``."""
+        for record in _sorted_records(inventory.records.values()):
+            self.add_existing_record(
+                InventoryRecord(
+                    record_id=_prefixed_record_id(prefix, record.record_id),
+                    build_path=record.build_path.prefixed(prefix),
+                    code_owner=record.code_owner,
+                    name=record.name,
+                    kind=record.kind,
+                    locator=record.locator,
+                    payload=record.payload,
+                )
+            )
 
     def freeze(self) -> Inventory:
         return Inventory(
@@ -476,9 +480,9 @@ def _record_id_sort_key(record_id: InventoryRecordId) -> tuple[tuple[int, str], 
     key: list[tuple[int, str]] = []
     for part in parts:
         if part.startswith("#") and part[1:].isdigit():
-            key.append((1, f"{int(part[1:]):020d}"))
+            key.append((0, f"{int(part[1:]):020d}"))
             continue
-        key.append((0, part))
+        key.append((1, part))
     return tuple(key)
 
 
