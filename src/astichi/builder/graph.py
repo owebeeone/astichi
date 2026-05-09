@@ -99,6 +99,38 @@ class AdditiveEdge:
     overlay: EdgeSourceOverlay = field(default_factory=EdgeSourceOverlay)
 
 
+def _dependency_path(
+    edges: list[AdditiveEdge],
+    *,
+    start: str,
+    goal: str,
+) -> tuple[str, ...] | None:
+    if start == goal:
+        return (start,)
+
+    adjacency: dict[str, set[str]] = {}
+    for edge in edges:
+        adjacency.setdefault(edge.target.root_instance, set()).add(
+            edge.source_instance
+        )
+
+    seen: set[str] = set()
+
+    def visit(node: str, path: tuple[str, ...]) -> tuple[str, ...] | None:
+        if node == goal:
+            return path
+        seen.add(node)
+        for dependency in sorted(adjacency.get(node, set())):
+            if dependency in seen:
+                continue
+            found = visit(dependency, path + (dependency,))
+            if found is not None:
+                return found
+        return None
+
+    return visit(start, (start,))
+
+
 @dataclass(frozen=True)
 class AssignBinding:
     """Explicit cross-instance identifier wiring for boundary imports.
@@ -239,6 +271,23 @@ class BuilderGraph:
                     "build",
                     f"unknown source instance: {source_instance}",
                     hint="register the source instance with `builder.add` before wiring edges",
+                )
+            )
+        existing_path = _dependency_path(
+            self._edges,
+            start=source_instance,
+            goal=target.root_instance,
+        )
+        if existing_path is not None:
+            cycle_path = (target.root_instance,) + existing_path
+            raise ValueError(
+                format_astichi_error(
+                    "build",
+                    "additive edge cycle: " + " -> ".join(cycle_path),
+                    hint=(
+                        "do not add an instance into a target that already "
+                        "depends on that instance"
+                    ),
                 )
             )
         edge = AdditiveEdge(

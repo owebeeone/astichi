@@ -80,6 +80,57 @@ def test_raw_builder_graph_rejects_edges_with_unknown_instances() -> None:
         )
 
 
+def test_raw_builder_graph_rejects_additive_edge_cycles() -> None:
+    builder = BuilderGraph()
+    builder.add_instance("A", astichi.compile("a = 1\n"))
+    builder.add_instance("B", astichi.compile("astichi_hole(slot)\n"))
+    builder.add_instance("C", astichi.compile("astichi_hole(slot)\n"))
+
+    first = builder.add_additive_edge(
+        target=TargetRef(root_instance="B", target_name="slot"),
+        source_instance="C",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"additive edge cycle: C -> B -> C",
+    ):
+        builder.add_additive_edge(
+            target=TargetRef(root_instance="C", target_name="slot"),
+            source_instance="B",
+        )
+
+    assert builder.edges == (first,)
+
+
+def test_builder_handle_rejects_dead_additive_edge_cycle_when_added() -> None:
+    builder = astichi.build()
+    builder.add.A(astichi.compile("a = 1\n"))
+    builder.add.B(astichi.compile("astichi_hole(hole)\nb = 1\n"))
+    builder.add.C(astichi.compile("astichi_hole(hole)\nc = 2\n"))
+
+    builder.B.hole.add.C()
+    with pytest.raises(
+        ValueError,
+        match=r"additive edge cycle: C -> B -> C",
+    ):
+        builder.C.hole.add.B()
+
+
+def test_builder_handle_rejects_transitive_additive_edge_cycle() -> None:
+    builder = astichi.build()
+    builder.add.B(astichi.compile("astichi_hole(hole)\nb = 1\n"))
+    builder.add.C(astichi.compile("astichi_hole(hole)\nc = 2\n"))
+    builder.add.D(astichi.compile("astichi_hole(hole)\nd = 3\n"))
+
+    builder.B.hole.add.C()
+    builder.C.hole.add.D()
+    with pytest.raises(
+        ValueError,
+        match=r"additive edge cycle: D -> B -> C -> D",
+    ):
+        builder.D.hole.add.B()
+
+
 def test_raw_builder_graph_keeps_first_come_first_served_for_equal_order() -> None:
     builder = BuilderGraph()
     builder.add_instance("A", astichi.compile("astichi_hole(slot)\n"))
