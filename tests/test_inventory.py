@@ -290,6 +290,92 @@ astichi_hole(inner)
     )
 
 
+def test_staged_build_productions_remain_surface_records() -> None:
+    root = astichi.compile(
+        """
+astichi_hole(body)
+astichi_hole(other)
+"""
+    )
+    step = astichi.compile("make_step()\n")
+
+    stage1 = astichi.build()
+    root_handle = stage1.add.Root(root)
+    stage1.add.Step(step)
+    root_handle.body.add.Step()
+    built_stage1 = stage1.build()
+
+    assert str(step.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=. name=__expr__ kind=production.expression locator=body[0]/value\n"
+        "  #2 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #2\n"
+        "  __expr__: #1\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #2\n"
+        "  __expr__: #1\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #2\n"
+        "  __expr__: #1"
+    )
+    assert str(built_stage1.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "  Root/#2 build_path=Root code_owner=. name=other kind=hole.block locator=body[1]/value\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #1\n"
+        "  other: Root/#2\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #1\n"
+        "  other: Root/#2\n"
+        "\n"
+        "hole_map:\n"
+        "  other: Root/#2\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #1"
+    )
+    assert [production.name for production in built_stage1.describe().productions] == [
+        "__block__"
+    ]
+
+    wrapper = astichi.compile("astichi_hole(body)\n")
+    stage2 = astichi.build()
+    wrapper_handle = stage2.add.Wrapper(wrapper)
+    stage2.add.Pipeline(built_stage1)
+    wrapper_handle.body.add.Pipeline()
+    built_stage2 = stage2.build()
+
+    assert str(built_stage2.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "  Wrapper/Pipeline/Root/#2 build_path=Wrapper/Pipeline/Root code_owner=. name=other kind=hole.block locator=body[1]/value\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #1\n"
+        "  other: Wrapper/Pipeline/Root/#2\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #1\n"
+        "  other: Wrapper/Pipeline/Root/#2\n"
+        "\n"
+        "hole_map:\n"
+        "  other: Wrapper/Pipeline/Root/#2\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #1"
+    )
+    assert [production.name for production in built_stage2.describe().productions] == [
+        "__block__"
+    ]
+
+
 def test_builder_add_arg_names_removes_identifier_inventory_record() -> None:
     step = astichi.compile(
         """
