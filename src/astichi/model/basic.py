@@ -14,7 +14,13 @@ from astichi.lowering import RecognizedMarker, apply_external_bindings, recogniz
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.external_values import validate_external_value
-from astichi.model.inventory import Inventory, build_inventory, empty_inventory
+from astichi.model.inventory import (
+    Inventory,
+    InventoryRecord,
+    PortInventoryPayload,
+    build_inventory,
+    empty_inventory,
+)
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import (
     DemandPort,
@@ -79,15 +85,7 @@ class BasicComposable(Composable):
     def describe(self) -> "ComposableDescription":
         from astichi.model.descriptors import (
             ComposableDescription,
-            ComposableHole,
-            ExternalBindDescriptor,
-            HoleDescriptor,
-            IdentifierDemandDescriptor,
-            IdentifierSupplyDescriptor,
             PortDescriptor,
-            ProductionDescriptor,
-            TargetAddress,
-            add_policy_for_demand,
             block_production,
             expression_production,
             expression_ast_production,
@@ -96,15 +94,7 @@ class BasicComposable(Composable):
         from astichi.lowering import is_astichi_funcargs_call
         from astichi.lowering.markers import ALL_MARKERS
         from astichi.lowering.parameters import has_params_payload
-        from astichi.path_resolution import (
-            ROOT_SCOPE_HOLE_PREFIX,
-            ShellIndex,
-            collect_hole_names_in_body,
-            collect_identifier_demands_in_body,
-            collect_identifier_suppliers_in_body,
-            collect_param_hole_names_in_body,
-            effective_root_body,
-        )
+        from astichi.path_resolution import effective_root_body
 
         demand_descriptors = tuple(
             PortDescriptor.from_demand(port) for port in self.demand_ports
@@ -113,80 +103,21 @@ class BasicComposable(Composable):
             PortDescriptor.from_supply(port) for port in self.supply_ports
         )
         root_body = effective_root_body(self.tree.body)
-        demand_by_name = {port.name: port for port in self.demand_ports}
-        supply_by_name = {port.name: port for port in self.supply_ports}
-        holes: list[ComposableHole] = []
-        identifier_demands: list[IdentifierDemandDescriptor] = []
-        identifier_supplies: list[IdentifierSupplyDescriptor] = []
-        for shell in ShellIndex.from_tree(self.tree).addressable_shells():
-            local_names = (
-                collect_hole_names_in_body(shell.body)
-                | collect_param_hole_names_in_body(shell.body)
-            )
-            for name in sorted(local_names):
-                if name.startswith(ROOT_SCOPE_HOLE_PREFIX):
-                    continue
-                port = demand_by_name.get(name)
-                if port is None:
-                    continue
-                if not (
-                    port.is_additive_hole_demand()
-                    or port.is_parameter_hole_demand()
-                ):
-                    continue
-                port_descriptor = PortDescriptor.from_demand(port)
-                hole_descriptor = HoleDescriptor(port=port_descriptor)
-                holes.append(
-                    ComposableHole(
-                        name=name,
-                        descriptor=hole_descriptor,
-                        address=TargetAddress(
-                            root_instance=None,
-                            ref_path=shell.ref_path,
-                            target_name=name,
-                        ),
-                        port=port_descriptor,
-                        add_policy=add_policy_for_demand(port),
-                    )
-                )
-            for name in sorted(collect_identifier_demands_in_body(shell.body)):
-                port = demand_by_name.get(name)
-                if port is None or not port.is_identifier_demand():
-                    continue
-                identifier_demands.append(
-                    IdentifierDemandDescriptor(
-                        name=name,
-                        port=PortDescriptor.from_demand(port),
-                        ref_path=shell.ref_path,
-                    )
-                )
-            for name in sorted(collect_identifier_suppliers_in_body(shell.body)):
-                port = supply_by_name.get(name)
-                if port is None or not port.origins.is_identifier_supply():
-                    continue
-                identifier_supplies.append(
-                    IdentifierSupplyDescriptor(
-                        name=name,
-                        port=PortDescriptor.from_supply(port),
-                        ref_path=shell.ref_path,
-                    )
-                )
 
         return ComposableDescription(
-            holes=tuple(holes),
+            holes=_describe_inventory_holes(self.inventory),
             demand_ports=demand_descriptors,
             supply_ports=supply_descriptors,
-            external_binds=tuple(
-                ExternalBindDescriptor(
-                    name=descriptor.name,
-                    port=descriptor,
-                    already_bound=descriptor.name in self.bound_externals,
-                )
-                for descriptor in demand_descriptors
-                if descriptor.is_external_bind_demand()
+            external_binds=_describe_inventory_external_binds(
+                self.inventory,
+                bound_externals=self.bound_externals,
             ),
-            identifier_demands=tuple(identifier_demands),
-            identifier_supplies=tuple(identifier_supplies),
+            identifier_demands=_describe_inventory_identifier_demands(
+                self.inventory
+            ),
+            identifier_supplies=_describe_inventory_identifier_supplies(
+                self.inventory
+            ),
             productions=_describe_productions(
                 body=root_body,
                 supply_descriptors=supply_descriptors,
@@ -417,6 +348,166 @@ def _resolve_bindings(
             resolved[key] = value
     resolved.update(values)
     return resolved
+
+
+def _inventory_records_by_ref_and_name(
+    records: Iterable[InventoryRecord],
+) -> tuple[InventoryRecord, ...]:
+    return tuple(
+        sorted(
+            records,
+            key=lambda record: (
+                record.build_path.parts,
+                record.name.logical_name(),
+                record.record_id,
+            ),
+        )
+    )
+
+
+def _port_payload(record: InventoryRecord) -> PortInventoryPayload | None:
+    if isinstance(record.payload, PortInventoryPayload):
+        return record.payload
+    return None
+
+
+def _inventory_ref_path(record: InventoryRecord) -> tuple[str, ...]:
+    return record.build_path.parts
+
+
+def _describe_inventory_holes(inventory: Inventory):
+    from astichi.model.descriptors import (
+        ComposableHole,
+        HoleDescriptor,
+        PortDescriptor,
+        TargetAddress,
+        add_policy_for_demand,
+    )
+
+    holes: list[ComposableHole] = []
+    records = _inventory_records_by_ref_and_name(
+        inventory.records_for_ids(
+            tuple(
+                record_id
+                for ids in inventory.hole_map.values()
+                for record_id in ids
+            )
+        )
+    )
+    for record in records:
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, DemandPort):
+            continue
+        port = payload.port
+        if not (port.is_additive_hole_demand() or port.is_parameter_hole_demand()):
+            continue
+        name = record.name.logical_name()
+        port_descriptor = PortDescriptor.from_demand(port)
+        hole_descriptor = HoleDescriptor(port=port_descriptor)
+        holes.append(
+            ComposableHole(
+                name=name,
+                descriptor=hole_descriptor,
+                address=TargetAddress(
+                    root_instance=None,
+                    ref_path=_inventory_ref_path(record),
+                    target_name=name,
+                ),
+                port=port_descriptor,
+                add_policy=add_policy_for_demand(port),
+            )
+        )
+    return tuple(holes)
+
+
+def _describe_inventory_external_binds(
+    inventory: Inventory,
+    *,
+    bound_externals: frozenset[str],
+):
+    from astichi.model.descriptors import ExternalBindDescriptor, PortDescriptor
+
+    descriptors: list[ExternalBindDescriptor] = []
+    records = _inventory_records_by_ref_and_name(inventory.records.values())
+    for record in records:
+        if record.kind != "external.bind":
+            continue
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, DemandPort):
+            continue
+        name = record.name.logical_name()
+        descriptors.append(
+            ExternalBindDescriptor(
+                name=name,
+                port=PortDescriptor.from_demand(payload.port),
+                already_bound=name in bound_externals,
+            )
+        )
+    return tuple(descriptors)
+
+
+def _describe_inventory_identifier_demands(inventory: Inventory):
+    from astichi.model.descriptors import (
+        IdentifierDemandDescriptor,
+        PortDescriptor,
+    )
+
+    descriptors: list[IdentifierDemandDescriptor] = []
+    records = _inventory_records_by_ref_and_name(
+        inventory.records_for_ids(
+            tuple(
+                record_id
+                for ids in inventory.identifier_map.values()
+                for record_id in ids
+            )
+        )
+    )
+    for record in records:
+        if record.kind != "identifier.demand":
+            continue
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, DemandPort):
+            continue
+        descriptors.append(
+            IdentifierDemandDescriptor(
+                name=record.name.logical_name(),
+                port=PortDescriptor.from_demand(payload.port),
+                ref_path=_inventory_ref_path(record),
+            )
+        )
+    return tuple(descriptors)
+
+
+def _describe_inventory_identifier_supplies(inventory: Inventory):
+    from astichi.model.descriptors import (
+        IdentifierSupplyDescriptor,
+        PortDescriptor,
+    )
+
+    descriptors: list[IdentifierSupplyDescriptor] = []
+    records = _inventory_records_by_ref_and_name(
+        inventory.records_for_ids(
+            tuple(
+                record_id
+                for ids in inventory.identifier_map.values()
+                for record_id in ids
+            )
+        )
+    )
+    for record in records:
+        if record.kind != "identifier.supply":
+            continue
+        payload = _port_payload(record)
+        if payload is None or not isinstance(payload.port, SupplyPort):
+            continue
+        descriptors.append(
+            IdentifierSupplyDescriptor(
+                name=record.name.logical_name(),
+                port=PortDescriptor.from_supply(payload.port),
+                ref_path=_inventory_ref_path(record),
+            )
+        )
+    return tuple(descriptors)
 
 
 def _describe_productions(

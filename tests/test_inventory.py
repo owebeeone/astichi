@@ -62,6 +62,14 @@ class cname__astichi_arg__:
         "  result: #5\n"
         "  total: #4"
     )
+    assert composable.inventory.hole_record_ids("body") == ("#6",)
+    assert composable.inventory.identifier_record_ids("total") == ("#4",)
+    assert composable.inventory.port_record_ids("params") == ("#3",)
+    assert composable.inventory.resource_record_ids("missing") == ()
+    assert (
+        composable.inventory.records_for_ids(("#6",))[0].kind
+        == "hole.block"
+    )
 
 
 def test_empty_inventory_prints_only_records_section() -> None:
@@ -157,7 +165,9 @@ astichi_hole(inner)
     builder.add.Step(step)
     root_handle.body.add.Step()
 
-    assert str(builder.build().inventory) == (
+    built = builder.build()
+
+    assert str(built.inventory) == (
         "records:\n"
         "  Root/#2 build_path=Root code_owner=run name=other kind=hole.block locator=body[0]/body[1]/value\n"
         "  Root/Step/#1 build_path=Root/Step code_owner=. name=value kind=external.bind locator=body[0]/value\n"
@@ -176,4 +186,8 @@ astichi_hole(inner)
         "hole_map:\n"
         "  inner: Root/Step/#2\n"
         "  other: Root/#2"
+    )
+    assert built.describe().single_hole_named("inner").address.ref_path == (
+        "Root",
+        "Step",
     )

@@ -193,6 +193,31 @@ class Inventory:
             records.append(record)
         return tuple(records)
 
+    def records_for_ids(
+        self, record_ids: tuple[InventoryRecordId, ...]
+    ) -> tuple[InventoryRecord, ...]:
+        """Return records for ``record_ids`` in inventory sort order."""
+        return tuple(
+            self.records[record_id]
+            for record_id in sorted(record_ids, key=_record_id_sort_key)
+        )
+
+    def resource_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]:
+        """Return resource record IDs for ``name``."""
+        return self.resource_map.get(name, ())
+
+    def port_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]:
+        """Return port record IDs for ``name``."""
+        return self.port_map.get(name, ())
+
+    def hole_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]:
+        """Return hole record IDs for ``name``."""
+        return self.hole_map.get(name, ())
+
+    def identifier_record_ids(self, name: str) -> tuple[InventoryRecordId, ...]:
+        """Return identifier record IDs for ``name``."""
+        return self.identifier_map.get(name, ())
+
     def prefix_build_path(
         self, prefix: ResourcePath, merge_inv: Inventory
     ) -> Inventory:
