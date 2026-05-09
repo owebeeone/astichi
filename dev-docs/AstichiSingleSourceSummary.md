@@ -110,8 +110,8 @@ work.
     `wire_identifier(...)` on builder slot handles remains deferred;
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-05-05:
-  - full suite: `608 passed`
+- Test status as of 2026-05-10:
+  - full suite: `630 passed`
   - Python-version matrix: last recorded green for 3.12, 3.13, 3.14, and 3.15;
     not rerun for the comment-marker change
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
@@ -128,7 +128,7 @@ work.
     strings such as `source_kind="authored"` and emitted
     `kind="params"` metadata remain accepted and are normalized at the
     boundary.
-  - The descriptor API is implemented as current public behavior. See §3.4.
+  - The descriptor API is inventory-backed current public behavior. See §3.4.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
   - Remaining work is polish/deferred surface area: Phase 3 cleanup,
@@ -350,11 +350,18 @@ addresses (`name`, `target_name`, `root_instance`, etc.).
 - `identifier_demands` / `identifier_supplies`: explicit identifier wiring
   surfaces with descendant `ref_path`
 
-Bindable descriptor sections are projected from immutable inventory records:
-holes, external binds, and identifier demand/supply descriptors use
-`BasicComposable.inventory` as their source. Production descriptors still use
-the existing body/payload checks because they describe contribution shape, not
-a bindable resource record.
+`Composable.describe()` delegates to an inventory descriptor adapter. Descriptor
+sections are projected from immutable inventory records:
+
+- holes
+- aggregate demand and supply ports
+- external binds
+- identifier demand/supply descriptors
+- production descriptors
+
+`BasicComposable.demand_ports` and `BasicComposable.supply_ports` remain as
+internal model fields for validation, bind operations, lowering, and inventory
+construction. They are not the descriptor source of truth.
 
 Convenience methods:
 
@@ -406,7 +413,8 @@ Add policy mapping:
 - scalar expression holes: `SINGLE_ADD`
 - identifier demands and external binds are not additive holes
 
-Production descriptors mirror current materialize/build behavior:
+Production descriptors mirror current materialize/build behavior and are backed
+by inventory production records:
 
 - ordinary non-payload snippets expose block productions
 - implicit expression snippets expose expression productions
@@ -416,6 +424,18 @@ Production descriptors mirror current materialize/build behavior:
 - `astichi_export(...)` exposes identifier supply descriptors, not additive
   productions
 - `astichi_bind_external(...)` exposes external value demands, not productions
+
+Production inventory record kinds are:
+
+- `production.block`
+- `production.expression`
+- `production.funcargs`
+- `production.supply`
+
+Composable-surface production records use build path `.`. Occurrence resources
+inside built/staged graphs use concrete build paths such as `Root` or
+`Root/Step`. This prevents a nested source occurrence's production surface from
+being mistaken for the future-builder surface of the built composable.
 
 Compatibility helpers are planning aids. Build/materialize remains
 authoritative and still performs final shape, payload, duplicate-keyword,

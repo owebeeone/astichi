@@ -11,27 +11,26 @@ fields to rediscover descriptor data.
 
 ## Current State
 
-Inventory is already authoritative for most bindable resource discovery:
+Inventory is now authoritative for descriptor reconstruction:
 
 - hole descriptors
 - external bind descriptors
 - identifier demand descriptors
 - identifier supply descriptors
 - build paths used by those descriptors
-
-`BasicComposable.describe()` still reads non-inventory state for:
-
-- aggregate `demand_ports`
-- aggregate `supply_ports`
+- aggregate demand/supply port descriptors
 - production descriptors
-- external bind bound-state
 
-Production descriptors are the largest remaining gap. They are currently derived
-from the composable root body shape and supply port descriptors at describe time.
+`BasicComposable.describe()` delegates to the inventory descriptor adapter and
+does not inspect AST body shape or parallel port fields.
 
-## Target Contract
+`BasicComposable.demand_ports` and `BasicComposable.supply_ports` still remain
+as internal fields. They are used by validation, bind operations, lowering, and
+inventory construction. They are not the descriptor source of truth.
 
-The target contract is:
+## Contract
+
+The contract is:
 
 - Inventory records describe every externally visible bindable or producible
   resource.
@@ -197,6 +196,9 @@ for `describe()`.
 validation, and compatibility. Do not remove them until those call sites are
 audited separately.
 
+Audit result: keep both fields for now. They are no longer descriptor sources,
+but they are still active internal model data for validation and transforms.
+
 ## Accepted Decisions
 
 ### Production Payload Shape
@@ -304,6 +306,9 @@ Expected result:
 - Fields that are still useful for lowering, validation, or transforms remain.
 - Fields that only existed for descriptor output can be retired in a separate
   cleanup.
+
+Result: both fields remain. They are used outside descriptor output and should
+not be retired as part of this roll-build.
 
 ## Non-Goals
 
