@@ -1,0 +1,111 @@
+# Assembler Scope
+
+`astichi.assembler` is an experimental helper layer for tools that already have
+their own data model and want to apply the minimum needed information to an
+Astichi builder. It sits on top of the current builder and inventory APIs.
+Build and materialize remain authoritative.
+
+Use it when a client can express a resource and a partial selector:
+
+- this composable, inserted as this builder name
+- this external Python value
+- this identifier spelling
+- this optional demand name
+- this optional build-path or code-owner match
+
+The helpers then find compatible inventory records, return candidate
+applications, and let the caller require one unambiguous result.
+
+## Resource Wrappers
+
+```python
+from astichi.assembler import as_composable, as_external_value, as_identifier
+
+as_composable(piece, build_name="GetterBody", build_index=1, order=10)
+as_external_value(42)
+as_identifier("GeneratedGetter")
+```
+
+`as_composable(...)` needs a builder name because the builder graph names a
+registered instance independently of the composable object. `build_index=1`
+creates the concrete instance name `GetterBody[1]`; tuple indexes create names
+such as `GetterBody[1,2]`. `order=` is passed to the additive target edge.
+
+External values and identifiers do not need builder names. The selected demand
+record determines which registered instance is rebound.
+
+## Candidate Lookup
+
+```python
+from astichi.assembler import find_candidates, require_one
+
+candidate = require_one(
+    find_candidates(
+        scope.inventory,
+        as_external_value(9),
+        name="delta",
+        build_match=("Root", "GetterBody[1]"),
+    )
+)
+scope.apply(candidate)
+```
+
+Selector fields are intentionally optional:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Literal demand name. `None` means all compatible names. |
+| `build_match` | Tuple selector against `InventoryRecord.build_path.parts`. |
+| `owner_match` | Tuple selector against logical code-owner names. |
+
+`build_match` and `owner_match` use `astichi.pathmatch.matches_path(...)`.
+Literal parts match exact names. Special parts are:
+
+| Part | Meaning |
+| --- | --- |
+| `.` | exactly one non-empty component |
+| `?` | zero or one component |
+| `*` | zero or more components |
+| `+` | one or more components |
+
+Examples:
+
+```python
+build_match=("Root",)
+build_match=("Root", "GetterBody[1]")
+build_match=("Root", "+")
+owner_match=("GeneratedGetter", ".")
+```
+
+## Applying Candidates
+
+`AssemblyScope` wraps an existing builder and keeps a refreshed built inventory
+view after each applied candidate.
+
+```python
+import astichi
+from astichi.assembler import AssemblyScope
+
+scope = AssemblyScope(astichi.build())
+scope.add("Root", root)
+scope.apply(candidate)
+result = scope.build()
+```
+
+`scope.apply(...)` currently supports:
+
+- composable candidates: register the resource with its build name/index and
+  add it to the selected hole
+- external value candidates: bind the external value on the selected owning
+  registered instance
+- identifier candidates: bind the identifier name on the selected owning
+  registered instance
+
+When `require_one(...)` does not receive exactly one candidate, it raises a
+multi-line diagnostic that includes the demand build path, logical owner path,
+source location when available, locator, and resource-side information.
+
+## Reference Snippet
+
+- [assembler_scope/resource_candidates](snippets/assembler_scope/resource_candidates/recipe.py)
+- [resource_candidates_generated.py](snippets/assembler_scope/resource_candidates/resource_candidates_generated.py)

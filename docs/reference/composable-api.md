@@ -68,9 +68,9 @@ wiring surfaces, and conservative productions. See
 **[descriptor-api.md](descriptor-api.md)**.
 
 Concrete composables also expose **`inventory`**, a lower-level immutable
-record/map structure for bindable-resource discovery. `describe()` projects its
-holes, external binds, and identifier descriptor surfaces from that inventory.
-See **[inventory-api.md](inventory-api.md)**.
+record/map structure for resource discovery. `describe()` projects holes,
+aggregate ports, external binds, identifier descriptor surfaces, and production
+surfaces from that inventory. See **[inventory-api.md](inventory-api.md)**.
 
 Depending on the pipeline stage, implementations may also expose fields such
 as an internal **`ast.Module`**, origin, or marker maps for tooling. Treat

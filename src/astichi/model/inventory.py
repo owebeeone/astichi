@@ -1,4 +1,4 @@
-"""Inventory records for bindable Astichi resources."""
+"""Inventory records for Astichi resource discovery."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class FunctionCodePathNode(CodePathNode):
 
 
 class ResourceName(ABC):
-    """Name of a bindable resource."""
+    """Name of an inventory resource."""
 
     @abstractmethod
     def logical_name(self) -> str:
@@ -187,7 +187,7 @@ class FuncargsProductionInventoryPayload(InventoryPayload):
 
 @dataclass(frozen=True)
 class InventoryRecord:
-    """One bindable resource discovered in a composable."""
+    """One resource discovered in a composable."""
 
     record_id: InventoryRecordId
     build_path: ResourcePath
@@ -201,7 +201,7 @@ class InventoryRecord:
 
 @dataclass(frozen=True)
 class Inventory:
-    """Immutable lookup structure for bindable resources."""
+    """Immutable lookup structure for discovered resources."""
 
     records: dict[InventoryRecordId, InventoryRecord] = field(default_factory=dict)
     resource_map: dict[str, tuple[InventoryRecordId, ...]] = field(default_factory=dict)

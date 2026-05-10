@@ -69,12 +69,12 @@ Additional descriptor value objects for advanced inspection are exported from
 `IdentifierDemandDescriptor`, `IdentifierSupplyDescriptor`, `SINGLE_ADD`, and
 `MULTI_ADD`.
 
-Inventory value objects for lower-level bindable-resource discovery are also
+Inventory value objects for lower-level resource discovery are also
 exported from `astichi.model`, including `Inventory`, `InventoryRecord`,
-`InventoryRecordId`, `ResourcePath`, `CodePath`, and `MutableInventory`.
+`InventoryRecordId`, `ResourcePath`, `CodePath`, `SourceLocation`, and
+`MutableInventory`.
 Prefer `Composable.describe()` for ordinary planning. Use inventory when a tool
-needs map-backed access to bindable resource records. See
-[inventory-api.md](inventory-api.md).
+needs map-backed access to resource records. See [inventory-api.md](inventory-api.md).
 
 ## Submodule: `astichi.builder`
 
@@ -85,6 +85,29 @@ calls such as `builder.add("Root", piece)`,
 and `builder.assign(source_instance=..., inner_name=..., target_instance=...,
 outer_name=...)`. Descriptor identifier demand/supply pairs can be bound with
 `builder.bind_identifier(...)`.
+
+## Submodule: `astichi.assembler`
+
+Experimental inventory-driven helpers for generated composition planners:
+
+| Name | Role |
+|------|------|
+| `AssemblyScope` | Wrapper around a builder that refreshes an inventory view after candidate application. |
+| `as_composable` | Wrap a composable resource with a builder name, optional build index, and insertion order. |
+| `as_external_value` | Wrap a value for `astichi_bind_external(...)` demands. |
+| `as_identifier` | Wrap a Python identifier spelling for identifier demands. |
+| `find_candidates` | Locate compatible inventory records using optional name, build-path, and code-owner selectors. |
+| `require_one` | Accept exactly one candidate or raise a detailed ambiguity/missing diagnostic. |
+
+Build and materialize remain authoritative. The assembler helpers are a thin
+application layer over the current builder and inventory APIs, not the full
+future YIDL assembler contract. See [assembler-scope.md](assembler-scope.md).
+
+## Submodule: `astichi.pathmatch`
+
+`matches_path(selector, path)` matches literal tuple selectors plus `.`, `?`,
+`*`, and `+` path operators. It is used by assembler candidate lookup for
+build-path and code-owner filters.
 
 ## Submodule: `astichi.emit`
 

@@ -111,7 +111,7 @@ work.
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
 - Test status as of 2026-05-10:
-  - full suite: `630 passed`
+  - full suite: `644 passed`
   - Python-version matrix: last recorded green for 3.12, 3.13, 3.14, and 3.15;
     not rerun for the comment-marker change
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
@@ -129,6 +129,11 @@ work.
     `kind="params"` metadata remain accepted and are normalized at the
     boundary.
   - The descriptor API is inventory-backed current public behavior. See §3.4.
+  - Inventory and the experimental assembler-scope helpers are current
+    implemented behavior. See §3.5.
+  - Source-only builder definitions and the build resolver are not implemented;
+    `dev-docs/AtichiBuildResolverProposal.md` remains an unimplemented
+    proposal, not authoritative behavior.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
   - Remaining work is polish/deferred surface area: Phase 3 cleanup,
@@ -457,7 +462,76 @@ builder.assign(
 
 No `AssignAddress` object exists today.
 
-### 3.5 Emit, materialize, and provenance contract
+### 3.5 Inventory, path matching, and assembler-scope helpers
+
+`BasicComposable.inventory` is the immutable map-backed discovery surface used
+by descriptors and experimental assembler tooling.
+
+Inventory records include:
+
+- a record id such as `#1`; build merges prefix copied records with the build
+  path, such as `Root/#1` or `Root/Step/#1`
+- `build_path`: builder identity, e.g. `Root/Step`
+- `code_owner`: logical Python owner path, e.g. `GeneratedClass/run`
+- `name`: logical resource name with Astichi suffixes stripped
+- `kind`: boundary string such as `hole.block`, `external.bind`,
+  `identifier.demand`, or `production.block`
+- `locator`: structural AST path to the located node
+- `payload`: semantic data for descriptor reconstruction and compatibility
+- optional `source_location`: logical source file and line for diagnostics
+
+Inventory maps store record ids, not records:
+
+- `resource_map`: all discovered resource names, including productions
+- `port_map`: port-like resources and production ports
+- `hole_map`: additive and parameter holes
+- `identifier_map`: identifier demands and supplies
+- `production_map`: production surfaces such as `__block__`, `__expr__`, and
+  `__funcargs__`
+
+`str(inventory)` / `repr(inventory)` is the stable test/diagnostic snapshot.
+The `records:` section always prints; non-empty maps print one logical name per
+line.
+
+Resolved external binds and identifier demands are removed from rebuilt
+inventory when the operation can remove them precisely. Build-time edge overlays
+remove resolved occurrence records from the built composable inventory without
+mutating the registered source instance inventory.
+
+`astichi.pathmatch.matches_path(selector, path)` is the independent path
+selector helper used by assembler candidate lookup. Selector parts are literal
+build/code-owner names or one of:
+
+- `.`: exactly one non-empty path component
+- `?`: zero or one component
+- `*`: zero or more components
+- `+`: one or more components
+
+`astichi.assembler` is an experimental high-level helper over the current
+builder and inventory APIs. It is implemented, but it is not the full future
+YIDL assembler contract.
+
+Current assembler helper surface:
+
+- `AssemblyScope(astichi.build())`: wraps a builder and refreshes a built
+  inventory view after each applied candidate
+- `as_composable(composable, build_name=..., build_index=None, order=0)`:
+  wraps a composable resource for compatible hole insertion; `build_index=1`
+  creates the concrete builder instance name `Name[1]`, and tuple indexes
+  create names such as `Name[1,2]`
+- `as_external_value(value)`: wraps a value for `astichi_bind_external(...)`
+- `as_identifier(identifier)`: wraps a Python identifier spelling for
+  identifier-demand resolution
+- `find_candidates(scope.inventory, resource, name=None, build_match=None,
+  owner_match=None)`: returns compatible candidate applications using literal
+  names plus `pathmatch` selectors
+- `require_one(candidates)`: returns the only candidate or raises a diagnostic
+  listing candidate demand/resource lines, including build path, code owner,
+  source location where available, and locator
+- `scope.apply(candidate)`: mutates the underlying builder graph using the
+  selected candidate
+
+### 3.6 Emit, materialize, and provenance contract
 
 Current implementation reality:
 

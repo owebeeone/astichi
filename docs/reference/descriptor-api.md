@@ -68,12 +68,10 @@ Build and materialize remain authoritative. Descriptor compatibility is intended
 for planning, filtering, and diagnostics before the final builder validation
 runs.
 
-Bindable descriptor sections are projected from the composable inventory:
-holes, external binds, and identifier demand/supply descriptors come from
-immutable inventory records. Production descriptors remain conservative
-body/payload projections because they describe what a composable can
-contribute, not a bindable point. See [inventory-api.md](inventory-api.md) for
-the lower-level record/map API.
+Descriptor sections are projected from the composable inventory: holes,
+aggregate ports, external binds, identifier demand/supply descriptors, and
+production descriptors all come from immutable inventory records. See
+[inventory-api.md](inventory-api.md) for the lower-level record/map API.
 
 ## `ComposableDescription`
 
@@ -309,8 +307,8 @@ production.satisfies(hole_descriptor)
 production.is_identifier_supply()
 ```
 
-`description.productions` is conservative and mirrors existing materialize
-paths:
+`description.productions` is conservative, mirrors existing materialize paths,
+and is backed by inventory production records:
 
 | Source composable form | Production behavior |
 | --- | --- |

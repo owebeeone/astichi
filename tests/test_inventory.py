@@ -1,4 +1,4 @@
-"""Inventory snapshots for compile-time bindable resources."""
+"""Inventory snapshots for compile-time resources."""
 
 from __future__ import annotations
 
