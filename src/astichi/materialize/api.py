@@ -80,7 +80,9 @@ from astichi.materialize.pyimport import (
 from astichi.model.basic import BasicComposable, apply_source_overlay
 from astichi.model.inventory import (
     Inventory,
+    InventoryRecord,
     MutableInventory,
+    PortInventoryPayload,
     ResourcePath,
     build_inventory,
     build_production_inventory,
@@ -1405,22 +1407,39 @@ def _build_graph_inventory(
 
 def _occurrence_inventory(composable: BasicComposable) -> Inventory:
     satisfied_holes = _locally_satisfied_hole_names(composable.tree)
-    satisfied_params = _locally_satisfied_param_hole_names(composable.tree)
     mutable = MutableInventory()
     for record in composable.inventory.records.values():
         if record.kind.startswith("production."):
             continue
         name = record.name.logical_name()
-        if record.kind == "hole.params" and name in satisfied_params:
+        if name.startswith(_ROOT_SCOPE_HOLE_PREFIX):
             continue
         if (
-            record.kind.startswith("hole.")
-            and record.kind != "hole.params"
+            _record_is_single_additive_hole_demand(record)
             and name in satisfied_holes
         ):
             continue
         mutable.add_existing_record(record)
     return mutable.freeze()
+
+
+def _record_is_single_additive_hole_demand(record: InventoryRecord) -> bool:
+    if not isinstance(record.payload, PortInventoryPayload):
+        return False
+    port = record.payload.port
+    if not isinstance(port, DemandPort):
+        return False
+    return _is_single_additive_hole_demand(port)
+
+
+def _is_single_additive_hole_demand(port: DemandPort) -> bool:
+    if not port.is_additive_hole_demand():
+        return False
+    return not (
+        port.shape.is_block()
+        or port.shape.is_positional_variadic()
+        or port.shape.is_named_variadic()
+    )
 
 
 def _topo_sort_targets(graph: BuilderGraph) -> list[str]:

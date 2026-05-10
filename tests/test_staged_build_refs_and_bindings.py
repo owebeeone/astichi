@@ -154,6 +154,24 @@ _NESTED_UNROLL_STAGE3_INVENTORY = _inventory_text(
     "records:",
     "  #1 build_path=. code_owner=. name=__block__ "
     "kind=production.block locator=.",
+    "  Pipeline/#3 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=outer__iter_0 "
+    "kind=hole.block locator=body[1]/body[2]/value",
+    "  Pipeline/#4 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=inner__iter_0_0 "
+    "kind=hole.block locator=body[1]/body[3]/value",
+    "  Pipeline/#5 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=inner__iter_0_1 "
+    "kind=hole.block locator=body[1]/body[4]/value",
+    "  Pipeline/#6 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=outer__iter_1 "
+    "kind=hole.block locator=body[1]/body[5]/value",
+    "  Pipeline/#7 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=inner__iter_1_0 "
+    "kind=hole.block locator=body[1]/body[6]/value",
+    "  Pipeline/#8 build_path=Pipeline "
+    "code_owner=__astichi_root__Pipeline__ name=inner__iter_1_1 "
+    "kind=hole.block locator=body[1]/body[7]/value",
     "  Pipeline/Inner00/#1 build_path=Pipeline/Inner00 code_owner=. "
     "name=events kind=identifier.demand locator=body[0]/value/func/value",
     "  Pipeline/Inner01/#1 build_path=Pipeline/Inner01 code_owner=. "
@@ -170,10 +188,30 @@ _NESTED_UNROLL_STAGE3_INVENTORY = _inventory_text(
     "resource_map:",
     "  __block__: #1",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+    "  inner__iter_0_0: Pipeline/#4",
+    "  inner__iter_0_1: Pipeline/#5",
+    "  inner__iter_1_0: Pipeline/#7",
+    "  inner__iter_1_1: Pipeline/#8",
+    "  outer__iter_0: Pipeline/#3",
+    "  outer__iter_1: Pipeline/#6",
     "",
     "port_map:",
     "  __block__: #1",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
+    "  inner__iter_0_0: Pipeline/#4",
+    "  inner__iter_0_1: Pipeline/#5",
+    "  inner__iter_1_0: Pipeline/#7",
+    "  inner__iter_1_1: Pipeline/#8",
+    "  outer__iter_0: Pipeline/#3",
+    "  outer__iter_1: Pipeline/#6",
+    "",
+    "hole_map:",
+    "  inner__iter_0_0: Pipeline/#4",
+    "  inner__iter_0_1: Pipeline/#5",
+    "  inner__iter_1_0: Pipeline/#7",
+    "  inner__iter_1_1: Pipeline/#8",
+    "  outer__iter_0: Pipeline/#3",
+    "  outer__iter_1: Pipeline/#6",
     "",
     "identifier_map:",
     f"  events: {_NESTED_UNROLL_STAGE3_EVENTS}",
