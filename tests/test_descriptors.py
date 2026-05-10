@@ -217,3 +217,25 @@ def astichi_params(value):
 
     assert "def run(value):" in source
     assert "return fn(value)" in source
+
+
+def test_staged_build_descriptor_compatibility_survives_deepcopy() -> None:
+    root = astichi.compile(
+        """
+def run(params__astichi_param_hole__):
+    pass
+"""
+    )
+    params = astichi.compile(
+        """
+def astichi_params(value):
+    pass
+"""
+    )
+    builder = astichi.build()
+    builder.add.Root(root)
+    built = builder.build()
+
+    params_hole = built.describe().single_hole_named("params")
+
+    assert params.describe().productions_compatible_with(params_hole)

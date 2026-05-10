@@ -23,6 +23,9 @@ class SemanticSingleton(ABC):
     def name(self) -> str:
         """Stable diagnostic / serialization name."""
 
+    def __deepcopy__(self, memo):
+        return self
+
     def __str__(self) -> str:
         return self.name
 

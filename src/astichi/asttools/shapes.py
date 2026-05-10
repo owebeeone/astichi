@@ -11,6 +11,9 @@ class MarkerShape(ABC):
     def __init__(self, name: str) -> None:
         self.name = name
 
+    def __deepcopy__(self, memo):
+        return self
+
     def is_scalar_expr(self) -> bool:
         return False
 

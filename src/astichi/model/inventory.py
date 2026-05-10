@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from astichi.ast_provenance import astichi_source_file
 from astichi.asttools import is_astichi_insert_call
 from astichi.lowering import (
     RecognizedMarker,
@@ -143,6 +144,17 @@ class NodeLocator:
         return "/".join(self.parts)
 
 
+@dataclass(frozen=True)
+class SourceLocation:
+    """Source file and line for a discovered inventory record."""
+
+    file_name: str
+    line_number: int
+
+    def __str__(self) -> str:
+        return f"{self.file_name}:{self.line_number}"
+
+
 class InventoryPayload(ABC):
     """Base class for inventory-specific payload data."""
 
@@ -184,6 +196,7 @@ class InventoryRecord:
     kind: ResourceKind
     locator: NodeLocator
     payload: InventoryPayload
+    source_location: SourceLocation | None = None
 
 
 @dataclass(frozen=True)
@@ -315,6 +328,7 @@ class MutableInventory:
         kind: ResourceKind,
         locator: NodeLocator,
         payload: InventoryPayload,
+        source_location: SourceLocation | None = None,
     ) -> InventoryRecord:
         record = InventoryRecord(
             record_id=f"#{self.next_record_number}",
@@ -324,6 +338,7 @@ class MutableInventory:
             kind=kind,
             locator=locator,
             payload=payload,
+            source_location=source_location,
         )
         self.next_record_number += 1
         self.add_existing_record(record)
@@ -353,6 +368,7 @@ class MutableInventory:
                     kind=record.kind,
                     locator=record.locator,
                     payload=record.payload,
+                    source_location=record.source_location,
                 )
             )
 
@@ -488,6 +504,7 @@ def _add_marker_record(
         kind=kind,
         locator=index.locator_for(marker.node),
         payload=payload,
+        source_location=_source_location_for(marker.node),
     )
 
 
@@ -542,6 +559,7 @@ def _add_production_records(
                 kind="production.funcargs",
                 locator=index.locator_for(root_body[0].value),
                 payload=FuncargsProductionInventoryPayload(payload),
+                source_node=root_body[0].value,
             )
         return
     if has_params_payload(root_body):
@@ -554,6 +572,7 @@ def _add_production_records(
             kind="production.expression",
             locator=index.locator_for(expression),
             payload=ExpressionProductionInventoryPayload(expression),
+            source_node=expression,
         )
     _add_static_production_record(
         inventory,
@@ -561,6 +580,7 @@ def _add_production_records(
         kind="production.block",
         locator=NodeLocator(),
         payload=BlockProductionInventoryPayload(),
+        source_node=_first_body_node(root_body),
     )
 
 
@@ -571,6 +591,7 @@ def _add_static_production_record(
     kind: ResourceKind,
     locator: NodeLocator,
     payload: InventoryPayload,
+    source_node: ast.AST | None = None,
 ) -> None:
     inventory.add_record(
         build_path=ResourcePath(),
@@ -579,7 +600,24 @@ def _add_static_production_record(
         kind=kind,
         locator=locator,
         payload=payload,
+        source_location=_source_location_for(source_node),
     )
+
+
+def _first_body_node(body: list[ast.stmt]) -> ast.AST | None:
+    if not body:
+        return None
+    return body[0]
+
+
+def _source_location_for(node: ast.AST | None) -> SourceLocation | None:
+    if node is None:
+        return None
+    line_number = getattr(node, "lineno", None)
+    if not isinstance(line_number, int):
+        return None
+    file_name = astichi_source_file(node) or "<astichi>"
+    return SourceLocation(file_name=file_name, line_number=line_number)
 
 
 def _is_funcargs_payload_body(body: list[ast.stmt]) -> bool:
