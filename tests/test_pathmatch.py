@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from astichi.pathmatch import matches_path
+import pytest
+
+from astichi.pathmatch import (
+    RESERVED_CHARS,
+    matches_path,
+    parse_path_selector,
+)
 
 
 def test_matches_exact_literal_paths() -> None:
@@ -53,12 +59,69 @@ def test_empty_selector_matches_only_empty_path() -> None:
 
 
 def test_non_operator_strings_match_literally() -> None:
-    assert matches_path(("Root.Step",), ("Root.Step",))
     assert matches_path(("[0]",), ("[0]",))
-    assert matches_path(("",), ("",))
-    assert not matches_path(("Root.Step",), ("Root", "Step"))
+    assert matches_path(("Step[0]",), ("Step[0]",))
+    assert not matches_path(("RootStep",), ("Root", "Step"))
 
 
 def test_allows_identifier_and_indexed_build_names() -> None:
     assert matches_path(("Root", "Step[0]"), ("Root", "Step[0]"))
     assert matches_path(("Root", "."), ("Root", "Step[10]"))
+
+
+def test_reserved_chars_include_operators_and_separator() -> None:
+    assert RESERVED_CHARS == ".+?*/"
+
+
+def test_matches_path_rejects_reserved_chars_in_literal_selector_parts() -> None:
+    for selector in (
+        ("Root.Step",),
+        ("Root+Step",),
+        ("Root?Step",),
+        ("Root*Step",),
+        ("Root/Step",),
+    ):
+        with pytest.raises(ValueError, match="reserved path selector character"):
+            matches_path(selector, selector)
+
+
+def test_parse_path_selector_splits_slash_separated_parts() -> None:
+    assert parse_path_selector("A/B/?/C") == ("A", "B", "?", "C")
+    assert parse_path_selector("Root/GetterBody[1,2]") == (
+        "Root",
+        "GetterBody[1,2]",
+    )
+
+
+def test_parse_path_selector_keeps_operator_parts_literal() -> None:
+    assert parse_path_selector(".") == (".",)
+    assert parse_path_selector("?") == ("?",)
+    assert parse_path_selector("*") == ("*",)
+    assert parse_path_selector("+") == ("+",)
+
+
+def test_parse_path_selector_empty_string_is_empty_selector() -> None:
+    assert parse_path_selector("") == ()
+
+
+def test_parse_path_selector_rejects_empty_parts() -> None:
+    with pytest.raises(ValueError, match="empty path selector part"):
+        parse_path_selector("/Root")
+    with pytest.raises(ValueError, match="empty path selector part"):
+        parse_path_selector("Root/")
+    with pytest.raises(ValueError, match="empty path selector part"):
+        parse_path_selector("Root//Step")
+
+
+def test_parse_path_selector_rejects_reserved_chars_inside_literal_parts() -> None:
+    for text in ("Root.Step", "Root+Step", "Root?Step", "Root*Step"):
+        with pytest.raises(ValueError, match="reserved path selector character"):
+            parse_path_selector(text)
+
+
+def test_parsed_path_selector_matches_paths() -> None:
+    selector = parse_path_selector("A/B/?/C")
+
+    assert matches_path(selector, ("A", "B", "C"))
+    assert matches_path(selector, ("A", "B", "X", "C"))
+    assert not matches_path(selector, ("A", "B", "X", "Y", "C"))
