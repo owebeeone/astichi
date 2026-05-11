@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import pytest
+
 import astichi
 from astichi.assembler import (
     AssemblyRunner,
@@ -227,3 +229,66 @@ def test_assembly_runner_builds_child_scope_actions_recursively() -> None:
     exec(result.emit(provenance=False), namespace)
 
     assert namespace["answer"] == 7
+
+
+@dataclass(frozen=True)
+class _MissingTargetProducerList(ProducerList):
+    def producer_nodes(self, context: AssemblyContext) -> Iterable[ProducerNode]:
+        return (_ProducerNode("missing default"),)
+
+    def actions_for(
+        self,
+        node: ProducerNode,
+        context: AssemblyContext,
+    ) -> Iterable[AssemblyAction]:
+        return (
+            apply_resource(
+                as_external_value(42),
+                name="missing",
+                build_match=("Root",),
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class _MissingTargetClient(AssemblerClient):
+    root: _Node = _Node("root")
+
+    def root_nodes(self) -> Iterable[ScopeNode]:
+        return (self.root,)
+
+    def context_for_root(self, node: ScopeNode) -> AssemblyContext:
+        if not isinstance(node, _Node):
+            raise TypeError(type(node).__name__)
+        return _Context(node)
+
+    def context_for_child(
+        self,
+        parent_context: AssemblyContext,
+        node: ScopeNode,
+    ) -> AssemblyContext:
+        raise AssertionError("no child scopes in this test")
+
+    def recipe_for(
+        self,
+        node: ScopeNode,
+        context: AssemblyContext,
+    ) -> ScopeRecipe:
+        root = astichi.compile("astichi_hole(body)\n")
+        return scope_recipe(
+            as_composable(root, build_name="Root"),
+            producer_lists=(_MissingTargetProducerList(),),
+        )
+
+
+def test_assembly_runner_reports_scope_and_producer_for_missing_target() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        AssemblyRunner(_MissingTargetClient()).build_roots()
+
+    message = str(exc_info.value)
+
+    assert "assembly action failed" in message
+    assert "scope: root" in message
+    assert "producer: missing default" in message
+    assert "selector: name=missing build=Root" in message
+    assert "expected exactly one candidate, found 0" in message
