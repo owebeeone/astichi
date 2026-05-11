@@ -1,5 +1,6 @@
 """Experimental assembler helpers for inventory-driven builder wiring."""
 
+from astichi.assembler.runner import AssemblyRunner
 from astichi.assembler.scope import (
     AssemblyScope,
     BindingCandidate,
@@ -21,6 +22,7 @@ from astichi.assembler.scope import (
 )
 
 __all__ = [
+    "AssemblyRunner",
     "AssemblyScope",
     "BindingCandidate",
     "BindingResource",

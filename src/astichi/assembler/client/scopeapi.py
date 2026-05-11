@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from astichi.assembler.client.actionapi import AssemblyAction
 from astichi.assembler.client.nodeapi import AssemblyContext, ScopeNode
 from astichi.assembler.client.producerapi import ProducerList
 from astichi.assembler.scope import ComposableResource
@@ -14,6 +15,7 @@ class ScopeRecipe:
     """Client recipe for creating and expanding one Astichi scope."""
 
     root: ComposableResource
+    root_actions: tuple[AssemblyAction, ...] = ()
     producer_lists: tuple[ProducerList, ...] = ()
 
 
@@ -44,7 +46,12 @@ class AssemblerClient(ABC):
 def scope_recipe(
     root: ComposableResource,
     *,
+    root_actions: Iterable[AssemblyAction] = (),
     producer_lists: Iterable[ProducerList] = (),
 ) -> ScopeRecipe:
     """Create a scope recipe from a named root resource and producer lists."""
-    return ScopeRecipe(root=root, producer_lists=tuple(producer_lists))
+    return ScopeRecipe(
+        root=root,
+        root_actions=tuple(root_actions),
+        producer_lists=tuple(producer_lists),
+    )
