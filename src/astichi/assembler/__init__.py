@@ -1,6 +1,21 @@
 """Experimental assembler helpers for inventory-driven builder wiring."""
 
+from astichi.assembler.client import BuildIndex
 from astichi.assembler.runner import AssemblyRunner
+from astichi.assembler.production import (
+    BindingSpec,
+    BuildProductionSpec,
+    ProductionCatalog,
+    ProductionRequest,
+    ProductionSpec,
+    ProductionTemplateProvider,
+    ProductionValueProvider,
+    SourceProvider,
+    TargetSpec,
+    TemplateChoice,
+    TemplateProducerSpec,
+    build_production_roots,
+)
 from astichi.assembler.scope import (
     AssemblyScope,
     BindingCandidate,
@@ -25,7 +40,10 @@ __all__ = [
     "AssemblyRunner",
     "AssemblyScope",
     "BindingCandidate",
+    "BindingSpec",
     "BindingResource",
+    "BuildIndex",
+    "BuildProductionSpec",
     "ComposableCandidate",
     "ComposableResource",
     "DemandSelector",
@@ -34,9 +52,19 @@ __all__ = [
     "ExternalValueResource",
     "IdentifierNameCandidate",
     "IdentifierNameResource",
+    "ProductionCatalog",
+    "ProductionRequest",
+    "ProductionSpec",
+    "ProductionTemplateProvider",
+    "ProductionValueProvider",
+    "SourceProvider",
+    "TargetSpec",
+    "TemplateChoice",
+    "TemplateProducerSpec",
     "as_composable",
     "as_external_value",
     "as_identifier",
+    "build_production_roots",
     "code_owner_parts",
     "find_candidates",
     "require_one",

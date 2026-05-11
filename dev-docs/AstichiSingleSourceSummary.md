@@ -530,6 +530,15 @@ Current assembler helper surface:
   source location where available, and locator
 - `scope.apply(candidate)`: mutates the underlying builder graph using the
   selected candidate
+- `AssemblyRunner(client)`: drives client-described scopes by adding a root
+  resource, applying root actions, iterating producer lists, recursively
+  building child scopes, and applying child results back into the parent scope
+- `astichi.assembler.production`: generic production interpreter for clients
+  that can describe generation as named production specs. A production has a
+  root template choice and zero or more producer specs. Producers either apply a
+  template resource into the current scope or build another named production and
+  apply the child result. Template choices are ordered; the first matching
+  choice wins, so an unconditional final choice acts as a fallback.
 
 ### 3.6 Emit, materialize, and provenance contract
 
