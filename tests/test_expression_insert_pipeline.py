@@ -51,6 +51,19 @@ def test_build_positional_variadic_funcargs_orders_elements() -> None:
     assert "result = func(second_arg, first_arg)" in rendered
 
 
+def test_starred_expression_hole_accepts_bound_external_expression_source() -> None:
+    builder = astichi.build()
+    builder.add.Root(astichi.compile("items = (*astichi_hole(items),)\n"))
+    builder.add.Item(astichi.compile("astichi_bind_external(item)\n"))
+    builder.Root.items.add.Item(bind={"item": "_count_current"})
+
+    result = builder.build().materialize()
+
+    namespace: dict[str, object] = {}
+    exec(result.emit(provenance=False), namespace)
+    assert namespace["items"] == ("_count_current",)
+
+
 def test_build_named_variadic_funcargs_uses_edge_order() -> None:
     builder = astichi.build()
     builder.add.Root(astichi.compile("result = func(**astichi_hole(kwargs))\n"))

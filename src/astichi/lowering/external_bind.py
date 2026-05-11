@@ -196,8 +196,15 @@ class _ExternalBindingTransformer(ast.NodeTransformer):
 
     def _visit_statements(self, statements: list[ast.stmt]) -> list[ast.stmt]:
         visited: list[ast.stmt] = []
-        for statement in statements:
-            if _is_matching_bind_external_expr(statement, self.bindings):
+        expression_payload_index = _bind_external_expression_payload_index(
+            statements,
+            self.bindings,
+        )
+        for index, statement in enumerate(statements):
+            if (
+                index != expression_payload_index
+                and _is_matching_bind_external_expr(statement, self.bindings)
+            ):
                 continue
             transformed = self.visit(statement)
             if transformed is None:
@@ -490,3 +497,14 @@ def _is_matching_bind_external_expr(node: ast.stmt, bindings: dict[str, object])
         return False
     first_arg = node.value.args[0]
     return isinstance(first_arg, ast.Name) and first_arg.id in bindings
+
+
+def _bind_external_expression_payload_index(
+    statements: list[ast.stmt],
+    bindings: dict[str, object],
+) -> int | None:
+    if len(statements) != 1:
+        return None
+    if _is_matching_bind_external_expr(statements[0], bindings):
+        return 0
+    return None

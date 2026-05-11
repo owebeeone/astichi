@@ -46,6 +46,17 @@ print(fields)
     assert ast.unparse(bound.tree) == "print(('x', 'y'))"
 
 
+def test_bind_external_expression_source_keeps_bound_literal() -> None:
+    snippet = astichi.compile("astichi_bind_external(slot)\n")
+
+    bound = snippet.bind(slot="_count_current")
+
+    assert isinstance(bound.tree.body[0], ast.Expr)
+    assert isinstance(bound.tree.body[0].value, ast.Constant)
+    assert bound.tree.body[0].value.value == "_count_current"
+    assert bound.inventory.production_record_ids("__expr__") == ("#1",)
+
+
 def test_bind_external_dict_value_is_supported() -> None:
     snippet = astichi.compile(
         """
