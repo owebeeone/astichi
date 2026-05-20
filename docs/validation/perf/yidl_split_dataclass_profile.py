@@ -98,7 +98,7 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
         original_refresh = getattr(AssemblyScope, "_refresh_inventory", None)
         original_build_merge = materialize_pkg.build_merge
         original_shell = materialize_api._make_block_insert_shell
-        original_deepcopy = materialize_api.copy.deepcopy
+        original_clone_ast = materialize_api.clone_ast
 
         def refresh_wrapper(self: AssemblyScope) -> None:
             if original_refresh is None:
@@ -129,19 +129,19 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
                     time.perf_counter() - start
                 )
 
-        def deepcopy_wrapper(*wrapper_args: Any, **wrapper_kwargs: Any) -> Any:
-            counts["deepcopy_calls"] += 1
+        def clone_ast_wrapper(*wrapper_args: Any, **wrapper_kwargs: Any) -> Any:
+            counts["clone_ast_calls"] += 1
             start = time.perf_counter()
             try:
-                return original_deepcopy(*wrapper_args, **wrapper_kwargs)
+                return original_clone_ast(*wrapper_args, **wrapper_kwargs)
             finally:
-                counts["deepcopy_seconds"] += time.perf_counter() - start
+                counts["clone_ast_seconds"] += time.perf_counter() - start
 
         if original_refresh is not None:
             AssemblyScope._refresh_inventory = refresh_wrapper
         materialize_pkg.build_merge = build_merge_wrapper
         materialize_api._make_block_insert_shell = shell_wrapper
-        materialize_api.copy.deepcopy = deepcopy_wrapper
+        materialize_api.clone_ast = clone_ast_wrapper
         try:
             generated_source: str | None = None
             if args.runtime_path in {"emit", "both"}:
@@ -210,7 +210,7 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
                 AssemblyScope._refresh_inventory = original_refresh
             materialize_pkg.build_merge = original_build_merge
             materialize_api._make_block_insert_shell = original_shell
-            materialize_api.copy.deepcopy = original_deepcopy
+            materialize_api.clone_ast = original_clone_ast
 
         if generated_source is not None:
             counts["generated_source_bytes"] = len(generated_source.encode("utf-8"))

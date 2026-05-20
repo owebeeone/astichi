@@ -13,6 +13,7 @@ from astichi.asttools.imports import (
     import_alias_binding_name,
     import_statement_binding_names,
 )
+from astichi.asttools.clone import clone_ast
 from astichi.asttools.inserts import (
     has_astichi_insert_decorator,
     is_astichi_insert_call,
@@ -31,6 +32,7 @@ __all__ = [
     "POSITIONAL_VARIADIC",
     "SCALAR_EXPR",
     "MarkerShape",
+    "clone_ast",
     "has_astichi_insert_decorator",
     "import_alias_binding_name",
     "import_statement_binding_names",

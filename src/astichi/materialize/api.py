@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import copy
 import re
 from dataclasses import dataclass
 
@@ -13,6 +12,7 @@ from astichi.ast_provenance import (
     propagate_ast_source_locations,
 )
 from astichi.asttools import (
+    clone_ast,
     import_statement_binding_names,
     is_astichi_insert_call,
     is_astichi_insert_shell,
@@ -1100,7 +1100,7 @@ def build_merge(
                 f"instance {record.name} must be a BasicComposable"
             )
         source_composable = record.composable
-        tree = copy.deepcopy(source_composable.tree)
+        tree = clone_ast(source_composable.tree)
         if do_unroll:
             tree = unroll_tree(tree)
         # Re-derive ports from the current tree so anchor-preserved
@@ -1346,7 +1346,7 @@ def build_merge(
                     + (edge.source_instance,)
                     + edge.target.path
                 )
-                contrib_body = copy.deepcopy(source_tree.body)
+                contrib_body = clone_ast(source_tree.body)
                 _inject_scoped_keep_markers(
                     contrib_body, source_piece.keep_names
                 )
@@ -1454,6 +1454,7 @@ def _build_graph_inventory(
     supply_ports: tuple[SupplyPort, ...],
 ) -> Inventory:
     mutable = MutableInventory()
+    satisfied_holes_cache: dict[int, frozenset[str]] = {}
     edges_by_target: dict[str, list[AdditiveEdge]] = {}
     for edge in edges:
         edges_by_target.setdefault(edge.target.root_instance, []).append(edge)
@@ -1467,7 +1468,10 @@ def _build_graph_inventory(
     ) -> None:
         mutable.add_inventory(
             ResourcePath(build_path),
-            _occurrence_inventory(composable),
+            _occurrence_inventory(
+                composable,
+                satisfied_holes_cache=satisfied_holes_cache,
+            ),
         )
         for edge in edges_by_target.get(instance_name, ()):
             source_record = instance_records[edge.source_instance]
@@ -1496,8 +1500,19 @@ def _build_graph_inventory(
     return mutable.freeze()
 
 
-def _occurrence_inventory(composable: BasicComposable) -> Inventory:
-    satisfied_holes = _locally_satisfied_hole_names(composable.tree)
+def _occurrence_inventory(
+    composable: BasicComposable,
+    *,
+    satisfied_holes_cache: dict[int, frozenset[str]] | None = None,
+) -> Inventory:
+    cache_key = id(composable.tree)
+    if satisfied_holes_cache is None:
+        satisfied_holes = _locally_satisfied_hole_names(composable.tree)
+    else:
+        satisfied_holes = satisfied_holes_cache.get(cache_key)
+        if satisfied_holes is None:
+            satisfied_holes = _locally_satisfied_hole_names(composable.tree)
+            satisfied_holes_cache[cache_key] = satisfied_holes
     mutable = MutableInventory()
     for record in composable.inventory.records.values():
         if record.kind.startswith("production."):
@@ -1614,7 +1629,7 @@ def _make_block_insert_shell(
     if not body:
         shell_body: list[ast.stmt] = [ast.Pass()]
     elif copy_body:
-        shell_body = [copy.deepcopy(stmt) for stmt in body]
+        shell_body = [clone_ast(stmt) for stmt in body]
     else:
         shell_body = list(body)
     keywords: list[ast.keyword] = []
@@ -1647,8 +1662,25 @@ def _make_block_insert_shell(
         type_params=[],
     )
     donor = location_donor or (shell_body[0] if shell_body else None)
-    propagate_ast_source_locations(shell, donor)
+    _propagate_insert_shell_locations(shell, donor)
     return shell
+
+
+def _propagate_insert_shell_locations(
+    shell: ast.FunctionDef | ast.AsyncFunctionDef,
+    donor: ast.AST | None,
+) -> None:
+    if donor is None or not isinstance(getattr(donor, "lineno", None), int):
+        propagate_ast_source_locations(shell, donor)
+        return
+
+    copy_astichi_location(shell, donor)
+    for decorator in shell.decorator_list:
+        for node in ast.walk(decorator):
+            copy_astichi_location(node, donor)
+    for stmt in shell.body:
+        if not isinstance(getattr(stmt, "lineno", None), int):
+            copy_astichi_location(stmt, donor)
 
 
 def _make_param_insert_shell(
@@ -1676,14 +1708,14 @@ def _make_param_insert_shell(
         set_insert_ref(decorator, ref_path, phase="materialize")
     shell = ast.FunctionDef(
         name=shell_name,
-        args=copy.deepcopy(args),
+        args=clone_ast(args),
         body=[ast.Pass()],
         decorator_list=[decorator],
         returns=None,
         type_comment=None,
         type_params=[],
     )
-    propagate_ast_source_locations(shell, location_donor)
+    _propagate_insert_shell_locations(shell, location_donor)
     return shell
 
 
@@ -1825,7 +1857,7 @@ def _pyimport_prefix_calls(
             continue
         call = statement.value
         if isinstance(call, ast.Call) and is_call_to_marker(call, PYIMPORT):
-            calls.append(copy.deepcopy(call))
+            calls.append(clone_ast(call))
     return tuple(calls)
 
 
@@ -1888,7 +1920,7 @@ def _extract_expression_inserts(
         if isinstance(expr, ast.Call) and is_astichi_funcargs_call(expr):
             return [
                 _ExpressionInsert(
-                    expr=copy.deepcopy(expr),
+                    expr=clone_ast(expr),
                     payload=extract_funcargs_payload(expr),
                     pyimports=pyimports,
                     edge_order=edge_order,
@@ -1906,7 +1938,7 @@ def _extract_expression_inserts(
         call = effective_body[0].value
         return [
             _ExpressionInsert(
-                expr=copy.deepcopy(call),
+                expr=clone_ast(call),
                 payload=extract_funcargs_payload(call),
                 pyimports=(),
                 edge_order=edge_order,
@@ -1937,7 +1969,7 @@ def _extract_expression_inserts(
             continue
         inserts.append(
             _ExpressionInsert(
-                expr=copy.deepcopy(stmt.value.args[1]),
+                expr=clone_ast(stmt.value.args[1]),
                 payload=None,
                 pyimports=(),
                 edge_order=edge_order,
@@ -1952,7 +1984,7 @@ def _extract_expression_inserts(
         expr, stmt_index = implicit
         return [
             _ExpressionInsert(
-                expr=copy.deepcopy(expr),
+                expr=clone_ast(expr),
                 payload=None,
                 pyimports=_pyimport_prefix_calls(
                     effective_body, before_index=stmt_index
@@ -2106,7 +2138,7 @@ def _make_expression_insert_call(
             ast.keyword(
                 arg="pyimport",
                 value=ast.Tuple(
-                    elts=[copy.deepcopy(call) for call in pyimports],
+                    elts=[clone_ast(call) for call in pyimports],
                     ctx=ast.Load(),
                 ),
             )
@@ -2115,7 +2147,7 @@ def _make_expression_insert_call(
         func=ast.Name(id="astichi_insert", ctx=ast.Load()),
         args=[
             ast.Name(id=target_name, ctx=ast.Load()),
-            copy.deepcopy(expr),
+            clone_ast(expr),
         ],
         keywords=keywords,
     )
@@ -2270,7 +2302,7 @@ def _apply_param_contributions_to_function(
         if name is None or name not in wrappers_by_target:
             continue
         ordered = sorted(wrappers_by_target[name], key=lambda item: (item[0], item[1]))
-        payloads_by_target[name] = [copy.deepcopy(shell.args) for _order, _index, shell in ordered]
+        payloads_by_target[name] = [clone_ast(shell.args) for _order, _index, shell in ordered]
         consumed.update(id(shell) for _order, _index, shell in ordered)
     if not payloads_by_target:
         return consumed
@@ -2290,29 +2322,29 @@ def _merge_params_into_arguments(
     ordered_payloads: list[ast.arguments] = []
 
     for argument in target.posonlyargs:
-        copied = copy.deepcopy(argument)
+        copied = clone_ast(argument)
         new_posonlyargs.append(copied)
-        new_default_by_id[id(copied)] = copy.deepcopy(target_defaults.get(id(argument)))
+        new_default_by_id[id(copied)] = clone_ast(target_defaults.get(id(argument)))
 
     for argument in target.args:
         name = param_hole_name(argument)
         if name is None:
-            copied = copy.deepcopy(argument)
+            copied = clone_ast(argument)
             new_args.append(copied)
-            new_default_by_id[id(copied)] = copy.deepcopy(target_defaults.get(id(argument)))
+            new_default_by_id[id(copied)] = clone_ast(target_defaults.get(id(argument)))
             continue
         for payload in payloads_by_target.get(name, []):
             ordered_payloads.append(payload)
             payload_positionals = list(payload.posonlyargs) + list(payload.args)
             payload_defaults = _defaults_by_arg(payload_positionals, list(payload.defaults))
             for payload_arg in payload.args:
-                copied = copy.deepcopy(payload_arg)
+                copied = clone_ast(payload_arg)
                 new_args.append(copied)
-                new_default_by_id[id(copied)] = copy.deepcopy(
+                new_default_by_id[id(copied)] = clone_ast(
                     payload_defaults.get(id(payload_arg))
                 )
 
-    merged = copy.deepcopy(target)
+    merged = clone_ast(target)
     merged.posonlyargs = new_posonlyargs
     merged.args = new_args
     merged.defaults = _rebuild_defaults(
@@ -2329,7 +2361,7 @@ def _merge_params_into_arguments(
                         hint="only one authored or inserted vararg is allowed per function",
                     )
                 )
-            merged.vararg = copy.deepcopy(payload.vararg)
+            merged.vararg = clone_ast(payload.vararg)
         if payload.kwarg is not None:
             if merged.kwarg is not None:
                 raise ValueError(
@@ -2339,9 +2371,9 @@ def _merge_params_into_arguments(
                         hint="only one authored or inserted kwarg is allowed per function",
                     )
                 )
-            merged.kwarg = copy.deepcopy(payload.kwarg)
-        merged.kwonlyargs.extend(copy.deepcopy(payload.kwonlyargs))
-        merged.kw_defaults.extend(copy.deepcopy(payload.kw_defaults))
+            merged.kwarg = clone_ast(payload.kwarg)
+        merged.kwonlyargs.extend(clone_ast(payload.kwonlyargs))
+        merged.kw_defaults.extend(clone_ast(payload.kw_defaults))
 
     _validate_unique_parameter_names(merged)
     return merged
@@ -2744,7 +2776,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                         hint="keep `astichi_funcargs` inside a call's arg list, not a bare statement",
                     )
                 )
-            return self.visit(copy.deepcopy(payload_expr))
+            return self.visit(clone_ast(payload_expr))
 
         node.func = self.visit(node.func)
 
@@ -2770,7 +2802,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                     payload,
                     region=PLAIN_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(arg) or "<payload>",
-                    transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
+                    transform_expr=lambda expr: self.visit(clone_ast(expr)),
                 )
                 new_args.extend(lowered_args)
                 suffix_keywords.extend(lowered_keywords)
@@ -2786,7 +2818,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                     payload,
                     region=STARRED_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(arg.value) or "<payload>",
-                    transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
+                    transform_expr=lambda expr: self.visit(clone_ast(expr)),
                 )
                 new_args.extend(lowered_args)
                 continue
@@ -2814,7 +2846,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                     payload,
                     region=DOUBLE_STAR_FUNC_ARG_REGION,
                     hole_name=_insert_target_name(keyword.value) or "<payload>",
-                    transform_expr=lambda expr: self.visit(copy.deepcopy(expr)),
+                    transform_expr=lambda expr: self.visit(clone_ast(expr)),
                 )
                 new_keywords.extend(lowered_keywords)
                 continue
@@ -2832,7 +2864,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
 
     def visit_Starred(self, node: ast.Starred) -> ast.AST | list[ast.expr]:
         if isinstance(node.value, ast.Call) and _is_expression_insert_call(node.value):
-            return [self.visit(copy.deepcopy(node.value.args[1]))]
+            return [self.visit(clone_ast(node.value.args[1]))]
         return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword) -> ast.AST | list[ast.keyword]:
@@ -2841,7 +2873,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
             and isinstance(node.value, ast.Call)
             and _is_expression_insert_call(node.value)
         ):
-            expr = copy.deepcopy(node.value.args[1])
+            expr = clone_ast(node.value.args[1])
             if not isinstance(expr, ast.Dict):
                 raise ValueError(
                     format_astichi_error(
@@ -2863,7 +2895,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 expanded.append(
                     ast.keyword(
                         arg=key.id,
-                        value=self.visit(copy.deepcopy(value)),
+                        value=self.visit(clone_ast(value)),
                     )
                 )
             return expanded
@@ -2878,7 +2910,7 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                 and isinstance(value, ast.Call)
                 and _is_expression_insert_call(value)
             ):
-                expr = copy.deepcopy(value.args[1])
+                expr = clone_ast(value.args[1])
                 if not isinstance(expr, ast.Dict):
                     raise ValueError(
                         format_astichi_error(
@@ -2889,11 +2921,11 @@ class _ExpressionInsertRealizer(ast.NodeTransformer):
                     )
                 for insert_key, insert_value in zip(expr.keys, expr.values, strict=True):
                     new_keys.append(
-                        self.visit(copy.deepcopy(insert_key))
+                        self.visit(clone_ast(insert_key))
                         if insert_key is not None
                         else None
                     )
-                    new_values.append(self.visit(copy.deepcopy(insert_value)))
+                    new_values.append(self.visit(clone_ast(insert_value)))
                 continue
             new_keys.append(self.visit(key) if key is not None else None)
             new_values.append(self.visit(value))
@@ -2960,16 +2992,21 @@ def materialize_composable(
        bind-externals, unmatched `@astichi_insert` block shells, or
        unmatched expression-form `astichi_insert` calls. Per §2.5,
        hygiene must never run on an out-of-place tree.
-    2. deep-copy the tree and recognize markers;
+    2. clone the tree and recognize markers;
     3. assign scope identity and rename scope collisions (hygiene);
     4. realize expression-insert wrappers;
     5. flatten block-level `astichi_hole`/`astichi_insert` shell pairs;
     6. strip residual metadata markers;
     7. re-recognize markers and re-extract ports.
     """
-    satisfied_holes = _locally_satisfied_hole_names(composable.tree)
-    satisfied_param_holes = _locally_satisfied_param_hole_names(composable.tree)
-    required_holes = _required_hole_names(composable.tree)
+    arg_bindings = dict(composable.arg_bindings)
+    gate_facts = _collect_materialize_gate_facts(
+        composable.tree,
+        resolved_arg_names=frozenset(arg_bindings),
+    )
+    satisfied_holes = gate_facts.satisfied_holes
+    satisfied_param_holes = gate_facts.satisfied_param_holes
+    required_holes = gate_facts.required_holes
     mandatory_holes = [
         port
         for port in composable.demand_ports
@@ -3018,10 +3055,7 @@ def materialize_composable(
             )
         )
 
-    arg_bindings = dict(composable.arg_bindings)
-    unresolved_args = _find_unresolved_arg_identifiers(
-        composable.tree, resolved_names=frozenset(arg_bindings)
-    )
+    unresolved_args = list(gate_facts.unresolved_arg_identifiers)
     if unresolved_args:
         # Issue 005 §5 step 1 / §7: unresolved `__astichi_arg__` sites are a
         # hard gate error. Each entry carries every textual occurrence of the
@@ -3044,9 +3078,9 @@ def materialize_composable(
             )
         )
 
-    unmatched_block_shells = _find_unmatched_block_insert_shells(composable.tree)
-    unmatched_param_shells = _find_unmatched_param_insert_shells(composable.tree)
-    unmatched_expr_inserts = _find_unmatched_expression_inserts(composable.tree)
+    unmatched_block_shells = list(gate_facts.unmatched_block_shells)
+    unmatched_param_shells = list(gate_facts.unmatched_param_shells)
+    unmatched_expr_inserts = list(gate_facts.unmatched_expr_inserts)
     if unmatched_block_shells or unmatched_param_shells or unmatched_expr_inserts:
         parts: list[str] = []
         for name, lineno in unmatched_block_shells:
@@ -3074,7 +3108,7 @@ def materialize_composable(
             )
         )
 
-    tree = copy.deepcopy(composable.tree)
+    tree = clone_ast(composable.tree)
     # Issue 005 §5 step 2 / 5c: resolve identifier-arg slots before
     # hygiene. Every `__astichi_arg__` occurrence whose stripped name is
     # in the bindings map is substituted atomically with the target
@@ -3243,7 +3277,7 @@ def emit_commented_composable(composable: BasicComposable) -> str:
 def to_executable_ast(composable: BasicComposable) -> ast.Module:
     """Return a fresh executable AST owned by the caller."""
     materialized = materialize_composable(composable)
-    tree = copy.deepcopy(materialized.tree)
+    tree = clone_ast(materialized.tree)
     ast.fix_missing_locations(tree)
     return tree
 
@@ -3419,6 +3453,161 @@ def _replace_targets_in_tree(
         return body
 
     tree.body = _apply_to_body(tree.body, ())
+
+
+@dataclass(frozen=True)
+class _MaterializeGateFacts:
+    required_holes: frozenset[str]
+    satisfied_holes: frozenset[str]
+    satisfied_param_holes: frozenset[str]
+    unresolved_arg_identifiers: tuple[tuple[str, tuple[int, ...]], ...]
+    unmatched_block_shells: tuple[tuple[str, int], ...]
+    unmatched_param_shells: tuple[tuple[str, int], ...]
+    unmatched_expr_inserts: tuple[tuple[str, int], ...]
+
+
+def _collect_materialize_gate_facts(
+    tree: ast.AST,
+    *,
+    resolved_arg_names: frozenset[str] = frozenset(),
+) -> _MaterializeGateFacts:
+    collector = _MaterializeGateFactsCollector(resolved_arg_names)
+    collector.visit(tree)
+    return collector.facts()
+
+
+class _MaterializeGateFactsCollector(ast.NodeVisitor):
+    def __init__(self, resolved_arg_names: frozenset[str]) -> None:
+        self._resolved_arg_names = resolved_arg_names
+        self._required_holes: set[str] = set()
+        self._optional_annotation_hole_ids: set[int] = set()
+        self._satisfied_holes: set[str] = set()
+        self._satisfied_param_holes: set[str] = set()
+        self._unresolved_arg_lines: dict[str, list[int]] = {}
+        self._unmatched_block_shells: list[tuple[str, int]] = []
+        self._unmatched_param_shells: list[tuple[str, int]] = []
+        self._unmatched_expr_inserts: list[tuple[str, int]] = []
+
+    def visit(self, node: ast.AST) -> object:
+        self._collect_node_facts(node)
+        self._collect_statement_list_facts(node)
+        return super().visit(node)
+
+    def facts(self) -> _MaterializeGateFacts:
+        unresolved = tuple(
+            (name, tuple(sorted(set(lines))))
+            for name, lines in sorted(self._unresolved_arg_lines.items())
+        )
+        return _MaterializeGateFacts(
+            required_holes=frozenset(self._required_holes),
+            satisfied_holes=frozenset(self._satisfied_holes),
+            satisfied_param_holes=frozenset(self._satisfied_param_holes),
+            unresolved_arg_identifiers=unresolved,
+            unmatched_block_shells=tuple(self._unmatched_block_shells),
+            unmatched_param_shells=tuple(self._unmatched_param_shells),
+            unmatched_expr_inserts=tuple(self._unmatched_expr_inserts),
+        )
+
+    def _collect_node_facts(self, node: ast.AST) -> None:
+        lineno = getattr(node, "lineno", 0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            self._check_arg_identifier(node.name, lineno)
+        elif isinstance(node, ast.Name):
+            self._check_arg_identifier(node.id, lineno)
+        elif isinstance(node, ast.arg):
+            self._check_arg_identifier(node.arg, lineno)
+            if (
+                node.annotation is not None
+                and _extract_expr_hole_name(node.annotation) is not None
+            ):
+                self._optional_annotation_hole_ids.add(id(node.annotation))
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            self._check_arg_identifier(node.arg, lineno)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None:
+                for segment in node.module.split("."):
+                    self._check_arg_identifier(segment, lineno)
+            for alias in node.names:
+                self._check_arg_identifier(alias.name, lineno)
+                if alias.asname is not None:
+                    self._check_arg_identifier(alias.asname, lineno)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                self._check_arg_identifier(alias.name, lineno)
+                if alias.asname is not None:
+                    self._check_arg_identifier(alias.asname, lineno)
+
+        hole_name = _extract_expr_hole_name(node)
+        if hole_name is not None and id(node) not in self._optional_annotation_hole_ids:
+            self._required_holes.add(hole_name)
+        if isinstance(node, ast.Call):
+            self._satisfied_holes.update(_call_region_locally_satisfied(node))
+
+    def _check_arg_identifier(self, name: str, lineno: int) -> None:
+        base, marker = strip_identifier_suffix(name)
+        if marker is not ARG_IDENTIFIER:
+            return
+        if base in self._resolved_arg_names:
+            return
+        self._unresolved_arg_lines.setdefault(base, []).append(lineno)
+
+    def _collect_statement_list_facts(self, node: ast.AST) -> None:
+        for field in ("body", "orelse", "finalbody"):
+            if not hasattr(node, field):
+                continue
+            value = getattr(node, field)
+            if not isinstance(value, list):
+                continue
+            self._collect_body_facts(value)
+
+    def _collect_body_facts(self, body: list[object]) -> None:
+        for item in body:
+            if not isinstance(item, ast.Expr):
+                continue
+            if not isinstance(item.value, ast.Call):
+                continue
+            if not _is_expression_insert_call(item.value):
+                continue
+            target = _insert_target_name(item.value)
+            if target is not None:
+                self._unmatched_expr_inserts.append(
+                    (target, getattr(item, "lineno", 0) or 0)
+                )
+
+        if not body or not all(isinstance(item, ast.stmt) for item in body):
+            return
+
+        stmt_body = [item for item in body if isinstance(item, ast.stmt)]
+        block_holes: set[str] = set()
+        block_shells: list[tuple[str, int]] = []
+        param_shells: list[tuple[str, int]] = []
+        for stmt in stmt_body:
+            hole_name = _extract_hole_name(stmt)
+            if hole_name is not None:
+                block_holes.add(hole_name)
+            block_info = extract_block_insert_shell(stmt, phase="materialize")
+            if block_info is not None:
+                block_shells.append(
+                    (block_info.target_name, getattr(stmt, "lineno", 0) or 0)
+                )
+            param_info = extract_param_insert_shell(stmt, phase="materialize")
+            if param_info is not None:
+                param_shells.append(
+                    (param_info.target_name, getattr(stmt, "lineno", 0) or 0)
+                )
+
+        block_shell_names = {name for name, _lineno in block_shells}
+        self._satisfied_holes.update(block_holes & block_shell_names)
+        self._unmatched_block_shells.extend(
+            (name, lineno) for name, lineno in block_shells if name not in block_holes
+        )
+
+        param_holes = _param_holes_in_statement_list(stmt_body)
+        param_shell_names = {name for name, _lineno in param_shells}
+        self._satisfied_param_holes.update(param_holes & param_shell_names)
+        self._unmatched_param_shells.extend(
+            (name, lineno) for name, lineno in param_shells if name not in param_holes
+        )
 
 
 def _find_unmatched_block_insert_shells(tree: ast.AST) -> list[tuple[str, int]]:
@@ -3751,7 +3940,7 @@ def _boundary_value_replacement(node: ast.AST) -> ast.expr | None:
         and len(node.args) == 1
         and isinstance(node.args[0], ast.Name)
     ):
-        return copy.deepcopy(node.args[0])
+        return clone_ast(node.args[0])
     sentinel = match_transparent_sentinel(
         node,
         is_marker_call=_is_pass_call,
@@ -3763,7 +3952,7 @@ def _boundary_value_replacement(node: ast.AST) -> ast.expr | None:
         return None
     if not isinstance(call.args[0], ast.Name):
         return None
-    inner = copy.deepcopy(call.args[0])
+    inner = clone_ast(call.args[0])
     inner.ctx = sentinel.ctx
     copy_astichi_location(inner, node)
     return inner
@@ -3859,7 +4048,7 @@ class _ResidualMarkerStripper(ast.NodeTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         inner = _residual_marker_inner(node)
         if inner is not None:
-            return self.visit(copy.deepcopy(inner))
+            return self.visit(clone_ast(inner))
         replacement = _boundary_value_replacement(node)
         if replacement is not None:
             return self.visit(replacement)

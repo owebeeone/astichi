@@ -4,12 +4,14 @@ import ast
 
 from astichi.asttools import (
     AstichiScopeMap,
+    clone_ast,
     has_astichi_insert_decorator,
     import_statement_binding_names,
     is_astichi_insert_call,
     is_astichi_insert_shell,
     is_expression_insert_call,
 )
+from astichi.ast_provenance import astichi_source_file, attach_astichi_source_file
 
 
 def test_import_statement_binding_names_match_python_local_bindings() -> None:
@@ -129,3 +131,31 @@ def real_function():
 
     assert scope_map.scope_for(assign).root is tree
     assert scope_map.nested_python_root_for(assign) is func
+
+
+def test_clone_ast_returns_independent_tree_with_locations() -> None:
+    tree = ast.parse("answer = value + 1\n")
+    attach_astichi_source_file(tree, "tests/clone_case.py")
+
+    cloned = clone_ast(tree)
+    assert isinstance(cloned, ast.Module)
+    assert cloned is not tree
+    assert cloned.body[0] is not tree.body[0]
+    assert ast.dump(cloned, include_attributes=True) == ast.dump(
+        tree, include_attributes=True
+    )
+    assert astichi_source_file(cloned.body[0]) == "tests/clone_case.py"
+
+    assign = cloned.body[0]
+    assert isinstance(assign, ast.Assign)
+    assert isinstance(assign.value, ast.BinOp)
+    assign.value.right = ast.Constant(value=41)
+    ast.fix_missing_locations(cloned)
+
+    original_namespace = {"value": 1}
+    cloned_namespace = {"value": 1}
+    exec(compile(tree, "<original>", "exec"), original_namespace)  # noqa: S102
+    exec(compile(cloned, "<cloned>", "exec"), cloned_namespace)  # noqa: S102
+
+    assert original_namespace["answer"] == 2
+    assert cloned_namespace["answer"] == 42

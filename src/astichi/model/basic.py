@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import ast
-import copy
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from astichi.asttools import clone_ast
 from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
@@ -61,7 +61,7 @@ class BasicComposable(Composable):
     def emit(self, *, provenance: bool = True) -> str:
         from astichi.emit import emit_source
 
-        tree = copy.deepcopy(self.tree)
+        tree = clone_ast(self.tree)
         if self.arg_bindings:
             _apply_emitted_arg_bindings(tree, dict(self.arg_bindings))
         return emit_source(tree, provenance=provenance)
@@ -95,7 +95,7 @@ class BasicComposable(Composable):
         resolved = _resolve_bindings(mapping, values)
         if not resolved:
             return _rebuild_composable(
-                tree=copy.deepcopy(self.tree),
+                tree=clone_ast(self.tree),
                 origin=self.origin,
                 bound_externals=self.bound_externals,
             )
@@ -131,7 +131,7 @@ class BasicComposable(Composable):
         for value in resolved.values():
             validate_external_value(value)
 
-        rebound_tree = copy.deepcopy(self.tree)
+        rebound_tree = clone_ast(self.tree)
         apply_external_bindings(rebound_tree, resolved)
         return _rebuild_composable(
             tree=rebound_tree,
@@ -170,7 +170,7 @@ class BasicComposable(Composable):
         if new_keep_names == self.keep_names:
             return self
         return _rebuild_composable(
-            tree=copy.deepcopy(self.tree),
+            tree=clone_ast(self.tree),
             origin=self.origin,
             bound_externals=self.bound_externals,
             arg_bindings=self.arg_bindings,
@@ -245,7 +245,7 @@ class BasicComposable(Composable):
             existing[key] = value
 
         merged = tuple(sorted(existing.items()))
-        rebound_tree = copy.deepcopy(self.tree)
+        rebound_tree = clone_ast(self.tree)
         from astichi.materialize.api import (
             _resolve_arg_identifiers,
             _resolve_boundary_imports,
