@@ -1011,16 +1011,16 @@ def build_merge(
             raise TypeError(
                 f"instance {record.name} must be a BasicComposable"
             )
-        copied_composable = copy.deepcopy(record.composable)
-        tree = copied_composable.tree
+        source_composable = record.composable
+        tree = copy.deepcopy(source_composable.tree)
         if do_unroll:
             tree = unroll_tree(tree)
         # Re-derive ports from the current tree so anchor-preserved
         # holes a prior build() marked satisfied remain addressable.
         composable = _refresh_composable(
-            copied_composable,
+            source_composable,
             tree,
-            inventory=None if do_unroll else copied_composable.inventory,
+            inventory=None if do_unroll else source_composable.inventory,
         )
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
@@ -1513,15 +1513,19 @@ def _make_block_insert_shell(
     body: list[ast.stmt],
     ref_path: RefPath | None = None,
     location_donor: ast.AST | None = None,
+    copy_body: bool = True,
 ) -> ast.FunctionDef:
     """Build an `astichi_insert`-decorated shell for a block contribution.
 
     Per `AstichiApiDesignV1-CompositionUnification.md §3`, each `.add()`
     wiring of a block target produces one such shell.
     """
-    shell_body: list[ast.stmt] = (
-        [copy.deepcopy(stmt) for stmt in body] if body else [ast.Pass()]
-    )
+    if not body:
+        shell_body: list[ast.stmt] = [ast.Pass()]
+    elif copy_body:
+        shell_body = [copy.deepcopy(stmt) for stmt in body]
+    else:
+        shell_body = list(body)
     keywords: list[ast.keyword] = []
     if order != 0:
         keywords.append(
@@ -2324,6 +2328,7 @@ class _HoleReplacementTransformer(
         self.block_replacements = block_replacements
         self.expr_replacements = expr_replacements
         self.param_replacements = param_replacements
+        self._moved_block_contribution_ids: set[int] = set()
 
     def generic_visit(self, node: ast.AST) -> ast.AST:
         for field, old_value in ast.iter_fields(node):
@@ -2351,6 +2356,9 @@ class _HoleReplacementTransformer(
             contributions = self.block_replacements[hole_name]
             result: list[ast.stmt] = [node]
             for contrib in contributions:
+                contribution_id = id(contrib)
+                copy_body = contribution_id in self._moved_block_contribution_ids
+                self._moved_block_contribution_ids.add(contribution_id)
                 shell = _make_block_insert_shell(
                     target_name=hole_name,
                     order=contrib.order,
@@ -2358,6 +2366,7 @@ class _HoleReplacementTransformer(
                     body=contrib.body,
                     ref_path=contrib.ref_path,
                     location_donor=node,
+                    copy_body=copy_body,
                 )
                 result.append(shell)
             return result

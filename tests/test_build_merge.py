@@ -103,6 +103,28 @@ def test_build_unresolved_holes_remain() -> None:
     assert [p.name for p in result.demand_ports] == ["unfilled"]
 
 
+def test_build_reuses_contribution_for_duplicate_block_holes() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            "items = []\n"
+            "astichi_hole(body)\n"
+            "astichi_hole(body)\n"
+            "result = items\n"
+        )
+    )
+    builder.add.Body(
+        astichi.compile("astichi_pass(items, outer_bind=True).append(1)\n")
+    )
+    builder.Root.body.add.Body()
+
+    source = builder.build().materialize().emit(provenance=False)
+    namespace = {}
+    exec(source, namespace)
+
+    assert namespace["result"] == [1, 1, 1, 1]
+
+
 def test_build_chain_resolution() -> None:
     builder = astichi.build()
     builder.add.A(astichi.compile("astichi_hole(outer)\n"))
