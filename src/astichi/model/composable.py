@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import ast
+
     from astichi.model.descriptors import ComposableDescription
 
 
@@ -19,6 +21,10 @@ class Composable(ABC):
     @abstractmethod
     def emit_commented(self) -> str:
         """Emit final source with astichi comments rendered as Python comments."""
+
+    @abstractmethod
+    def to_executable_ast(self) -> "ast.Module":
+        """Return a caller-owned executable AST for this composable."""
 
     @abstractmethod
     def materialize(self) -> object:

@@ -3240,6 +3240,14 @@ def emit_commented_composable(composable: BasicComposable) -> str:
     return _emit_commented_tree(materialized.tree)
 
 
+def to_executable_ast(composable: BasicComposable) -> ast.Module:
+    """Return a fresh executable AST owned by the caller."""
+    materialized = materialize_composable(composable)
+    tree = copy.deepcopy(materialized.tree)
+    ast.fix_missing_locations(tree)
+    return tree
+
+
 @dataclass(frozen=True)
 class _CommentRenderRecord:
     payload: str

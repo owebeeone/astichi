@@ -308,6 +308,7 @@ Abstract surface:
 
 - `emit(provenance: bool = True) -> str`
 - `emit_commented() -> str`
+- `to_executable_ast() -> ast.Module`
 - `materialize() -> Composable`
 - `describe() -> ComposableDescription`
 
@@ -561,6 +562,8 @@ Current implementation reality:
 - `emit_commented()` runs the materialize pipeline with comment preservation,
   renders preserved `astichi_comment(...)` statement markers as `#` comments,
   and returns source without provenance
+- `to_executable_ast()` runs the executable materialize pipeline and returns a
+  fresh caller-owned AST suitable for `compile(tree, ..., "exec")`
 - `materialize().emit(provenance=False)` is expected to be runnable Python
 - `emit(provenance=True)` appends one trailing comment:
   - `# astichi-provenance: <payload>`

@@ -71,6 +71,11 @@ class BasicComposable(Composable):
 
         return emit_commented_composable(self)
 
+    def to_executable_ast(self) -> ast.Module:
+        from astichi.materialize import to_executable_ast
+
+        return to_executable_ast(self)
+
     def materialize(self) -> "BasicComposable":
         from astichi.materialize import materialize_composable
 

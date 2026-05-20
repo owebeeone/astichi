@@ -63,6 +63,9 @@ composition. See [descriptor-api.md](descriptor-api.md).
 markers as real Python comments. It returns plain source with no provenance
 tail. See [marker-comment.md](marker-comment.md).
 
+`.to_executable_ast()` runs final executable materialization and returns a fresh
+caller-owned `ast.Module` suitable for `compile(tree, ..., "exec")`.
+
 Additional descriptor value objects for advanced inspection are exported from
 `astichi.model`, including `PortDescriptor`, `HoleDescriptor`,
 `ProductionDescriptor`, `ExternalBindDescriptor`,
