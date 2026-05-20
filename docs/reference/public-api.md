@@ -9,11 +9,18 @@
 | `ComposableDescription` | Immutable descriptor returned by `Composable.describe()`. |
 | `ComposableHole` | Additive-hole descriptor with builder target address data. |
 | `TargetAddress` | Data-driven target address accepted by `builder.target(...)`. |
+| `GeneratedAstCache` | Trusted local cache for opt-in generated executable AST reuse. |
 | `compile` | Parse marker-bearing **source** into a `Composable`. |
 | `build` | Create a **mutable builder** for wiring `Composable` instances. |
 
 ```python
-from astichi import Composable, ComposableDescription, ComposableHole, TargetAddress
+from astichi import (
+    Composable,
+    ComposableDescription,
+    ComposableHole,
+    GeneratedAstCache,
+    TargetAddress,
+)
 from astichi import compile, build
 ```
 
@@ -84,10 +91,15 @@ needs map-backed access to resource records. See [inventory-api.md](inventory-ap
 Builder construction and graph types used by **`build()`** and advanced callers.
 The public builder handle supports both fluent chains and data-driven named
 calls such as `builder.add("Root", piece)`,
+`builder.define("Step", piece)`,
 `builder.instance("Root").target("body").add("Step")`, `builder.target(...)`,
 and `builder.assign(source_instance=..., inner_name=..., target_instance=...,
 outer_name=...)`. Descriptor identifier demand/supply pairs can be bound with
 `builder.bind_identifier(...)`.
+
+`builder.to_executable_ast(cache=GeneratedAstCache(...))` is the opt-in
+generated-AST cache path. Cache hits return a fresh AST and skip `build_merge`;
+cache files are trusted local build artifacts, not an untrusted input format.
 
 ## Submodule: `astichi.assembler`
 

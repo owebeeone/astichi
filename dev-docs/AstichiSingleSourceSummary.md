@@ -283,6 +283,9 @@ locations.
   `builder.target(hole.with_root_instance("Root"))` or a resolved
   `TargetAddress`. Unresolved descriptor addresses reject.
 - `builder.build()` merges the graph to one composable.
+- `builder.to_executable_ast(cache=GeneratedAstCache(...), unroll="auto")`
+  returns a caller-owned executable AST and can opt into the trusted local
+  generated-AST cache; cache hits bypass `build_merge`.
 - Build resolution starts from root-capable `builder.add` instances, follows
   edges through source-only definitions, and filters unused `builder.define`
   palette entries out of validation, inventory, materialization, provenance,
@@ -564,6 +567,10 @@ Current implementation reality:
   and returns source without provenance
 - `to_executable_ast()` runs the executable materialize pipeline and returns a
   fresh caller-owned AST suitable for `compile(tree, ..., "exec")`
+- `GeneratedAstCache` is an opt-in trusted-local cache for builder
+  `to_executable_ast(...)` results. Its key is a JSON-compatible checked hash
+  over Python/cache compatibility, finalization policy, graph wiring, source
+  ASTs, logical origins, edge overlays, and source-only/root-capable placement.
 - `materialize().emit(provenance=False)` is expected to be runnable Python
 - `emit(provenance=True)` appends one trailing comment:
   - `# astichi-provenance: <payload>`

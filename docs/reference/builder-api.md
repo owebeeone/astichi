@@ -194,6 +194,13 @@ builder.bind_identifier(
     target_instance,
     to,
 )
+
+builder.to_executable_ast(
+    *,
+    unroll="auto",
+    cache=None,
+    cache_dir=None,
+)
 ```
 
 `arg_names`, `keep_names`, and `bind` are overlays for the registered source
@@ -207,6 +214,10 @@ defined instance can be used by target-add edges and can be an intermediate
 target, but an unused defined instance is ignored by build resolution and is not
 emitted or materialized as a root. Use `builder.add` for output roots and
 current multi-root behavior.
+
+`builder.to_executable_ast(...)` returns a fresh executable AST for the current
+graph. Passing `cache=GeneratedAstCache(path)` or `cache_dir=path` enables the
+trusted local generated-AST cache; cache hits skip `build_merge`.
 
 Leading-underscore names are only available through explicit named calls:
 

@@ -14,3 +14,10 @@ run it with:
 ```bash
 uv run --with lark python docs/validation/perf/yidl_split_dataclass_profile.py --skip-runtime
 ```
+
+The generated-AST cache probe exercises the opt-in builder cache and reports
+cold, warm in-process, warm disk, unparse, and compile timings:
+
+```bash
+uv run python docs/validation/perf/generated_ast_cache_profile.py
+```

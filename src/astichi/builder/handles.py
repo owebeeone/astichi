@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+import os
 
 from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.builder.graph import (
@@ -1302,6 +1304,41 @@ class BuilderHandle:
         from astichi.materialize import build_merge
 
         return build_merge(self.graph, unroll=unroll)
+
+    def to_executable_ast(
+        self,
+        *,
+        unroll: bool | str = "auto",
+        cache: object | None = None,
+        cache_dir: str | os.PathLike[str] | None = None,
+    ) -> ast.Module:
+        """Return a caller-owned executable AST, optionally from a cache."""
+        from astichi.cache import GeneratedAstCache
+
+        if cache is not None and cache_dir is not None:
+            raise ValueError("pass either cache or cache_dir, not both")
+        ast_cache: GeneratedAstCache | None
+        if cache_dir is not None:
+            ast_cache = GeneratedAstCache(cache_dir)
+        elif cache is None:
+            ast_cache = None
+        elif isinstance(cache, GeneratedAstCache):
+            ast_cache = cache
+        else:
+            raise TypeError("cache must be a GeneratedAstCache")
+
+        key = None
+        if ast_cache is not None:
+            key = ast_cache.key_for_builder_graph(self.graph, unroll=unroll)
+            cached = ast_cache.load(key)
+            if cached is not None:
+                return cached
+
+        tree = self.build(unroll=unroll).to_executable_ast()
+        if ast_cache is not None:
+            assert key is not None
+            ast_cache.store(key, tree)
+        return tree
 
     def __getattr__(self, name: str) -> InstanceHandle:
         if name.startswith("_"):
