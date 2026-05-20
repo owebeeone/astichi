@@ -2,6 +2,10 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[options]
+exclude-newer = "2026-05-08T01:47:39.376974Z"
+exclude-newer-span = "P1W"
+
 [[package]]
 name = "astichi"
 version = "0.1.0"

@@ -559,6 +559,64 @@ astichi_pass(result, outer_bind=True).append(astichi_bind_external(delta))
     )
 
 
+def test_composable_targets_hole_inside_indexed_build_path() -> None:
+    root = astichi.compile(
+        """
+def run():
+    result = []
+    astichi_hole(body)
+    return result
+"""
+    )
+    wrapper = astichi.compile(
+        """
+astichi_pass(result, outer_bind=True).append("wrapper")
+astichi_hole(inner)
+"""
+    )
+    inner = astichi.compile(
+        """
+astichi_pass(result, outer_bind=True).append("inner")
+"""
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    scope.apply(
+        require_one(
+            find_candidates(
+                scope.inventory,
+                as_composable(
+                    wrapper,
+                    build_name="Wrapper",
+                    build_index=1,
+                ),
+                name="body",
+                build_match=("Root",),
+            )
+        )
+    )
+    inner_candidate = require_one(
+        find_candidates(
+            scope.inventory,
+            as_composable(inner, build_name="Inner"),
+            name="inner",
+            build_match=("Root", "Wrapper[1]"),
+        )
+    )
+
+    assert "build_path=Root/Wrapper[1]" in "\n".join(
+        inner_candidate.diagnostic_lines()
+    )
+
+    scope.apply(inner_candidate)
+    source = scope.build().materialize().emit(provenance=False)
+    namespace = {}
+    exec(source, namespace)
+
+    assert namespace["run"]() == ["wrapper", "inner"]
+
+
 def test_as_composable_order_controls_additive_insert_order() -> None:
     root = astichi.compile(
         """

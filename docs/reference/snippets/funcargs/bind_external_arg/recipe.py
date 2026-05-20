@@ -14,6 +14,23 @@ This recipe is one module with **several** call sites:
   ``astichi_hole(varargs)``, and ``astichi_hole(kwargs)``; each payload is its own Astichi scope
   (hygiene may rename ``out`` across scopes, e.g. ``out__astichi_scoped_*``; ``builder.assign``
   threads each Root-side pass slot onto the correct exported ``out``).
+- **``result_kw_parameterized``** — a single parameterized
+  ``astichi_funcargs(param__astichi_arg__=astichi_pass(value__astichi_arg__, outer_bind=True))``
+  payload looped into ``builder.add.KwParam[i](..., arg_names={"param": ..., "value": ...})``
+  with matching ``builder.Root.kw_parameterized.add.KwParam[i]()`` edge adds. The subscript form
+  spawns one distinct instance per iteration; each edge-local ``arg_names`` overlay resolves both
+  the keyword **name** and the identifier passed through to the outer scope before merge.
+  ``outer_bind=True`` threads the resolved value identifier (``v1`` / ``v2`` / ``v3``) to the
+  same-name local on ``Root`` without an explicit ``builder.assign`` wire; the resulting call is
+  ``func_kw(a=v1, b=v2, c=v3)``.
+- **``result_kw_ref``** — same shape, but the keyword **value** uses
+  ``astichi_ref(external=value_path)`` instead of an ``__astichi_arg__`` identifier slot. The
+  edge supplies the compile-time path with ``bind={"value_path": "vals.v1"}``; ``astichi_ref``
+  lowers that string into a real ``Name``/``Attribute`` chain at materialize time. A single
+  ``_=astichi_import(vals)`` declaration threads the stable namespace root across the
+  contribution-shell boundary, so the per-instance varying ``.v1`` / ``.v2`` / ``.v3`` attribute
+  tails are unambiguous attribute lookups (not free names subject to hygiene). Resulting call:
+  ``func_kw(a=vals.v1, b=vals.v2, c=vals.v3)``.
 """
 
 def run() -> str:
@@ -42,6 +59,21 @@ def run() -> str:
         astichi_funcargs(flag=True)
         """
     )
+    parametric_kwarg = piece(
+        """
+        astichi_funcargs(
+            param__astichi_arg__=astichi_pass(value__astichi_arg__, outer_bind=True),
+        )
+        """
+    )
+    parametric_ref_kwarg = piece(
+        """
+        astichi_funcargs(
+            param__astichi_arg__=astichi_ref(external=value_path),
+            _=astichi_import(vals),
+        )
+        """
+    )
 
     builder: BuilderHandle = astichi.build()
     builder.add.Root(
@@ -67,6 +99,14 @@ def run() -> str:
             source_kw_scoped = 300
             head_supply = 1
             seed_star = 2
+            v1 = 10
+            v2 = 20
+            v3 = 30
+
+            class vals:
+                v1 = 100
+                v2 = 200
+                v3 = 300
 
             result_combined = func_combined(
                 astichi_hole(head),
@@ -88,6 +128,8 @@ def run() -> str:
                 fixed=1,
                 **astichi_hole(kwargs_ms),
             )
+            result_kw_parameterized = func_kw(**astichi_hole(kw_parameterized))
+            result_kw_ref = func_kw(**astichi_hole(kw_ref))
             out_multi_scope = astichi_pass(out_multi_scope)
             out_kw_scoped = astichi_pass(out_kw_scoped)
             out_star_scoped = astichi_pass(out_star_scoped)
@@ -226,5 +268,18 @@ def run() -> str:
     builder.assign.Root.out_kw_scoped.to().KwScoped.out
     builder.assign.Root.out_star_scoped.to().StarScoped.out
     builder.assign.Root.out_plain_scoped.to().PlainScoped.out
+
+    # --- parameterized kw: reuse one payload with edge-local arg_names
+    param_values = (('a', 'v1'), ('b', 'v2'), ('c', 'v3'))
+    for i, (param, value) in enumerate(param_values):
+        builder.add.KwParam[i](parametric_kwarg, arg_names={"param": param, "value": value})
+        builder.Root.kw_parameterized.add.KwParam[i]()
+
+    # --- parameterized kw via astichi_ref: keyword name via __astichi_arg__,
+    # keyword value via astichi_ref(external=...) lowering an edge-bound path
+    for i, (param, attr) in enumerate(param_values):
+        builder.add.KwRef[i](parametric_ref_kwarg, arg_names={"param": param})
+        builder.Root.kw_ref.add.KwRef[i](bind={"value_path": f"vals.{attr}"})
+
     composable = builder.build()
     return ast.unparse(composable.bind(seed={"seed": 101}).materialize().tree)

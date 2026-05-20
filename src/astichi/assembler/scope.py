@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from astichi.ast_provenance import astichi_source_file
-from astichi.builder.graph import format_indexed_instance_name
+from astichi.builder.graph import (
+    format_indexed_instance_name,
+    parse_indexed_instance_name,
+)
 from astichi.builder.handles import BuilderHandle, InstanceHandle
 from astichi.model import (
     BasicComposable,
@@ -265,9 +268,10 @@ class AssemblyScope:
         build_path = candidate.target_record.build_path.parts
         if not build_path:
             raise ValueError("target hole record must have a non-empty build path")
+        owner, ref_path = self._owner_and_ref_path_for(candidate.target_record)
         self.builder.target(
-            root_instance=build_path[0],
-            ref_path=build_path[1:],
+            root_instance=owner,
+            ref_path=ref_path,
             target_name=candidate.target_record.name.logical_name(),
         ).add(
             resource.build_name,
@@ -314,6 +318,12 @@ class AssemblyScope:
         raise ValueError(f"unknown builder instance: {name}")
 
     def _owner_for(self, record: InventoryRecord) -> str:
+        owner, _ = self._owner_and_ref_path_for(record)
+        return owner
+
+    def _owner_and_ref_path_for(
+        self, record: InventoryRecord
+    ) -> tuple[str, tuple[str | int, ...]]:
         path = record.build_path.parts
         for prefix, owner in sorted(
             self._owner_by_build_prefix.items(),
@@ -321,7 +331,7 @@ class AssemblyScope:
             reverse=True,
         ):
             if path[: len(prefix)] == prefix:
-                return owner
+                return owner, _ref_path_from_build_parts(path[len(prefix) :])
         raise ValueError(f"no registered owner for build path `{record.build_path}`")
 
     def _refresh_inventory(self) -> None:
@@ -356,6 +366,20 @@ def as_external_value(value: ExternalValue) -> ExternalValueResource:
 def as_identifier(identifier: str) -> IdentifierNameResource:
     """Wrap a Python identifier spelling as a resource."""
     return IdentifierNameResource(identifier=identifier)
+
+
+def _ref_path_from_build_parts(parts: tuple[str, ...]) -> tuple[str | int, ...]:
+    """Convert inventory build-path parts into builder descendant ref parts."""
+    ref_path: list[str | int] = []
+    for part in parts:
+        parsed = parse_indexed_instance_name(part)
+        if parsed is None:
+            ref_path.append(part)
+            continue
+        stem, indexes = parsed
+        ref_path.append(stem)
+        ref_path.extend(indexes)
+    return tuple(ref_path)
 
 
 def find_candidates(

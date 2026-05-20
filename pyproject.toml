@@ -26,6 +26,9 @@ classifiers = [
 dev = ["pytest>=7.0"]
 test = ["pytest>=7.0"]
 
+[tool.uv]
+exclude-newer = "1 week"
+
 [tool.hatch.build]
 sources = ["src"]
 
