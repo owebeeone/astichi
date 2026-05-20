@@ -233,6 +233,9 @@ locations.
 `astichi.build() -> BuilderHandle`
 
 - `builder.add.A(comp)` registers root instance `A`.
+- `builder.define.A(comp)` registers source-only instance `A`; it can be used as
+  an edge source or intermediate target, but it is not an output root unless a
+  live root reaches it.
 - `builder.add.Step[i](comp)` registers indexed family members such as
   `Step[0]`, `Step[1]`, ... as distinct root instances under one stem.
 - `builder.A` returns a handle for a registered root; **`A` is the stable graph
@@ -250,11 +253,14 @@ locations.
   fluent chain can carry **ref paths** into nested insert shells (`AssignBinding`
   `source_ref_path` / `target_ref_path`), not only `Src` / `Dst` at the root.
 - Data-driven named equivalents are available for fluent operations:
-  `builder.add("Root", comp)`, `builder.instance("Root").target("slot").add("Step")`,
+  `builder.add("Root", comp)`, `builder.define("Step", comp)`,
+  `builder.instance("Root").target("slot").add("Step")`,
   `builder.target(root_instance="Root", target_name="slot", ...)`, and
   `builder.assign(source_instance=..., inner_name=..., target_instance=..., outer_name=...)`.
   The named API uses the same graph records and validation semantics as the
   fluent API, and is the intended surface for generated mappers.
+- `builder.define("Step", piece, indexes=(2,), arg_names=..., keep_names=...)`
+  is the source-only named equivalent of `builder.define.Step[2](...)`.
 - `builder.add("Step", piece, indexes=(2,), arg_names=..., keep_names=...)`
   is the named equivalent of `builder.add.Step[2](...)`.
 - `builder.instance("Step", indexes=(2,))` selects indexed family members by
@@ -277,6 +283,10 @@ locations.
   `builder.target(hole.with_root_instance("Root"))` or a resolved
   `TargetAddress`. Unresolved descriptor addresses reject.
 - `builder.build()` merges the graph to one composable.
+- Build resolution starts from root-capable `builder.add` instances, follows
+  edges through source-only definitions, and filters unused `builder.define`
+  palette entries out of validation, inventory, materialization, provenance,
+  and output.
 
 **Merge ordering:** lower `order` inserts first; equal `order` uses first-registered
 edge first.

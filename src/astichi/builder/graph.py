@@ -66,12 +66,40 @@ class TargetRef:
     path: tuple[int, ...] = ()
 
 
+class InstancePlacement:
+    """Output-root eligibility for a registered builder instance."""
+
+    def can_emit_as_root(self) -> bool:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class RootCapableInstancePlacement(InstancePlacement):
+    """Instance may become an output root when it is not consumed."""
+
+    def can_emit_as_root(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class SourceOnlyInstancePlacement(InstancePlacement):
+    """Instance is inert unless reached from a live output root."""
+
+    def can_emit_as_root(self) -> bool:
+        return False
+
+
+ROOT_CAPABLE_INSTANCE = RootCapableInstancePlacement()
+SOURCE_ONLY_INSTANCE = SourceOnlyInstancePlacement()
+
+
 @dataclass(frozen=True)
 class InstanceRecord:
     """Named composable instance in the builder graph."""
 
     name: str
     composable: Composable
+    placement: InstancePlacement = ROOT_CAPABLE_INSTANCE
 
 
 @dataclass(frozen=True)
@@ -184,7 +212,13 @@ class BuilderGraph:
             instance_name=name
         )
 
-    def add_instance(self, name: str, composable: Composable) -> InstanceRecord:
+    def add_instance(
+        self,
+        name: str,
+        composable: Composable,
+        *,
+        placement: InstancePlacement = ROOT_CAPABLE_INSTANCE,
+    ) -> InstanceRecord:
         """Register a named composable instance."""
         parsed = parse_indexed_instance_name(name)
         if not name.isidentifier() and parsed is None:
@@ -218,9 +252,21 @@ class BuilderGraph:
                     )
                 )
         self._validate_instance_composable(name, composable)
-        record = InstanceRecord(name=name, composable=composable)
+        record = InstanceRecord(
+            name=name,
+            composable=composable,
+            placement=placement,
+        )
         self._instances[name] = record
         return record
+
+    def define_instance(self, name: str, composable: Composable) -> InstanceRecord:
+        """Register a named source-only composable instance."""
+        return self.add_instance(
+            name,
+            composable,
+            placement=SOURCE_ONLY_INSTANCE,
+        )
 
     def replace_instance(self, name: str, composable: Composable) -> InstanceRecord:
         """Replace an existing instance's composable.
@@ -244,7 +290,11 @@ class BuilderGraph:
                 )
             )
         self._validate_instance_composable(name, composable)
-        record = InstanceRecord(name=name, composable=composable)
+        record = InstanceRecord(
+            name=name,
+            composable=composable,
+            placement=self._instances[name].placement,
+        )
         self._instances[name] = record
         return record
 

@@ -145,6 +145,15 @@ builder.add(
     keep_names=None,
 )
 
+builder.define(
+    name,
+    composable,
+    *,
+    indexes=None,
+    arg_names=None,
+    keep_names=None,
+)
+
 builder.instance(name, *, indexes=None)
 builder.instance("Root").target("body")
 builder.instance("Root").target("body").index(0)
@@ -193,6 +202,12 @@ piece on that specific edge. They use the same semantics as
 the overlay is scoped to the edge rather than changing the registered
 composable.
 
+`builder.define` registers source-only instances for generator palettes. A
+defined instance can be used by target-add edges and can be an intermediate
+target, but an unused defined instance is ignored by build resolution and is not
+emitted or materialized as a root. Use `builder.add` for output roots and
+current multi-root behavior.
+
 Leading-underscore names are only available through explicit named calls:
 
 ```python
@@ -209,7 +224,9 @@ names collide with Python object protocol behavior.
 | Fluent | Data-driven named API |
 | --- | --- |
 | `builder.add.Root(root)` | `builder.add("Root", root)` |
+| `builder.define.Step(piece)` | `builder.define("Step", piece)` |
 | `builder.add.Step[2](piece)` | `builder.add("Step", piece, indexes=(2,))` |
+| `builder.define.Step[2](piece)` | `builder.define("Step", piece, indexes=(2,))` |
 | `builder.Root` | `builder.instance("Root")` |
 | `builder.Step[2]` | `builder.instance("Step", indexes=(2,))` |
 | `builder.Root.body` | `builder.instance("Root").target("body")` |

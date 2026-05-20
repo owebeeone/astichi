@@ -12,6 +12,9 @@ from astichi.builder.graph import (
     BuilderGraph,
     EdgeSourceOverlay,
     IdentifierBinding,
+    InstancePlacement,
+    ROOT_CAPABLE_INSTANCE,
+    SOURCE_ONLY_INSTANCE,
     TargetRef,
     format_indexed_instance_name,
     instance_family_stem,
@@ -223,6 +226,11 @@ class _IndexedInstanceHandle:
 class _NamedAdder:
     graph: BuilderGraph = field(compare=False, repr=False)
     instance_name: str
+    placement: InstancePlacement = field(
+        default=ROOT_CAPABLE_INSTANCE,
+        compare=False,
+        repr=False,
+    )
 
     def __call__(
         self,
@@ -255,7 +263,11 @@ class _NamedAdder:
                     f"got {type(piece).__name__}"
                 )
             piece = piece.bind_identifier(arg_names)
-        self.graph.add_instance(self.instance_name, piece)
+        self.graph.add_instance(
+            self.instance_name,
+            piece,
+            placement=self.placement,
+        )
         return InstanceHandle(graph=self.graph, root_instance=self.instance_name)
 
     def __getitem__(self, key: int | tuple[int, ...]) -> "_NamedAdder":
@@ -267,6 +279,7 @@ class _NamedAdder:
         return _NamedAdder(
             graph=self.graph,
             instance_name=_family_instance_name(self.instance_name, key),
+            placement=self.placement,
         )
 
 
@@ -288,6 +301,7 @@ class AddProxy:
         return _NamedAdder(
             graph=self.graph,
             instance_name=_instance_name_from_parts(name, indexes),
+            placement=ROOT_CAPABLE_INSTANCE,
         )(
             composable,
             arg_names=arg_names,
@@ -297,7 +311,46 @@ class AddProxy:
     def __getattr__(self, name: str) -> _NamedAdder:
         if name.startswith("_"):
             raise AttributeError(name)
-        return _NamedAdder(graph=self.graph, instance_name=name)
+        return _NamedAdder(
+            graph=self.graph,
+            instance_name=name,
+            placement=ROOT_CAPABLE_INSTANCE,
+        )
+
+
+@dataclass(frozen=True)
+class DefineProxy:
+    """Dedicated proxy for source-only ``builder.define.<Name>(...)`` syntax."""
+
+    graph: BuilderGraph = field(compare=False, repr=False)
+
+    def __call__(
+        self,
+        name: str,
+        composable: Composable,
+        *,
+        indexes: int | tuple[int, ...] | None = None,
+        arg_names: Mapping[str, str] | None = None,
+        keep_names: Iterable[str] | None = None,
+    ) -> InstanceHandle:
+        return _NamedAdder(
+            graph=self.graph,
+            instance_name=_instance_name_from_parts(name, indexes),
+            placement=SOURCE_ONLY_INSTANCE,
+        )(
+            composable,
+            arg_names=arg_names,
+            keep_names=keep_names,
+        )
+
+    def __getattr__(self, name: str) -> _NamedAdder:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return _NamedAdder(
+            graph=self.graph,
+            instance_name=name,
+            placement=SOURCE_ONLY_INSTANCE,
+        )
 
 
 @dataclass(frozen=True)
@@ -1144,6 +1197,10 @@ class BuilderHandle:
     @property
     def add(self) -> AddProxy:
         return AddProxy(graph=self.graph)
+
+    @property
+    def define(self) -> DefineProxy:
+        return DefineProxy(graph=self.graph)
 
     @property
     def assign(self) -> AssignProxy:

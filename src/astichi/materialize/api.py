@@ -26,6 +26,7 @@ from astichi.builder.graph import (
     EdgeSourceOverlay,
     IdentifierBinding,
     InstanceRecord,
+    instance_name_sort_key,
 )
 from astichi.hygiene import (
     SyntheticBindingOccurrence,
@@ -157,6 +158,15 @@ class _ParamContribution:
     args: ast.arguments
     shell_name: str
     ref_path: RefPath
+
+
+@dataclass(frozen=True)
+class _ResolvedBuildGraph:
+    instances: tuple[InstanceRecord, ...]
+    edges: tuple[AdditiveEdge, ...]
+    assigns: tuple[AssignBinding, ...]
+    identifier_bindings: tuple[IdentifierBinding, ...]
+    root_names: tuple[str, ...]
 
 
 class _SkipInsertShellTransformerMixin:
@@ -955,6 +965,82 @@ class _ShellArgIdentifierResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def _resolve_build_graph(graph: BuilderGraph) -> _ResolvedBuildGraph:
+    """Return the live graph view and output roots for one build."""
+    instances = graph.instances
+    records_by_name = {record.name: record for record in instances}
+    root_capable_names = tuple(
+        record.name for record in instances if record.placement.can_emit_as_root()
+    )
+    consumed_names = frozenset(edge.source_instance for edge in graph.edges)
+    root_names = tuple(name for name in root_capable_names if name not in consumed_names)
+    if not root_names:
+        fallback_roots = {
+            edge.target.root_instance
+            for edge in graph.edges
+            if records_by_name[edge.target.root_instance].placement.can_emit_as_root()
+        }
+        root_names = tuple(sorted(fallback_roots, key=instance_name_sort_key))
+    if not root_names:
+        raise ValueError(
+            format_astichi_error(
+                "build",
+                "no root-capable output instances are live",
+                hint=(
+                    "register at least one output root with `builder.add`; "
+                    "use `builder.define` only for source-only palette entries"
+                ),
+            )
+        )
+
+    live_names: set[str] = set(root_names)
+    changed = True
+    while changed:
+        changed = False
+        for edge in graph.edges:
+            if edge.target.root_instance not in live_names:
+                continue
+            if edge.source_instance in live_names:
+                continue
+            live_names.add(edge.source_instance)
+            changed = True
+
+    live_edges = tuple(
+        edge
+        for edge in graph.edges
+        if (
+            edge.target.root_instance in live_names
+            and edge.source_instance in live_names
+        )
+    )
+    live_assigns = tuple(
+        binding
+        for binding in graph.assigns
+        if (
+            binding.source_instance not in records_by_name
+            or binding.source_instance in live_names
+        )
+    )
+    live_identifier_bindings = tuple(
+        binding
+        for binding in graph.identifier_bindings
+        if (
+            binding.source_instance not in records_by_name
+            or binding.source_instance in live_names
+        )
+    )
+    live_instances = tuple(
+        record for record in instances if record.name in live_names
+    )
+    return _ResolvedBuildGraph(
+        instances=live_instances,
+        edges=live_edges,
+        assigns=live_assigns,
+        identifier_bindings=live_identifier_bindings,
+        root_names=root_names,
+    )
+
+
 def build_merge(
     graph: BuilderGraph, *, unroll: bool | str = "auto"
 ) -> BasicComposable:
@@ -984,12 +1070,14 @@ def build_merge(
             )
         )
 
-    has_indexed_edges = any(e.target.path for e in graph.edges)
+    resolved_graph = _resolve_build_graph(graph)
+    edges = resolved_graph.edges
+    has_indexed_edges = any(e.target.path for e in edges)
     if unroll is False and has_indexed_edges:
         offenders = sorted(
             {
                 _format_target_address(e)
-                for e in graph.edges
+                for e in edges
                 if e.target.path
             }
         )
@@ -1006,7 +1094,7 @@ def build_merge(
     trees: dict[str, ast.Module] = {}
     instance_records: dict[str, InstanceRecord] = {}
     shell_indexes: dict[str, ShellIndex] = {}
-    for record in graph.instances:
+    for record in resolved_graph.instances:
         if not isinstance(record.composable, BasicComposable):
             raise TypeError(
                 f"instance {record.name} must be a BasicComposable"
@@ -1024,7 +1112,9 @@ def build_merge(
         )
         trees[record.name] = tree
         instance_records[record.name] = InstanceRecord(
-                name=record.name, composable=composable
+            name=record.name,
+            composable=composable,
+            placement=record.placement,
         )
         shell_indexes[record.name] = ShellIndex.from_tree(tree)
 
@@ -1036,19 +1126,24 @@ def build_merge(
     # never mutates the graph's instance records; the wiring is held as
     # ``AssignBinding`` records on the graph and applied fresh here.
     _validate_explicit_identifier_wiring_conflicts(
-        graph.assigns,
-        graph.identifier_bindings,
+        resolved_graph.assigns,
+        resolved_graph.identifier_bindings,
     )
-    _apply_assign_bindings(graph.assigns, instance_records, trees, shell_indexes)
+    _apply_assign_bindings(
+        resolved_graph.assigns,
+        instance_records,
+        trees,
+        shell_indexes,
+    )
     _apply_identifier_bindings(
-        graph.identifier_bindings,
+        resolved_graph.identifier_bindings,
         instance_records,
         trees,
         shell_indexes,
     )
 
     edges_by_target: dict[tuple[str, RefPath, str], list[tuple[int, AdditiveEdge]]] = {}
-    for idx, edge in enumerate(graph.edges):
+    for idx, edge in enumerate(edges):
         effective_name = iter_target_name(
             edge.target.target_name, edge.target.path
         )
@@ -1067,7 +1162,7 @@ def build_merge(
 
     _validate_indexed_targets(edges_by_target, instance_records)
 
-    resolution_order = _topo_sort_targets(graph)
+    resolution_order = _topo_sort_targets(edges)
     merged_arg_binding_pairs: set[tuple[str, str]] = set()
     merged_keep_names: set[str] = set()
 
@@ -1294,11 +1389,7 @@ def build_merge(
                 param_replacements=scoped_param_replacements,
             )
 
-    consumed = {edge.source_instance for edge in graph.edges}
-    root_names = [r.name for r in graph.instances if r.name not in consumed]
-    if not root_names:
-        target_set = {edge.target.root_instance for edge in graph.edges}
-        root_names = sorted(target_set) if target_set else sorted(trees)
+    root_names = list(resolved_graph.root_names)
 
     # Issue 006 6c (root-scope wrap): give every root instance its
     # own `astichi_hole(__astichi_root__X__)` + `@astichi_insert(...)`
@@ -1334,7 +1425,7 @@ def build_merge(
     )
     supply_ports = extract_supply_ports(markers)
     inventory = _build_graph_inventory(
-        graph=graph,
+        edges=edges,
         instance_records=instance_records,
         root_names=tuple(root_names),
         merged_tree=merged_tree,
@@ -1356,7 +1447,7 @@ def build_merge(
 
 def _build_graph_inventory(
     *,
-    graph: BuilderGraph,
+    edges: tuple[AdditiveEdge, ...],
     instance_records: dict[str, InstanceRecord],
     root_names: tuple[str, ...],
     merged_tree: ast.Module,
@@ -1364,7 +1455,7 @@ def _build_graph_inventory(
 ) -> Inventory:
     mutable = MutableInventory()
     edges_by_target: dict[str, list[AdditiveEdge]] = {}
-    for edge in graph.edges:
+    for edge in edges:
         edges_by_target.setdefault(edge.target.root_instance, []).append(edge)
     for edges in edges_by_target.values():
         edges.sort(key=lambda edge: (edge.order, edge.source_instance))
@@ -1442,9 +1533,9 @@ def _is_single_additive_hole_demand(port: DemandPort) -> bool:
     )
 
 
-def _topo_sort_targets(graph: BuilderGraph) -> list[str]:
+def _topo_sort_targets(edges: tuple[AdditiveEdge, ...]) -> list[str]:
     """Topological sort of target instances for resolution order."""
-    target_set = {edge.target.root_instance for edge in graph.edges}
+    target_set = {edge.target.root_instance for edge in edges}
     if not target_set:
         return []
 
@@ -1452,7 +1543,7 @@ def _topo_sort_targets(graph: BuilderGraph) -> list[str]:
     for inst in target_set:
         sources = {
             e.source_instance
-            for e in graph.edges
+            for e in edges
             if e.target.root_instance == inst
         }
         deps[inst] = sources & target_set
