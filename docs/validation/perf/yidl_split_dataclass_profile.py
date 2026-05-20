@@ -32,6 +32,12 @@ def main(argv: list[str] | None = None) -> int:
         help="measure parse/generator/exec phases only",
     )
     parser.add_argument(
+        "--runtime-path",
+        choices=("ast", "emit", "both"),
+        default="ast",
+        help="decorator runtime path to measure",
+    )
+    parser.add_argument(
         "--profile",
         type=Path,
         help="write a cProfile dump for the decorator-runtime phase",
@@ -137,31 +143,68 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
         materialize_api._make_block_insert_shell = shell_wrapper
         materialize_api.copy.deepcopy = deepcopy_wrapper
         try:
-            if profile_path is None:
-                generated_source = timed(
-                    "build_dataclass_module_emit_commented",
-                    lambda: namespace["build_DataclassModule"](
+            generated_source: str | None = None
+            if args.runtime_path in {"emit", "both"}:
+                if profile_path is not None and args.runtime_path == "emit":
+                    profile = cProfile.Profile()
+                    start = time.perf_counter()
+                    profile.enable()
+                    generated_source = namespace["build_DataclassModule"](
                         container
-                    ).emit_commented(),
-                )
-            else:
-                profile = cProfile.Profile()
-                start = time.perf_counter()
-                profile.enable()
-                generated_source = namespace["build_DataclassModule"](
-                    container
-                ).emit_commented()
-                profile.disable()
-                timings["build_dataclass_module_emit_commented"] = (
-                    time.perf_counter() - start
-                )
-                profile_path.parent.mkdir(parents=True, exist_ok=True)
-                profile.dump_stats(profile_path)
-                if args.profile_top:
-                    stats = pstats.Stats(profile, stream=sys.stderr)
-                    stats.strip_dirs().sort_stats("cumulative").print_stats(
-                        args.profile_top
+                    ).emit_commented()
+                    profile.disable()
+                    timings["build_dataclass_module_emit_commented"] = (
+                        time.perf_counter() - start
                     )
+                    profile_path.parent.mkdir(parents=True, exist_ok=True)
+                    profile.dump_stats(profile_path)
+                    if args.profile_top:
+                        stats = pstats.Stats(profile, stream=sys.stderr)
+                        stats.strip_dirs().sort_stats("cumulative").print_stats(
+                            args.profile_top
+                        )
+                else:
+                    generated_source = timed(
+                        "build_dataclass_module_emit_commented",
+                        lambda: namespace["build_DataclassModule"](
+                            container
+                        ).emit_commented(),
+                    )
+                generated_namespace = timed(
+                    "exec_generated_source",
+                    lambda: _exec_generated_source(generated_source),
+                )
+                timed(
+                    "build_generated_dataclasses_from_source",
+                    lambda: _build_generated_dataclasses(generated_namespace),
+                )
+
+            if args.runtime_path in {"ast", "both"}:
+                if profile_path is None:
+                    generated_namespace = timed(
+                        "build_dataclass_module_exec_ast",
+                        lambda: _exec_generated_ast(namespace, container),
+                    )
+                else:
+                    profile = cProfile.Profile()
+                    start = time.perf_counter()
+                    profile.enable()
+                    generated_namespace = _exec_generated_ast(namespace, container)
+                    profile.disable()
+                    timings["build_dataclass_module_exec_ast"] = (
+                        time.perf_counter() - start
+                    )
+                    profile_path.parent.mkdir(parents=True, exist_ok=True)
+                    profile.dump_stats(profile_path)
+                    if args.profile_top:
+                        stats = pstats.Stats(profile, stream=sys.stderr)
+                        stats.strip_dirs().sort_stats("cumulative").print_stats(
+                            args.profile_top
+                        )
+                timed(
+                    "build_generated_dataclasses_from_ast",
+                    lambda: _build_generated_dataclasses(generated_namespace),
+                )
         finally:
             if original_refresh is not None:
                 AssemblyScope._refresh_inventory = original_refresh
@@ -169,7 +212,8 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
             materialize_api._make_block_insert_shell = original_shell
             materialize_api.copy.deepcopy = original_deepcopy
 
-        counts["generated_source_bytes"] = len(generated_source.encode("utf-8"))
+        if generated_source is not None:
+            counts["generated_source_bytes"] = len(generated_source.encode("utf-8"))
 
     summary = {
         "case": "yidl_update_a_dataclasses_split",
@@ -179,6 +223,134 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
     json.dump(summary, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
+
+
+def _exec_generated_source(source: str) -> dict[str, Any]:
+    generated_namespace: dict[str, Any] = {}
+    exec(source, generated_namespace)
+    return generated_namespace
+
+
+def _exec_generated_ast(namespace: dict[str, Any], container: object) -> dict[str, Any]:
+    generated_tree = namespace["build_DataclassModule"](
+        container,
+    ).to_executable_ast()
+    generated_namespace: dict[str, Any] = {}
+    exec(
+        compile(
+            generated_tree,
+            "<yidl_update_a_dataclasses_split.generated_ast>",
+            "exec",
+        ),
+        generated_namespace,
+    )
+    return generated_namespace
+
+
+def _build_generated_dataclasses(generated_namespace: dict[str, Any]) -> object:
+    missing = object()
+
+    def field_info(**kw: Any) -> dict[str, Any]:
+        return kw
+
+    classes = generated_namespace["build_generated_dataclasses"](
+        _Widget_dataclass_params={"frozen": True},
+        _Widget_dataclass_fields={
+            "count": field_info(
+                name="count",
+                type="int",
+                default=missing,
+                default_factory=missing,
+                init=True,
+                repr=True,
+                compare=True,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="field",
+            ),
+            "level": field_info(
+                name="level",
+                type="int",
+                default=7,
+                default_factory=missing,
+                init=True,
+                repr=True,
+                compare=True,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="field",
+            ),
+            "tags": field_info(
+                name="tags",
+                type="list[str]",
+                default=missing,
+                default_factory=list,
+                init=True,
+                repr=True,
+                compare=False,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="field",
+            ),
+            "scale": field_info(
+                name="scale",
+                type="int",
+                default=1,
+                default_factory=missing,
+                init=True,
+                repr=True,
+                compare=False,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="initvar",
+            ),
+            "hidden": field_info(
+                name="hidden",
+                type="str",
+                default="secret",
+                default_factory=missing,
+                init=False,
+                repr=False,
+                compare=False,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="field",
+            ),
+            "kind": field_info(
+                name="kind",
+                type="str",
+                default="widget",
+                default_factory=missing,
+                init=False,
+                repr=False,
+                compare=False,
+                hash=None,
+                kw_only=False,
+                metadata=None,
+                kind="classvar",
+            ),
+        },
+        _Widget_annotations={
+            "count": "int",
+            "level": "int",
+            "tags": "list[str]",
+            "scale": "int",
+            "hidden": "str",
+            "kind": "str",
+        },
+        _Widget_match_args=("count", "level", "tags", "scale"),
+        _Widget_level_default=7,
+        _Widget_tags_default_factory=list,
+        _Widget_scale_default=1,
+        _Widget_hidden_default="secret",
+        _Widget_kind_default="widget",
+    )
+    return classes["Widget"](3, scale=5)
 
 
 def _configure_import_paths() -> Path:
