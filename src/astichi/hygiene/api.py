@@ -9,6 +9,7 @@ from itertools import count
 
 from astichi.asttools import (
     AstichiScopeMap,
+    astichi_scope_keep_names,
     has_astichi_insert_decorator,
     import_statement_binding_names,
     is_expression_insert_call,
@@ -331,8 +332,20 @@ def assign_scope_identity(
     # but-not-trusted semantics (e.g. identifier-arg resolution
     # targets that must not blanket-suppress rename on their raw
     # name) pass those through `preserved_names` only.
+    effective_fresh_scope_nodes = fresh_scope_nodes + _marker_fresh_scope_nodes(
+        composable.tree
+    )
+    metadata_scope_trust_declarations = _collect_scope_keep_declarations(
+        composable.tree,
+        effective_fresh_scope_nodes,
+    )
+    metadata_trust_names = _scope_trust_declaration_names(
+        metadata_scope_trust_declarations
+    )
     effective_trust_names = frozenset(
-        set(trust_names) | set(_collect_trust_preserved(composable.markers))
+        set(trust_names)
+        | set(_collect_trust_preserved(composable.markers))
+        | set(metadata_trust_names)
     )
     effective_preserved_names = frozenset(
         set(preserved_names) | set(marker_preserved_names) | set(effective_trust_names)
@@ -341,9 +354,6 @@ def assign_scope_identity(
         marker.name_id
         for marker in composable.markers
         if marker.source_name == "astichi_bind_external" and marker.name_id is not None
-    )
-    effective_fresh_scope_nodes = fresh_scope_nodes + _marker_fresh_scope_nodes(
-        composable.tree
     )
     fresh_scope_local_bindings: dict[int, frozenset[str]] = {}
     for node in effective_fresh_scope_nodes:
@@ -360,8 +370,12 @@ def assign_scope_identity(
     fresh_scope_imported_names = _collect_fresh_scope_imports(
         composable.tree, composable.markers
     )
-    fresh_scope_trust_declarations = _collect_fresh_scope_trust_declarations(
+    marker_scope_trust_declarations = _collect_fresh_scope_trust_declarations(
         composable.tree, composable.markers
+    )
+    fresh_scope_trust_declarations = _merge_scope_trust_declarations(
+        marker_scope_trust_declarations,
+        metadata_scope_trust_declarations,
     )
     visitor = _ScopeIdentityVisitor(
         ignored_name_nodes=ignored_name_nodes,
@@ -534,6 +548,37 @@ def _collect_trust_preserved(
         if marker.name_id is not None:
             trusted.add(marker.name_id)
     return frozenset(trusted)
+
+
+def _collect_scope_keep_declarations(
+    tree: ast.Module,
+    fresh_scope_nodes: tuple[ast.AST, ...],
+) -> dict[int, frozenset[str]]:
+    declarations: dict[int, frozenset[str]] = {}
+    for node in (tree, *fresh_scope_nodes):
+        keep_names = astichi_scope_keep_names(node)
+        if keep_names:
+            declarations[id(node)] = keep_names
+    return declarations
+
+
+def _scope_trust_declaration_names(
+    declarations: dict[int, frozenset[str]],
+) -> frozenset[str]:
+    names: set[str] = set()
+    for scope_names in declarations.values():
+        names.update(scope_names)
+    return frozenset(names)
+
+
+def _merge_scope_trust_declarations(
+    *declarations: dict[int, frozenset[str]],
+) -> dict[int, frozenset[str]]:
+    merged: dict[int, set[str]] = {}
+    for declaration in declarations:
+        for scope_id, names in declaration.items():
+            merged.setdefault(scope_id, set()).update(names)
+    return {scope_id: frozenset(names) for scope_id, names in merged.items()}
 
 
 def _collect_fresh_scope_trust_declarations(

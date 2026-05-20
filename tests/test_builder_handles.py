@@ -375,6 +375,7 @@ def test_builder_add_keep_names_pins_identifier_through_merge() -> None:
 
     merged = builder.build()
     assert "_sentinel" in merged.keep_names
+    assert "astichi_keep(_sentinel)" in merged.emit(provenance=False)
 
 
 def test_target_add_arg_names_store_edge_overlay_without_mutating_instance() -> None:

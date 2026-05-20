@@ -12,6 +12,8 @@ from astichi.ast_provenance import (
     propagate_ast_source_locations,
 )
 from astichi.asttools import (
+    add_astichi_scope_keep_names,
+    astichi_scope_keep_names,
     clone_ast,
     import_statement_binding_names,
     is_astichi_insert_call,
@@ -148,6 +150,7 @@ class _BlockContribution:
     body: list[ast.stmt]
     shell_name: str
     ref_path: RefPath
+    keep_names: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -1347,9 +1350,6 @@ def build_merge(
                     + edge.target.path
                 )
                 contrib_body = clone_ast(source_tree.body)
-                _inject_scoped_keep_markers(
-                    contrib_body, source_piece.keep_names
-                )
                 _prefix_shell_refs_in_body(contrib_body, inserted_ref_path)
                 contributions.append(
                     _BlockContribution(
@@ -1359,6 +1359,7 @@ def build_merge(
                         body=contrib_body,
                         shell_name=shell_name,
                         ref_path=inserted_ref_path,
+                        keep_names=source_piece.keep_names,
                     )
                 )
             if inserts:
@@ -1402,10 +1403,13 @@ def build_merge(
     for name in root_names:
         merged_arg_binding_pairs.update(instance_records[name].composable.arg_bindings)
         merged_keep_names.update(instance_records[name].composable.keep_names)
-        _inject_scoped_keep_markers(
-            trees[name].body, instance_records[name].composable.keep_names
+        merged_body.extend(
+            _wrap_in_root_scope(
+                trees[name].body,
+                name,
+                keep_names=instance_records[name].composable.keep_names,
+            )
         )
-        merged_body.extend(_wrap_in_root_scope(trees[name].body, name))
 
     merged_tree = ast.Module(body=merged_body, type_ignores=[])
     ast.fix_missing_locations(merged_tree)
@@ -1618,6 +1622,7 @@ def _make_block_insert_shell(
     shell_name: str,
     body: list[ast.stmt],
     ref_path: RefPath | None = None,
+    keep_names: frozenset[str] = frozenset(),
     location_donor: ast.AST | None = None,
     copy_body: bool = True,
 ) -> ast.FunctionDef:
@@ -1661,6 +1666,8 @@ def _make_block_insert_shell(
         type_comment=None,
         type_params=[],
     )
+    keep_scope = _synthetic_root_scope_shell(shell_body) or shell
+    add_astichi_scope_keep_names(keep_scope, keep_names)
     donor = location_donor or (shell_body[0] if shell_body else None)
     _propagate_insert_shell_locations(shell, donor)
     return shell
@@ -1734,7 +1741,10 @@ def _root_scope_anchor(instance_name: str) -> str:
 
 
 def _wrap_in_root_scope(
-    body: list[ast.stmt], instance_name: str
+    body: list[ast.stmt],
+    instance_name: str,
+    *,
+    keep_names: frozenset[str] = frozenset(),
 ) -> list[ast.stmt]:
     """Wrap a root instance's body in a hole+shell pair (issue 006 6c).
 
@@ -1767,6 +1777,7 @@ def _wrap_in_root_scope(
         shell_name=anchor,
         body=body,
         ref_path=root_ref,
+        keep_names=keep_names,
         location_donor=donor,
         copy_body=False,
     )
@@ -1873,6 +1884,18 @@ def _make_keep_statement(
     )
     propagate_ast_source_locations(expr, location_donor)
     return expr
+
+
+def _reify_scope_keep_metadata_for_emit(tree: ast.Module) -> None:
+    """Render synthetic scope keep metadata back into source-level markers."""
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        keep_names = astichi_scope_keep_names(node)
+        if keep_names:
+            _inject_scoped_keep_markers(node.body, keep_names)
 
 
 def _inject_scoped_keep_markers(
@@ -2489,6 +2512,7 @@ class _HoleReplacementTransformer(
                     shell_name=contrib.shell_name,
                     body=contrib.body,
                     ref_path=contrib.ref_path,
+                    keep_names=contrib.keep_names,
                     location_donor=node,
                     copy_body=copy_body,
                 )

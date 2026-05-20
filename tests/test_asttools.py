@@ -4,6 +4,8 @@ import ast
 
 from astichi.asttools import (
     AstichiScopeMap,
+    add_astichi_scope_keep_names,
+    astichi_scope_keep_names,
     clone_ast,
     has_astichi_insert_decorator,
     import_statement_binding_names,
@@ -159,3 +161,19 @@ def test_clone_ast_returns_independent_tree_with_locations() -> None:
 
     assert original_namespace["answer"] == 2
     assert cloned_namespace["answer"] == 42
+
+
+def test_clone_ast_preserves_scope_keep_metadata_independently() -> None:
+    tree = ast.parse("def shell():\n    value = 1\n")
+    shell = tree.body[0]
+    assert isinstance(shell, ast.FunctionDef)
+    add_astichi_scope_keep_names(shell, ("value",))
+
+    cloned = clone_ast(tree)
+    cloned_shell = cloned.body[0]
+    assert isinstance(cloned_shell, ast.FunctionDef)
+
+    assert astichi_scope_keep_names(cloned_shell) == frozenset({"value"})
+    add_astichi_scope_keep_names(cloned_shell, ("other",))
+    assert astichi_scope_keep_names(shell) == frozenset({"value"})
+    assert astichi_scope_keep_names(cloned_shell) == frozenset({"other", "value"})

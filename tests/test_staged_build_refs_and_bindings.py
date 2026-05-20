@@ -789,6 +789,24 @@ def test_v3_keep_matrix_reused_build_pin_stays_local_to_one_instance() -> None:
     assert "value__astichi_scoped_" in source
 
 
+def test_v3_keep_matrix_staged_build_contribution_pin_stays_inner_scope() -> None:
+    stage1 = astichi.build()
+    stage1.add.Unit(_piece("value = 1\n"))
+    built = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Root(_piece("astichi_hole(body)\n"))
+    stage2.add.Pinned(built.with_keep_names(["value"]))
+    stage2.add.Plain(built)
+    stage2.Root.body.add.Pinned(order=0)
+    stage2.Root.body.add.Plain(order=1)
+    materialized = stage2.build().materialize()
+    source = materialized.emit(provenance=False)
+
+    assert source.count("value = 1") == 1
+    assert "value__astichi_scoped_" in source
+
+
 @pytest.mark.parametrize(
     ("root_source", "insert_sources", "expected_fragment"),
     [

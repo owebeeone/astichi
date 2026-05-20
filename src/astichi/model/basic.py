@@ -60,8 +60,10 @@ class BasicComposable(Composable):
 
     def emit(self, *, provenance: bool = True) -> str:
         from astichi.emit import emit_source
+        from astichi.materialize.api import _reify_scope_keep_metadata_for_emit
 
         tree = clone_ast(self.tree)
+        _reify_scope_keep_metadata_for_emit(tree)
         if self.arg_bindings:
             _apply_emitted_arg_bindings(tree, dict(self.arg_bindings))
         return emit_source(tree, provenance=provenance)
