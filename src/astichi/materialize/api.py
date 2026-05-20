@@ -1645,6 +1645,7 @@ def _wrap_in_root_scope(
         body=body,
         ref_path=root_ref,
         location_donor=donor,
+        copy_body=False,
     )
     return [hole, shell]
 
