@@ -89,12 +89,14 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
     container = timed("container_build", lambda: _container(namespace))
 
     if not args.skip_runtime:
-        original_refresh = AssemblyScope._refresh_inventory
+        original_refresh = getattr(AssemblyScope, "_refresh_inventory", None)
         original_build_merge = materialize_pkg.build_merge
         original_shell = materialize_api._make_block_insert_shell
         original_deepcopy = materialize_api.copy.deepcopy
 
         def refresh_wrapper(self: AssemblyScope) -> None:
+            if original_refresh is None:
+                raise AssertionError("refresh wrapper installed without target")
             counts["refresh_calls"] += 1
             before = counts["build_merge_total"]
             result = original_refresh(self)
@@ -129,7 +131,8 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
             finally:
                 counts["deepcopy_seconds"] += time.perf_counter() - start
 
-        AssemblyScope._refresh_inventory = refresh_wrapper
+        if original_refresh is not None:
+            AssemblyScope._refresh_inventory = refresh_wrapper
         materialize_pkg.build_merge = build_merge_wrapper
         materialize_api._make_block_insert_shell = shell_wrapper
         materialize_api.copy.deepcopy = deepcopy_wrapper
@@ -160,7 +163,8 @@ def _run_probe(args: argparse.Namespace, profile_path: Path | None) -> int:
                         args.profile_top
                     )
         finally:
-            AssemblyScope._refresh_inventory = original_refresh
+            if original_refresh is not None:
+                AssemblyScope._refresh_inventory = original_refresh
             materialize_pkg.build_merge = original_build_merge
             materialize_api._make_block_insert_shell = original_shell
             materialize_api.copy.deepcopy = original_deepcopy

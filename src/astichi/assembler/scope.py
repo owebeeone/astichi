@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
@@ -24,9 +25,12 @@ from astichi.model import (
     HoleDescriptor,
     Inventory,
     InventoryRecord,
+    InventoryRecordId,
+    MutableInventory,
     PortDescriptor,
     PortInventoryPayload,
     ProductionDescriptor,
+    ResourcePath,
     SourceLocation,
     empty_inventory,
 )
@@ -225,9 +229,16 @@ class AssemblyScope:
     _owner_by_build_prefix: dict[tuple[str, ...], str] = field(
         default_factory=dict, init=False
     )
+    _record_ids_by_build_prefix: dict[tuple[str, ...], frozenset[InventoryRecordId]] = (
+        field(default_factory=dict, init=False)
+    )
+    _satisfied_record_ids: set[InventoryRecordId] = field(
+        default_factory=set, init=False
+    )
 
     def __post_init__(self) -> None:
-        self._refresh_inventory()
+        if self.builder.graph.instances:
+            self._refresh_inventory_from_build()
 
     @property
     def inventory(self) -> Inventory:
@@ -238,7 +249,7 @@ class AssemblyScope:
         """Register a root composable in this scope."""
         handle = self.builder.add(name, composable)
         self._owner_by_build_prefix[(name,)] = name
-        self._refresh_inventory()
+        self._replace_occurrence_inventory((name,), composable)
         return handle
 
     def apply(self, candidate: BindingCandidate) -> None:
@@ -281,7 +292,12 @@ class AssemblyScope:
         self._owner_by_build_prefix[build_path + (resource.instance_name,)] = (
             resource.instance_name
         )
-        self._refresh_inventory()
+        if _record_is_single_additive_hole_demand(candidate.target_record):
+            self._mark_record_satisfied(candidate.target_record.record_id)
+        self._replace_occurrence_inventory(
+            build_path + (resource.instance_name,),
+            resource.composable,
+        )
 
     def _apply_external_value(self, candidate: ExternalValueCandidate) -> None:
         owner = self._owner_for(candidate.demand_record)
@@ -290,7 +306,7 @@ class AssemblyScope:
             {candidate.demand_record.name.logical_name(): candidate.resource.value}
         )
         self.builder.graph.replace_instance(owner, rebound)
-        self._refresh_inventory()
+        self._refresh_owner_occurrences(owner, rebound)
 
     def _apply_identifier_name(self, candidate: IdentifierNameCandidate) -> None:
         owner = self._owner_for(candidate.demand_record)
@@ -303,7 +319,7 @@ class AssemblyScope:
             }
         )
         self.builder.graph.replace_instance(owner, rebound)
-        self._refresh_inventory()
+        self._refresh_owner_occurrences(owner, rebound)
 
     def _registered_basic(self, name: str) -> BasicComposable:
         for record in self.builder.graph.instances:
@@ -334,7 +350,50 @@ class AssemblyScope:
                 return owner, _ref_path_from_build_parts(path[len(prefix) :])
         raise ValueError(f"no registered owner for build path `{record.build_path}`")
 
-    def _refresh_inventory(self) -> None:
+    def _refresh_owner_occurrences(
+        self, owner: str, composable: Composable
+    ) -> None:
+        for prefix, prefix_owner in tuple(self._owner_by_build_prefix.items()):
+            if prefix_owner == owner:
+                self._replace_occurrence_inventory(prefix, composable)
+
+    def _replace_occurrence_inventory(
+        self,
+        build_prefix: tuple[str, ...],
+        composable: Composable,
+    ) -> None:
+        if not isinstance(composable, BasicComposable):
+            raise TypeError(
+                "assembler scope inventory requires BasicComposable instances; "
+                f"got {type(composable).__name__}"
+            )
+        old_record_ids = self._record_ids_by_build_prefix.get(build_prefix, ())
+        inventory = _without_record_ids(self._inventory, old_record_ids)
+        prefixed = _prefixed_occurrence_inventory(build_prefix, composable)
+        visible_record_ids: set[InventoryRecordId] = set()
+        mutable = MutableInventory()
+        for record in inventory.records.values():
+            mutable.add_existing_record(record)
+        for record in prefixed.records.values():
+            if record.record_id in self._satisfied_record_ids:
+                continue
+            mutable.add_existing_record(record)
+            visible_record_ids.add(record.record_id)
+        self._record_ids_by_build_prefix[build_prefix] = frozenset(
+            visible_record_ids
+        )
+        self._inventory = mutable.freeze()
+
+    def _mark_record_satisfied(self, record_id: InventoryRecordId) -> None:
+        self._satisfied_record_ids.add(record_id)
+        self._inventory = _without_record_ids(self._inventory, (record_id,))
+        for prefix, record_ids in tuple(self._record_ids_by_build_prefix.items()):
+            if record_id in record_ids:
+                self._record_ids_by_build_prefix[prefix] = frozenset(
+                    item for item in record_ids if item != record_id
+                )
+
+    def _refresh_inventory_from_build(self) -> None:
         instances = self.builder.graph.instances
         if not instances:
             self._inventory = empty_inventory()
@@ -380,6 +439,34 @@ def _ref_path_from_build_parts(parts: tuple[str, ...]) -> tuple[str | int, ...]:
         ref_path.append(stem)
         ref_path.extend(indexes)
     return tuple(ref_path)
+
+
+def _prefixed_occurrence_inventory(
+    build_prefix: tuple[str, ...],
+    composable: BasicComposable,
+) -> Inventory:
+    from astichi.materialize.api import _occurrence_inventory
+
+    mutable = MutableInventory()
+    mutable.add_inventory(
+        ResourcePath(build_prefix),
+        _occurrence_inventory(composable),
+    )
+    return mutable.freeze()
+
+
+def _without_record_ids(
+    inventory: Inventory,
+    record_ids: Iterable[InventoryRecordId],
+) -> Inventory:
+    remove = frozenset(record_ids)
+    if not remove:
+        return inventory
+    mutable = MutableInventory()
+    for record in inventory.records.values():
+        if record.record_id not in remove:
+            mutable.add_existing_record(record)
+    return mutable.freeze()
 
 
 def find_candidates(
@@ -476,6 +563,22 @@ def _hole_descriptor(record: InventoryRecord) -> HoleDescriptor | None:
     if not isinstance(port, DemandPort):
         return None
     return HoleDescriptor(port=PortDescriptor.from_demand(port))
+
+
+def _record_is_single_additive_hole_demand(record: InventoryRecord) -> bool:
+    payload = record.payload
+    if not isinstance(payload, PortInventoryPayload):
+        return False
+    port = payload.port
+    if not isinstance(port, DemandPort):
+        return False
+    if not port.is_additive_hole_demand():
+        return False
+    return not (
+        port.shape.is_block()
+        or port.shape.is_positional_variadic()
+        or port.shape.is_named_variadic()
+    )
 
 
 def _production_satisfies(

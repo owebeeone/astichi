@@ -707,3 +707,46 @@ def test_scope_inventory_refreshes_after_apply() -> None:
         name="value",
         build_match=("Root", "Body"),
     ) == ()
+
+
+def test_scope_inventory_updates_without_build_merge(monkeypatch) -> None:
+    root = astichi.compile("astichi_hole(body)\n")
+    body = astichi.compile("value = astichi_bind_external(value)\n")
+    calls = 0
+
+    def fail_build_merge(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("AssemblyScope inventory update called build_merge")
+
+    import astichi.materialize as materialize_pkg
+
+    monkeypatch.setattr(materialize_pkg, "build_merge", fail_build_merge)
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    body_candidate = require_one(
+        find_candidates(
+            scope.inventory,
+            as_composable(body, build_name="Body"),
+            name="body",
+            build_match=("Root",),
+        )
+    )
+    scope.apply(body_candidate)
+
+    assert scope.inventory.hole_record_ids("body") == ("Root/#1",)
+    assert scope.inventory.resource_record_ids("value") == ("Root/Body/#1",)
+
+    value_candidate = require_one(
+        find_candidates(
+            scope.inventory,
+            as_external_value(1),
+            name="value",
+            build_match=("Root", "Body"),
+        )
+    )
+    scope.apply(value_candidate)
+
+    assert scope.inventory.resource_record_ids("value") == ()
+    assert calls == 0
