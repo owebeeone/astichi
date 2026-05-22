@@ -22,6 +22,12 @@ statements. No `astichi_pyimport(...)` call survives final materialized output.
 `astichi_comment(...)` statements are also stripped from executable
 materialized output; marker-only non-module suites receive `pass`.
 
+Defaulted block holes are selected at materialization time. A
+`with astichi_hole(name) as astichi_fallback:` site lowers to its fallback suite
+when no local insert shell targets `name`; if builder inserts target that site,
+the insert payload replaces the whole `with` statement and the fallback suite is
+discarded.
+
 ## `emit(*, provenance: bool = True) -> str`
 
 Renders **source text** for debugging, tests, inspection, or downstream codegen.
@@ -58,8 +64,9 @@ that **`compile`** can reconstruct a `Composable`. Whether a given emission is
 full Python or skeleton is a **documented policy** of the emit mode.
 
 Pre-materialized emission preserves source-visible markers, including
-`astichi_pyimport(...)`, for round-trip. Final materialized emission strips or
-realizes those markers into executable Python.
+`astichi_pyimport(...)` and defaulted block-hole `with` markers, for round-trip.
+Final materialized emission strips or realizes those markers into executable
+Python.
 
 ## `emit_commented() -> str`
 

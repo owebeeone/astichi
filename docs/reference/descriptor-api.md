@@ -115,6 +115,7 @@ Fields:
 | `address` | A `TargetAddress` usable with `builder.target(...)` after root resolution. |
 | `port` | The demand-side `PortDescriptor` for the hole. |
 | `add_policy` | `SINGLE_ADD` or `MULTI_ADD`, exposed as behavior-bearing singleton objects. |
+| `has_default` | `True` for defaulted block holes declared with `with astichi_hole(name) as astichi_fallback:`. |
 | `when_empty` | Clause empty policy for `ELIF_CLAUSE` holes; ordinary holes use `None`. |
 
 Helpers:
@@ -246,6 +247,7 @@ Current mapping:
 | Hole surface | Policy |
 | --- | --- |
 | Block hole, `astichi_hole(body)` as a statement | `MULTI_ADD` |
+| Defaulted block hole, `with astichi_hole(body) as astichi_fallback:` | `MULTI_ADD` |
 | Positional variadic call-argument hole, `*astichi_hole(args)` | `MULTI_ADD` |
 | Named variadic call-argument hole, `**astichi_hole(kwargs)` | `MULTI_ADD` |
 | Function parameter hole, `name__astichi_param_hole__` | `MULTI_ADD` |

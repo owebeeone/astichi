@@ -16,6 +16,7 @@ from astichi.lowering.markers import (
     ELIF,
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
+    defaulted_block_hole_name,
     strip_identifier_suffix,
 )
 from astichi.model.semantics import SemanticSingleton
@@ -287,6 +288,9 @@ ROOT_SCOPE_HOLE_PREFIX = "__astichi_root__"
 
 def extract_hole_name(stmt: ast.stmt) -> str | None:
     """Extract the name from a block-position ``astichi_hole(<name>)`` statement."""
+    defaulted_name = defaulted_block_hole_name(stmt)
+    if defaulted_name is not None:
+        return defaulted_name
     if not isinstance(stmt, ast.Expr):
         return None
     call = stmt.value
@@ -588,6 +592,13 @@ def collect_hole_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
             if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_With(self, node: ast.With) -> None:
+            name = defaulted_block_hole_name(node)
+            if name is not None:
+                names.add(name)
                 return
             self.generic_visit(node)
 

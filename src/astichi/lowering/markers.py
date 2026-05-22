@@ -53,6 +53,7 @@ BOUNDARY_STATE_KEYWORDS: frozenset[str] = frozenset(
         BOUNDARY_EXPLICIT_BIND_KEYWORD,
     }
 )
+FALLBACK_SENTINEL_NAME = "astichi_fallback"
 
 
 def _boundary_keyword_bool(keyword: ast.keyword) -> bool:
@@ -995,6 +996,8 @@ class RecognizedMarker:
             if isinstance(first_arg, ast.Name):
                 return first_arg.id
             return None
+        if isinstance(self.node, ast.With):
+            return defaulted_block_hole_name(self.node)
         if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if self.spec is ELIF and isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 return self.node.name
@@ -1052,6 +1055,17 @@ def marker_metadata_name_nodes(
     """Return marker-owned name nodes that should not count as runtime loads."""
     nodes: list[ast.Name] = []
     for marker in markers:
+        if marker.spec is HOLE and isinstance(marker.node, ast.With):
+            call = defaulted_block_hole_call(marker.node)
+            if call is not None:
+                if isinstance(call.func, ast.Name):
+                    nodes.append(call.func)
+                if call.args and isinstance(call.args[0], ast.Name):
+                    nodes.append(call.args[0])
+            optional_vars = marker.node.items[0].optional_vars
+            if isinstance(optional_vars, ast.Name):
+                nodes.append(optional_vars)
+            continue
         if isinstance(marker.node, ast.Call):
             if isinstance(marker.node.func, ast.Name):
                 nodes.append(marker.node.func)
@@ -1164,6 +1178,20 @@ class _MarkerVisitor(ast.NodeVisitor):
                 )
             )
         self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        if not _contains_astichi_hole_context(node):
+            self.generic_visit(node)
+            return
+        _validate_defaulted_block_hole(node)
+        self.markers.append(
+            RecognizedMarker(
+                spec=HOLE,
+                node=node,
+                context=CALL_CONTEXT,
+                shape=BLOCK,
+            )
+        )
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_elif_payload(node)
@@ -1456,6 +1484,108 @@ def _elif_contribution_prefix_end(body: Sequence[ast.stmt]) -> int:
 
 def _contains_named_expr(node: ast.AST) -> bool:
     return any(isinstance(child, ast.NamedExpr) for child in ast.walk(node))
+
+
+def defaulted_block_hole_call(node: ast.AST) -> ast.Call | None:
+    if not isinstance(node, ast.With):
+        return None
+    if len(node.items) != 1:
+        return None
+    context_expr = node.items[0].context_expr
+    if not isinstance(context_expr, ast.Call):
+        return None
+    if not isinstance(context_expr.func, ast.Name):
+        return None
+    if context_expr.func.id != HOLE.source_name:
+        return None
+    return context_expr
+
+
+def defaulted_block_hole_name(node: ast.AST) -> str | None:
+    call = defaulted_block_hole_call(node)
+    if call is None or len(call.args) != 1:
+        return None
+    first_arg = call.args[0]
+    if not isinstance(first_arg, ast.Name):
+        return None
+    return first_arg.id
+
+
+def is_defaulted_block_hole(node: ast.AST) -> bool:
+    if defaulted_block_hole_name(node) is None:
+        return False
+    assert isinstance(node, ast.With)
+    optional_vars = node.items[0].optional_vars
+    return (
+        isinstance(optional_vars, ast.Name)
+        and isinstance(optional_vars.ctx, ast.Store)
+        and optional_vars.id == FALLBACK_SENTINEL_NAME
+    )
+
+
+def inactive_fallback_body_node_ids(
+    markers: Iterable[RecognizedMarker],
+) -> frozenset[int]:
+    ids: set[int] = set()
+    for marker in markers:
+        if marker.spec is not HOLE or not isinstance(marker.node, ast.With):
+            continue
+        optional_vars = marker.node.items[0].optional_vars
+        if optional_vars is not None:
+            for node in ast.walk(optional_vars):
+                ids.add(id(node))
+        for stmt in marker.node.body:
+            for node in ast.walk(stmt):
+                ids.add(id(node))
+    return frozenset(ids)
+
+
+def _contains_astichi_hole_context(node: ast.With) -> bool:
+    return any(
+        isinstance(item.context_expr, ast.Call)
+        and call_name(item.context_expr) == HOLE.source_name
+        for item in node.items
+    )
+
+
+def _validate_defaulted_block_hole(node: ast.With) -> None:
+    if len(node.items) != 1:
+        raise ValueError(
+            "defaulted astichi_hole with statement must have exactly one "
+            "context manager"
+        )
+    item = node.items[0]
+    call = defaulted_block_hole_call(node)
+    if call is None:
+        raise ValueError(
+            "defaulted block holes must use `with astichi_hole(name) "
+            "as astichi_fallback:`"
+        )
+    if call.keywords:
+        raise ValueError(
+            "defaulted block holes require exactly `astichi_hole(name)` with no keywords"
+        )
+    HOLE.validate_node(call)
+    optional_vars = item.optional_vars
+    if not (
+        isinstance(optional_vars, ast.Name)
+        and isinstance(optional_vars.ctx, ast.Store)
+        and optional_vars.id == FALLBACK_SENTINEL_NAME
+    ):
+        raise ValueError(
+            "defaulted block holes require `as astichi_fallback`"
+        )
+    if not node.body:
+        raise ValueError("defaulted block holes require a non-empty fallback suite")
+    for child in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == PYIMPORT.source_name
+        ):
+            raise ValueError(
+                "astichi_pyimport(...) is not allowed inside defaulted hole fallback suites"
+            )
 
 
 def recognize_markers(tree: ast.AST) -> tuple[RecognizedMarker, ...]:

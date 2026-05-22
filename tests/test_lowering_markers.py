@@ -106,6 +106,79 @@ for x in astichi_for(items):
     assert compiled.markers[-1].context == "call"
 
 
+def test_compile_recognizes_defaulted_block_hole_marker() -> None:
+    compiled = astichi.compile(
+        """
+def validate():
+    with astichi_hole(validate_body) as astichi_fallback:
+        return True
+"""
+    )
+
+    hole_markers = [
+        marker for marker in compiled.markers if marker.source_name == "astichi_hole"
+    ]
+    assert len(hole_markers) == 1
+    assert hole_markers[0].name_id == "validate_body"
+    assert hole_markers[0].shape.name == "block"
+    assert isinstance(hole_markers[0].node, ast.With)
+
+
+def test_defaulted_block_hole_fallback_body_is_branch_inactive_at_compile() -> None:
+    compiled = astichi.compile(
+        """
+def validate():
+    with astichi_hole(validate_body) as astichi_fallback:
+        astichi_hole(nested_body)
+        return missing_name
+"""
+    )
+
+    assert [port.name for port in compiled.demand_ports] == ["validate_body"]
+    assert compiled.classification is not None
+    assert compiled.classification.unresolved_free == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("source", "pattern"),
+    [
+        (
+            """
+with astichi_hole(body):
+    pass
+""",
+            "as astichi_fallback",
+        ),
+        (
+            """
+with astichi_hole(body) as fallback:
+    pass
+""",
+            "as astichi_fallback",
+        ),
+        (
+            """
+with astichi_hole(body) as astichi_fallback, other_context():
+    pass
+""",
+            "exactly one context manager",
+        ),
+        (
+            """
+with astichi_hole(body) as astichi_fallback:
+    astichi_pyimport(module=os)
+""",
+            r"astichi_pyimport\(\.\.\.\) is not allowed",
+        ),
+    ],
+)
+def test_defaulted_block_hole_invalid_surfaces_reject(
+    source: str, pattern: str
+) -> None:
+    with pytest.raises(ValueError, match=pattern):
+        astichi.compile(source)
+
+
 @pytest.mark.parametrize(
     "source",
     [

@@ -15,6 +15,7 @@ from astichi.asttools import (
     is_expression_insert_call,
 )
 from astichi.lowering import RecognizedMarker, marker_metadata_name_node_ids
+from astichi.lowering.markers import inactive_fallback_body_node_ids
 from astichi.model.basic import BasicComposable
 from astichi.model.semantics import SemanticSingleton
 
@@ -195,8 +196,9 @@ def analyze_names(
     mode = normalize_hygiene_mode(mode)
 
     ignored_name_nodes = _ignored_name_nodes(composable.markers)
+    inactive_node_ids = inactive_fallback_body_node_ids(composable.markers)
     local_bindings = _collect_local_bindings(
-        composable.tree
+        composable.tree, inactive_node_ids=inactive_node_ids
     ) | _collect_pyimport_local_bindings(composable.markers)
     kept = frozenset(
         marker.name_id
@@ -233,6 +235,8 @@ def analyze_names(
 
     unresolved: set[str] = set()
     for node in ast.walk(composable.tree):
+        if id(node) in inactive_node_ids:
+            continue
         if not isinstance(node, ast.Name):
             continue
         if id(node) in ignored_name_nodes:
@@ -684,8 +688,10 @@ def _marker_fresh_scope_nodes(tree: ast.Module) -> tuple[ast.AST, ...]:
     return tuple(collector.nodes)
 
 
-def _collect_local_bindings(tree: ast.Module) -> set[str]:
-    collector = _BindingCollector()
+def _collect_local_bindings(
+    tree: ast.Module, *, inactive_node_ids: frozenset[int] = frozenset()
+) -> set[str]:
+    collector = _BindingCollector(inactive_node_ids=inactive_node_ids)
     collector.visit(tree)
     return collector.bindings
 
@@ -700,8 +706,14 @@ def _collect_pyimport_local_bindings(markers: tuple[object, ...]) -> set[str]:
 
 
 class _BindingCollector(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, *, inactive_node_ids: frozenset[int] = frozenset()) -> None:
         self.bindings: set[str] = set()
+        self._inactive_node_ids = inactive_node_ids
+
+    def visit(self, node: ast.AST) -> object:
+        if id(node) in self._inactive_node_ids:
+            return None
+        return super().visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, (ast.Store, ast.Del)):

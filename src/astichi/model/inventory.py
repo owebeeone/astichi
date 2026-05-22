@@ -168,7 +168,15 @@ class PortInventoryPayload(InventoryPayload):
 
 
 @dataclass(frozen=True)
-class ClauseHoleInventoryPayload(PortInventoryPayload):
+class HoleInventoryPayload(PortInventoryPayload):
+    """Payload for a hole record, including defaulted-hole metadata."""
+
+    port: DemandPort
+    has_default: bool = False
+
+
+@dataclass(frozen=True)
+class ClauseHoleInventoryPayload(HoleInventoryPayload):
     """Payload for a clause-shaped target with empty-policy metadata."""
 
     when_empty: ClauseEmptyPolicy = REJECT_EMPTY
@@ -415,18 +423,13 @@ def build_inventory(
         if demand_port is not None:
             kind = _kind_for_demand_port(demand_port)
             if kind is not None:
-                payload: InventoryPayload
-                if kind == "hole.elif":
-                    payload = ClauseHoleInventoryPayload(demand_port)
-                else:
-                    payload = PortInventoryPayload(demand_port)
                 _add_marker_record(
                     inventory,
                     index=index,
                     marker=marker,
                     name_id=name_id,
                     kind=kind,
-                    payload=payload,
+                    payload=_payload_for_demand_marker(marker, demand_port),
                 )
         supply_port = supply_by_name.get(name_id)
         if supply_port is not None:
@@ -519,6 +522,23 @@ def _add_marker_record(
         payload=payload,
         source_location=_source_location_for(marker.node),
     )
+
+
+def _payload_for_demand_marker(
+    marker: RecognizedMarker, demand_port: DemandPort
+) -> InventoryPayload:
+    if demand_port.is_additive_hole_demand() or demand_port.is_parameter_hole_demand():
+        if demand_port.shape.is_elif_clause():
+            return ClauseHoleInventoryPayload(port=demand_port)
+        return HoleInventoryPayload(
+            port=demand_port,
+            has_default=(
+                demand_port.is_additive_hole_demand()
+                and demand_port.shape.is_block()
+                and isinstance(marker.node, ast.With)
+            ),
+        )
+    return PortInventoryPayload(demand_port)
 
 
 def _resource_name_for_marker(

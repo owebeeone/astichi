@@ -342,6 +342,7 @@ class ComposableHole:
     address: TargetAddress
     port: PortDescriptor
     add_policy: AddPolicy
+    has_default: bool = False
     when_empty: ClauseEmptyPolicy | None = None
 
     def with_root_instance(self, root_instance: str) -> "ComposableHole":
@@ -351,6 +352,7 @@ class ComposableHole:
             address=self.address.with_root_instance(root_instance),
             port=self.port,
             add_policy=self.add_policy,
+            has_default=self.has_default,
             when_empty=self.when_empty,
         )
 

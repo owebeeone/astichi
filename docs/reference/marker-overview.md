@@ -18,6 +18,7 @@ not from encoding a “kind” in the hole name.
 ```text
 astichi_hole(name)
 astichi_elif(name)
+with astichi_hole(name) as astichi_fallback: ...
 astichi_bind_external(name)
 astichi_keep(name)
 astichi_import(name)
@@ -118,6 +119,19 @@ Comment note:
   only those exact substrings are replaced. Other braces pass through
   unchanged.
 
+Defaulted block-hole note:
+
+- `with astichi_hole(name) as astichi_fallback:` is a block-hole marker with an
+  authored fallback suite.
+- The fallback suite is selected only if that block hole has no local builder
+  insert shells by materialize time; otherwise the inserts replace the whole
+  `with` statement and the fallback is discarded.
+- Fallback contents are inactive before branch selection. If the fallback is
+  selected, any nested markers in it become ordinary selected-state markers and
+  unresolved demands still reject.
+- `astichi_fallback` is a sentinel marker name required to disambiguate this
+  form from ordinary `with` statements.
+
 Cross-scope note:
 
 - `astichi_import(name)` is the declaration-form identifier-threading surface
@@ -160,7 +174,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 
 | Topic | Page |
 |-------|------|
-| Holes, `*`, `**`, block position | [marker-holes.md](marker-holes.md) |
+| Holes, `*`, `**`, block position, defaulted block holes | [marker-holes.md](marker-holes.md) |
 | Elif clause targets | [marker-clause-targets.md](marker-clause-targets.md) |
 | Binds and exports | [marker-binds-and-exports.md](marker-binds-and-exports.md) |
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |

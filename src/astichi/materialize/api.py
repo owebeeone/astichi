@@ -67,6 +67,7 @@ from astichi.lowering.markers import (
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
     call_name,
+    defaulted_block_hole_name,
     is_call_to_marker,
     KEEP_IDENTIFIER,
     scan_statement_prefix,
@@ -2696,25 +2697,38 @@ class _HoleReplacementTransformer(
     def visit_Expr(self, node: ast.Expr) -> ast.AST | list[ast.stmt]:
         hole_name = _extract_hole_name(node)
         if hole_name is not None and hole_name in self.block_replacements:
-            contributions = self.block_replacements[hole_name]
-            result: list[ast.stmt] = [node]
-            for contrib in contributions:
-                contribution_id = id(contrib)
-                copy_body = contribution_id in self._moved_block_contribution_ids
-                self._moved_block_contribution_ids.add(contribution_id)
-                shell = _make_block_insert_shell(
-                    target_name=hole_name,
-                    order=contrib.order,
-                    shell_name=contrib.shell_name,
-                    body=contrib.body,
-                    ref_path=contrib.ref_path,
-                    keep_names=contrib.keep_names,
-                    location_donor=node,
-                    copy_body=copy_body,
-                )
-                result.append(shell)
-            return result
+            return self._with_block_insert_shells(node, hole_name)
         return self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> ast.AST | list[ast.stmt]:
+        hole_name = defaulted_block_hole_name(node)
+        if hole_name is not None:
+            if hole_name in self.block_replacements:
+                return self._with_block_insert_shells(node, hole_name)
+            return node
+        return self.generic_visit(node)
+
+    def _with_block_insert_shells(
+        self, node: ast.stmt, hole_name: str
+    ) -> list[ast.stmt]:
+        contributions = self.block_replacements[hole_name]
+        result: list[ast.stmt] = [node]
+        for contrib in contributions:
+            contribution_id = id(contrib)
+            copy_body = contribution_id in self._moved_block_contribution_ids
+            self._moved_block_contribution_ids.add(contribution_id)
+            shell = _make_block_insert_shell(
+                target_name=hole_name,
+                order=contrib.order,
+                shell_name=contrib.shell_name,
+                body=contrib.body,
+                ref_path=contrib.ref_path,
+                keep_names=contrib.keep_names,
+                location_donor=node,
+                copy_body=copy_body,
+            )
+            result.append(shell)
+        return result
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST | list[ast.stmt]:
         if is_astichi_insert_shell(node):
@@ -3197,6 +3211,86 @@ _EXECUTABLE_COMMENT_POLICY = _ExecutableCommentPolicy()
 _COMMENTED_SOURCE_POLICY = _CommentedSourcePolicy()
 
 
+def _normalize_defaulted_block_holes(tree: ast.AST) -> None:
+    """Select defaulted block-hole branches before the materialize gate."""
+    _DefaultedBlockHoleNormalizer().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+class _DefaultedBlockHoleNormalizer(ast.NodeTransformer):
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        for field, old_value in ast.iter_fields(node):
+            if isinstance(old_value, list):
+                if all(isinstance(item, ast.stmt) for item in old_value):
+                    stmt_body = [
+                        item for item in old_value if isinstance(item, ast.stmt)
+                    ]
+                    old_value[:] = self._visit_statement_list(stmt_body)
+                    continue
+                new_values: list[object] = []
+                for value in old_value:
+                    if isinstance(value, ast.AST):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        if isinstance(value, list):
+                            new_values.extend(value)
+                            continue
+                    new_values.append(value)
+                old_value[:] = new_values
+                continue
+            if isinstance(old_value, ast.AST):
+                setattr(node, field, self.visit(old_value))
+        return node
+
+    def _visit_statement_list(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        shell_targets = {
+            info.target_name
+            for stmt in body
+            if (info := extract_block_insert_shell(stmt, phase="materialize"))
+            is not None
+        }
+        result: list[ast.stmt] = []
+        for stmt in body:
+            hole_name = defaulted_block_hole_name(stmt)
+            if hole_name is None:
+                visited = self.visit(stmt)
+                if isinstance(visited, list):
+                    result.extend(visited)
+                elif visited is not None:
+                    result.append(visited)
+                continue
+            if hole_name in shell_targets:
+                result.append(_make_block_hole_anchor(hole_name, stmt))
+                continue
+            fallback = [_mark_defaulted_fallback_source(clone_ast(s), hole_name) for s in stmt.body]  # type: ignore[attr-defined]
+            for fallback_stmt in fallback:
+                visited = self.visit(fallback_stmt)
+                if isinstance(visited, list):
+                    result.extend(visited)
+                elif visited is not None:
+                    result.append(visited)
+        return result
+
+
+def _make_block_hole_anchor(name: str, location_donor: ast.AST) -> ast.Expr:
+    anchor = ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id="astichi_hole", ctx=ast.Load()),
+            args=[ast.Name(id=name, ctx=ast.Load())],
+            keywords=[],
+        )
+    )
+    propagate_ast_source_locations(anchor, location_donor)
+    return anchor
+
+
+def _mark_defaulted_fallback_source(stmt: ast.stmt, hole_name: str) -> ast.stmt:
+    for node in ast.walk(stmt):
+        setattr(node, "_astichi_defaulted_hole_parent", hole_name)
+    return stmt
+
+
 def materialize_composable(
     composable: BasicComposable,
     *,
@@ -3220,8 +3314,25 @@ def materialize_composable(
     7. re-recognize markers and re-extract ports.
     """
     arg_bindings = dict(composable.arg_bindings)
+    tree = clone_ast(composable.tree)
+    _normalize_defaulted_block_holes(tree)
+    gate_markers = recognize_markers(tree)
+    gate_provisional = BasicComposable(
+        tree=tree,
+        origin=composable.origin,
+        markers=gate_markers,
+        bound_externals=composable.bound_externals,
+        arg_bindings=composable.arg_bindings,
+        keep_names=composable.keep_names,
+    )
+    gate_classification = analyze_names(
+        gate_provisional,
+        mode="permissive",
+        preserved_names=composable.keep_names,
+    )
+    gate_demand_ports = extract_demand_ports(gate_markers, gate_classification)
     gate_facts = _collect_materialize_gate_facts(
-        composable.tree,
+        tree,
         resolved_arg_names=frozenset(arg_bindings),
     )
     satisfied_holes = gate_facts.satisfied_holes
@@ -3229,7 +3340,7 @@ def materialize_composable(
     required_holes = gate_facts.required_holes
     mandatory_holes = [
         port
-        for port in composable.demand_ports
+        for port in gate_demand_ports
         if (
             (
                 port.is_additive_hole_demand()
@@ -3252,7 +3363,7 @@ def materialize_composable(
             )
         )
     mandatory_binds = [
-        port for port in composable.demand_ports if port.is_external_bind_demand()
+        port for port in gate_demand_ports if port.is_external_bind_demand()
     ]
     if mandatory_binds:
         if len(mandatory_binds) == 1:
@@ -3339,7 +3450,6 @@ def materialize_composable(
             )
         )
 
-    tree = clone_ast(composable.tree)
     # Issue 005 §5 step 2 / 5c: resolve identifier-arg slots before
     # hygiene. Every `__astichi_arg__` occurrence whose stripped name is
     # in the bindings map is substituted atomically with the target

@@ -28,6 +28,7 @@ from astichi.model.inventory import (
     Inventory,
     InventoryRecord,
     PortInventoryPayload,
+    HoleInventoryPayload,
 )
 from astichi.model.ports import DemandPort, SupplyPort
 
@@ -132,6 +133,10 @@ def _describe_holes(inventory: Inventory) -> tuple[ComposableHole, ...]:
                 ),
                 port=port_descriptor,
                 add_policy=add_policy_for_demand(port),
+                has_default=(
+                    isinstance(payload, HoleInventoryPayload)
+                    and payload.has_default
+                ),
                 when_empty=(
                     record.payload.when_empty
                     if isinstance(record.payload, ClauseHoleInventoryPayload)

@@ -15,7 +15,7 @@ Fast orientation:
 | [builder-api.md](builder-api.md) | `build()`, fluent, handle, and data-driven named APIs |
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |
-| [marker-holes.md](marker-holes.md) | `astichi_hole`, `*`, `**`, block sites |
+| [marker-holes.md](marker-holes.md) | `astichi_hole`, `*`, `**`, block sites, defaulted block holes |
 | [marker-clause-targets.md](marker-clause-targets.md) | `astichi_elif` additive clause targets |
 | [marker-binds-and-exports.md](marker-binds-and-exports.md) | `bind_*`, `export` |
 | [marker-for-and-insert.md](marker-for-and-insert.md) | `astichi_for`, `astichi_funcargs`, internal insert metadata |

@@ -113,6 +113,17 @@ value = astichi_hole(slot)
         )
 
 
+def test_duplicate_statement_block_holes_remain_valid() -> None:
+    compiled = astichi.compile(
+        """
+astichi_hole(body)
+astichi_hole(body)
+"""
+    )
+
+    assert [port.name for port in compiled.demand_ports] == ["body"]
+
+
 def test_compile_rejects_incompatible_demand_port_declarations_across_shapes() -> None:
     # Issue 005 retires the IDENTIFIER supply branch (previously backed by
     # `__astichi__` / `astichi_definitional_name`). The cross-shape

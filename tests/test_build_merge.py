@@ -33,6 +33,108 @@ def test_build_simple_block_hole_replacement() -> None:
     assert "astichi_insert" not in materialized_src
 
 
+def test_build_filled_defaulted_block_hole_discards_fallback() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def f():
+    with astichi_hole(body) as astichi_fallback:
+        return 1
+"""
+        )
+    )
+    builder.add.Payload(astichi.compile("return 2\n"))
+    builder.Root.body.add.Payload(order=10)
+
+    built = builder.build()
+
+    pre_materialized = ast.unparse(built.tree)
+    assert "with astichi_hole(body) as astichi_fallback" in pre_materialized
+    assert "@astichi_insert(body" in pre_materialized
+    assert ast.unparse(built.materialize().tree) == "def f():\n    return 2"
+
+
+def test_build_defaulted_block_hole_orders_multiple_payloads() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+with astichi_hole(body) as astichi_fallback:
+    value = 0
+"""
+        )
+    )
+    builder.add.First(astichi.compile("first = 1\n"))
+    builder.add.Second(astichi.compile("second = 2\n"))
+    builder.Root.body.add.Second(order=20)
+    builder.Root.body.add.First(order=10)
+
+    source = ast.unparse(builder.build().materialize().tree)
+
+    assert "value = 0" not in source
+    assert source.index("first = 1") < source.index("second = 2")
+
+
+def test_build_filled_defaulted_block_hole_discards_unresolved_fallback() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+with astichi_hole(body) as astichi_fallback:
+    astichi_hole(nested)
+"""
+        )
+    )
+    builder.add.Payload(astichi.compile("value = 1\n"))
+    builder.Root.body.add.Payload()
+
+    source = ast.unparse(builder.build().materialize().tree)
+
+    assert source == "value = 1"
+
+
+def test_unrolled_defaulted_block_hole_fills_one_iteration_and_defaults_another() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+for x in astichi_for((10, 20)):
+    with astichi_hole(slot) as astichi_fallback:
+        default_value = x
+"""
+        )
+    )
+    builder.add.Payload(astichi.compile("filled_value = 99\n"))
+    builder.Root.slot[0].add.Payload()
+
+    source = ast.unparse(builder.build().materialize().tree)
+
+    assert source == "filled_value = 99\ndefault_value = 20"
+
+
+def test_unrolled_defaulted_block_hole_provenance_round_trip() -> None:
+    from astichi.emit import verify_round_trip
+
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+for x in astichi_for((10, 20)):
+    with astichi_hole(slot) as astichi_fallback:
+        default_value = x
+"""
+        )
+    )
+    builder.add.Payload(astichi.compile("filled_value = 99\n"))
+    builder.Root.slot[0].add.Payload()
+
+    built = builder.build()
+
+    verify_round_trip(built.emit())
+    verify_round_trip(built.materialize().emit())
+
+
 def test_build_preserves_surrounding_code() -> None:
     builder = astichi.build()
     builder.add.A(astichi.compile("x = 1\nastichi_hole(body)\ny = 2\n"))
