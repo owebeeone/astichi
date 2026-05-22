@@ -99,6 +99,69 @@ def test_empty_inventory_prints_only_records_section() -> None:
     )
 
 
+def test_compile_inventory_snapshots_elif_clause_resources() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+"""
+    )
+    contribution = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "create"
+"""
+    )
+
+    assert str(root.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=dispatch name=branches kind=hole.elif locator=body[0]/body[0]/orelse[0]/test\n"
+        "  #2 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #2\n"
+        "  branches: #1\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #2\n"
+        "  branches: #1\n"
+        "\n"
+        "hole_map:\n"
+        "  branches: #1\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #2"
+    )
+    assert str(contribution.inventory) == (
+        "records:\n"
+        "  #1 build_path=. code_owner=. name=astichi_elif kind=production.elif locator=body[0]\n"
+        "  #2 build_path=. code_owner=astichi_elif name=kind kind=identifier.demand locator=body[0]/body[0]/value\n"
+        "  #3 build_path=. code_owner=. name=__block__ kind=production.block locator=.\n"
+        "\n"
+        "resource_map:\n"
+        "  __block__: #3\n"
+        "  astichi_elif: #1\n"
+        "  kind: #2\n"
+        "\n"
+        "port_map:\n"
+        "  __block__: #3\n"
+        "  astichi_elif: #1\n"
+        "  kind: #2\n"
+        "\n"
+        "identifier_map:\n"
+        "  kind: #2\n"
+        "\n"
+        "production_map:\n"
+        "  __block__: #3\n"
+        "  astichi_elif: #1"
+    )
+
+
 def test_describe_aggregate_ports_are_inventory_backed() -> None:
     composable = astichi.compile(
         """

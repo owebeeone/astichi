@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from astichi.asttools import (
     BLOCK,
+    ELIF_CLAUSE,
     IDENTIFIER,
     NAMED_VARIADIC,
     PARAMETER,
@@ -131,11 +132,17 @@ class _SignatureParameterPlacement(PortPlacement):
         return True
 
 
+@dataclass(frozen=True, eq=False)
+class _ClausePlacement(PortPlacement):
+    name: str = "clause"
+
+
 BLOCK_PLACEMENT = _BlockPlacement()
 EXPRESSION_PLACEMENT = _ExpressionPlacement()
 CALL_ARGUMENT_PLACEMENT = _CallArgumentPlacement()
 IDENTIFIER_PLACEMENT = _IdentifierPlacement()
 SIGNATURE_PARAMETER_PLACEMENT = _SignatureParameterPlacement()
+CLAUSE_PLACEMENT = _ClausePlacement()
 
 
 def placement_for_shape(shape: MarkerShape) -> PortPlacement:
@@ -146,6 +153,8 @@ def placement_for_shape(shape: MarkerShape) -> PortPlacement:
         return IDENTIFIER_PLACEMENT
     if shape is PARAMETER:
         return SIGNATURE_PARAMETER_PLACEMENT
+    if shape is ELIF_CLAUSE:
+        return CLAUSE_PLACEMENT
     if shape is POSITIONAL_VARIADIC or shape is NAMED_VARIADIC:
         return CALL_ARGUMENT_PLACEMENT
     return EXPRESSION_PLACEMENT
@@ -167,6 +176,8 @@ def normalize_port_placement(
         return IDENTIFIER_PLACEMENT
     if placement == SIGNATURE_PARAMETER_PLACEMENT.name:
         return SIGNATURE_PARAMETER_PLACEMENT
+    if placement == CLAUSE_PLACEMENT.name:
+        return CLAUSE_PLACEMENT
     raise ValueError(f"unknown port placement: {placement!r}")
 
 
@@ -292,6 +303,11 @@ class _ParameterPayloadOrigin(PortOrigin):
 
 
 @dataclass(frozen=True, eq=False)
+class _ElifPayloadOrigin(PortOrigin):
+    name: str = "elif"
+
+
+@dataclass(frozen=True, eq=False)
 class _InsertOrigin(PortOrigin):
     name: str = "insert"
 
@@ -309,6 +325,7 @@ PASS_ORIGIN = _PassOrigin()
 EXPORT_ORIGIN = _ExportOrigin()
 PARAMETER_HOLE_ORIGIN = _ParameterHoleOrigin()
 PARAMETER_PAYLOAD_ORIGIN = _ParameterPayloadOrigin()
+ELIF_PAYLOAD_ORIGIN = _ElifPayloadOrigin()
 INSERT_ORIGIN = _InsertOrigin()
 IMPLIED_DEMAND_ORIGIN = _ImpliedDemandOrigin()
 

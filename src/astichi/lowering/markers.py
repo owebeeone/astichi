@@ -23,6 +23,7 @@ from astichi.model.semantics import (
     ARG_IDENTIFIER_ORIGIN,
     BIND_EXTERNAL_ORIGIN,
     CONST_MUTABILITY,
+    ELIF_PAYLOAD_ORIGIN,
     EXPORT_ORIGIN,
     HOLE_ORIGIN,
     IMPORT_ORIGIN,
@@ -499,6 +500,24 @@ class _ElifMarker(_SimpleMarker):
 
     def is_payload_carrier(self) -> bool:
         return True
+
+    def demand_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        if not marker.context.is_call_context():
+            return None
+        return PortTemplate(
+            shape=ELIF_CLAUSE,
+            mutability=CONST_MUTABILITY,
+            origin=HOLE_ORIGIN,
+        )
+
+    def supply_template(self, marker: "RecognizedMarker") -> PortTemplate | None:
+        if not marker.context.is_definitional_context():
+            return None
+        return PortTemplate(
+            shape=ELIF_CLAUSE,
+            mutability=CONST_MUTABILITY,
+            origin=ELIF_PAYLOAD_ORIGIN,
+        )
 
     def validate_node(self, node: ast.AST) -> None:
         if isinstance(node, ast.Call):

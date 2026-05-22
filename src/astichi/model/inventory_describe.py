@@ -16,11 +16,13 @@ from astichi.model.descriptors import (
     TargetAddress,
     add_policy_for_demand,
     block_production,
+    elif_production,
     expression_ast_production,
     funcargs_production,
 )
 from astichi.model.inventory import (
     BlockProductionInventoryPayload,
+    ClauseHoleInventoryPayload,
     ExpressionProductionInventoryPayload,
     FuncargsProductionInventoryPayload,
     Inventory,
@@ -130,6 +132,11 @@ def _describe_holes(inventory: Inventory) -> tuple[ComposableHole, ...]:
                 ),
                 port=port_descriptor,
                 add_policy=add_policy_for_demand(port),
+                when_empty=(
+                    record.payload.when_empty
+                    if isinstance(record.payload, ClauseHoleInventoryPayload)
+                    else None
+                ),
             )
         )
     return tuple(holes)
@@ -222,9 +229,12 @@ def _describe_productions(inventory: Inventory) -> tuple[ProductionDescriptor, .
     )
     records = _production_records_by_order(inventory.records_for_ids(record_ids))
     for record in records:
-        if record.kind == "production.supply":
+        if record.kind in {"production.supply", "production.elif"}:
             payload = _port_payload(record)
             if payload is None or not isinstance(payload.port, SupplyPort):
+                continue
+            if record.kind == "production.elif":
+                productions.append(elif_production(record.name.logical_name()))
                 continue
             productions.append(
                 ProductionDescriptor(

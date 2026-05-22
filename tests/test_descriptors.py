@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import astichi
-from astichi.model import MULTI_ADD, SINGLE_ADD
+from astichi.model import MULTI_ADD, REJECT_EMPTY, SINGLE_ADD
 from astichi.builder import TargetRef
 
 
@@ -30,6 +30,57 @@ def run(params__astichi_param_hole__):
     assert holes["args"].add_policy is MULTI_ADD
     assert holes["kwargs"].add_policy is MULTI_ADD
     assert holes["params"].add_policy is MULTI_ADD
+
+
+def test_describe_exposes_elif_clause_target_metadata() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "fallback"
+"""
+    )
+
+    hole = root.describe().single_hole_named("branches")
+
+    assert hole.address.ref_path == ()
+    assert hole.address.target_name == "branches"
+    assert hole.port.shape.is_elif_clause()
+    assert hole.add_policy is MULTI_ADD
+    assert hole.when_empty is REJECT_EMPTY
+
+
+def test_describe_exposes_elif_production_compatibility() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+"""
+    )
+    contribution = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "create"
+"""
+    )
+
+    hole = root.describe().single_hole_named("branches")
+    productions = contribution.describe().productions
+    elif_productions = tuple(
+        production for production in productions if production.port.shape.is_elif_clause()
+    )
+
+    assert [production.name for production in elif_productions] == ["astichi_elif"]
+    assert contribution.describe().productions_compatible_with(hole) == elif_productions
 
 
 def test_describe_exposes_external_and_identifier_surfaces() -> None:

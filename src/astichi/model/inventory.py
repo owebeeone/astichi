@@ -18,6 +18,7 @@ from astichi.lowering.call_argument_payloads import FuncArgPayload
 from astichi.lowering.markers import ALL_MARKERS, strip_identifier_suffix
 from astichi.lowering.parameters import has_params_payload
 from astichi.model.ports import DemandPort, SupplyPort
+from astichi.model.descriptors import ClauseEmptyPolicy, REJECT_EMPTY
 from astichi.path_resolution import effective_root_body
 
 InventoryRecordId = str
@@ -164,6 +165,13 @@ class PortInventoryPayload(InventoryPayload):
     """Payload for a record backed by an Astichi port."""
 
     port: DemandPort | SupplyPort
+
+
+@dataclass(frozen=True)
+class ClauseHoleInventoryPayload(PortInventoryPayload):
+    """Payload for a clause-shaped target with empty-policy metadata."""
+
+    when_empty: ClauseEmptyPolicy = REJECT_EMPTY
 
 
 @dataclass(frozen=True)
@@ -407,13 +415,18 @@ def build_inventory(
         if demand_port is not None:
             kind = _kind_for_demand_port(demand_port)
             if kind is not None:
+                payload: InventoryPayload
+                if kind == "hole.elif":
+                    payload = ClauseHoleInventoryPayload(demand_port)
+                else:
+                    payload = PortInventoryPayload(demand_port)
                 _add_marker_record(
                     inventory,
                     index=index,
                     marker=marker,
                     name_id=name_id,
                     kind=kind,
-                    payload=PortInventoryPayload(demand_port),
+                    payload=payload,
                 )
         supply_port = supply_by_name.get(name_id)
         if supply_port is not None:
@@ -522,6 +535,8 @@ def _kind_for_demand_port(port: DemandPort) -> ResourceKind | None:
     if port.is_parameter_hole_demand():
         return "hole.params"
     if port.is_additive_hole_demand():
+        if port.shape.is_elif_clause():
+            return "hole.elif"
         if port.shape.is_block():
             return "hole.block"
         if port.shape.is_scalar_expr():
@@ -537,6 +552,8 @@ def _kind_for_demand_port(port: DemandPort) -> ResourceKind | None:
 def _kind_for_supply_port(port: SupplyPort) -> ResourceKind | None:
     if port.origins.is_identifier_supply():
         return "identifier.supply"
+    if port.shape.is_elif_clause():
+        return "production.elif"
     if port.is_signature_parameter_supply() or port.is_expression_family_supply():
         return "production.supply"
     return None

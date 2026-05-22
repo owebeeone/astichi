@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import ast
 
-from astichi.asttools import BLOCK, SCALAR_EXPR, MarkerShape
+from astichi.asttools import BLOCK, ELIF_CLAUSE, SCALAR_EXPR, MarkerShape
 from astichi.lowering.call_argument_payloads import (
     DOUBLE_STAR_FUNC_ARG_REGION,
     STARRED_FUNC_ARG_REGION,
@@ -16,6 +16,7 @@ from astichi.lowering.call_argument_payloads import (
 from astichi.model.ports import DemandPort, SupplyPort
 from astichi.model.semantics import (
     BLOCK_PLACEMENT,
+    CLAUSE_PLACEMENT,
     Compatibility,
     CONST_MUTABILITY,
     EXPRESSION_PLACEMENT,
@@ -66,11 +67,28 @@ def add_policy_for_demand(port: DemandPort) -> AddPolicy:
     """Return the current additive cardinality policy for a demand port."""
     if port.shape.is_block():
         return MULTI_ADD
+    if port.shape.is_elif_clause():
+        return MULTI_ADD
     if port.shape.is_positional_variadic() or port.shape.is_named_variadic():
         return MULTI_ADD
     if port.is_parameter_hole_demand():
         return MULTI_ADD
     return SINGLE_ADD
+
+
+class ClauseEmptyPolicy(SemanticSingleton):
+    """Materialization policy for an empty clause-shaped target."""
+
+    def requires_contribution(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, eq=False)
+class _RejectEmptyClausePolicy(ClauseEmptyPolicy):
+    name: str = "reject_empty"
+
+
+REJECT_EMPTY = _RejectEmptyClausePolicy()
 
 
 @dataclass(frozen=True)
@@ -271,6 +289,20 @@ def funcargs_production(
     )
 
 
+def elif_production(name: str = "astichi_elif") -> ProductionDescriptor:
+    """Return a production descriptor for an ``astichi_elif`` contribution."""
+    return ProductionDescriptor(
+        name=name,
+        port=PortDescriptor(
+            name=name,
+            shape=ELIF_CLAUSE,
+            placement=CLAUSE_PLACEMENT,
+            mutability=CONST_MUTABILITY,
+            origins=PortOrigins(frozenset()),
+        ),
+    )
+
+
 def _funcargs_payload_compatibility(
     payload: FuncArgPayload,
     hole: HoleDescriptor,
@@ -310,6 +342,7 @@ class ComposableHole:
     address: TargetAddress
     port: PortDescriptor
     add_policy: AddPolicy
+    when_empty: ClauseEmptyPolicy | None = None
 
     def with_root_instance(self, root_instance: str) -> "ComposableHole":
         return ComposableHole(
@@ -318,6 +351,7 @@ class ComposableHole:
             address=self.address.with_root_instance(root_instance),
             port=self.port,
             add_policy=self.add_policy,
+            when_empty=self.when_empty,
         )
 
     def is_multi_addable(self) -> bool:
