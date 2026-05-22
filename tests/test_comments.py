@@ -75,3 +75,44 @@ def test_emit_commented_comments_before_docstring_are_plain_comments() -> None:
     compile(source, "<commented>", "exec")
     assert source.startswith("# generated\n'Module docs.'\n")
     assert ast.get_docstring(ast.parse(source)) == "Module docs."
+
+
+def test_emit_commented_renders_selected_defaulted_fallback_comments() -> None:
+    composable = astichi.compile(
+        """
+def f():
+    with astichi_hole(body) as astichi_fallback:
+        astichi_comment("fallback selected")
+        return 1
+"""
+    )
+
+    source = composable.emit_commented()
+
+    assert "with astichi_hole" not in source
+    assert "astichi_comment" not in source
+    assert "# fallback selected" in source
+    assert "return 1" in source
+
+
+def test_emit_commented_discards_filled_defaulted_fallback_comments() -> None:
+    builder = astichi.build()
+    builder.add.Root(
+        astichi.compile(
+            """
+def f():
+    with astichi_hole(body) as astichi_fallback:
+        astichi_comment("fallback only")
+        return 1
+"""
+        )
+    )
+    builder.add.Payload(astichi.compile("return 2\n"))
+    builder.Root.body.add.Payload()
+
+    source = builder.build().emit_commented()
+
+    assert "fallback only" not in source
+    assert "astichi_comment" not in source
+    assert "return 2" in source
+    assert "return 1" not in source

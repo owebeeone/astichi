@@ -44,6 +44,22 @@ def test_emit_after_materialize() -> None:
     compile(source, "<test>", "exec")
 
 
+def test_emit_preserves_defaulted_block_hole_before_materialize() -> None:
+    compiled = astichi.compile(
+        """
+def f():
+    with astichi_hole(body) as astichi_fallback:
+        return 1
+"""
+    )
+
+    source = compiled.emit(provenance=False)
+
+    assert "with astichi_hole(body) as astichi_fallback:" in source
+    assert "return 1" in source
+    compile(source, "<test>", "exec")
+
+
 def test_emit_empty_module() -> None:
     compiled = astichi.compile("")
     result = compiled.emit(provenance=False)

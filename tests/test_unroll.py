@@ -60,6 +60,22 @@ def test_unroll_hole_gets_iter_suffix() -> None:
     assert result == ["astichi_hole(slot__iter_0)", "astichi_hole(slot__iter_1)"]
 
 
+def test_unroll_defaulted_block_hole_gets_iter_suffix() -> None:
+    result = _lines(
+        """
+        for x in astichi_for((10, 20)):
+            with astichi_hole(slot) as astichi_fallback:
+                value = x
+        """
+    )
+    assert result == [
+        "with astichi_hole(slot__iter_0) as astichi_fallback:",
+        "value = 10",
+        "with astichi_hole(slot__iter_1) as astichi_fallback:",
+        "value = 20",
+    ]
+
+
 def test_unroll_empty_domain_removes_loop() -> None:
     assert _unroll("for x in astichi_for(()):\n    f(x)") == ""
 
