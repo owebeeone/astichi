@@ -123,10 +123,9 @@ work.
     `wire_identifier(...)` on builder slot handles remains deferred;
     `ast.Attribute` identifier-slot positions are deferred until a concrete
     consumer appears. Issue 005 scope complete.
-- Test status as of 2026-05-10:
-  - full suite: `644 passed`
-  - Python-version matrix: last recorded green for 3.12, 3.13, 3.14, and 3.15;
-    not rerun for the comment-marker change
+- Test status as of 2026-05-22:
+  - full suite: `720 passed`
+  - Python-version matrix: green for 3.12, 3.13, 3.14, and 3.15
   - strict scope isolation is a contract, not a gap (§5.4, §9.3)
 - Current next concrete action:
   - Treat Phase 2 unroll, the 005 identifier cluster, 006 cross-scope
