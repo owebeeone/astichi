@@ -217,6 +217,22 @@ closed = graph.materialize()
 If a required hole is missing or a name rule is violated, **`materialize`**
 raises with a diagnostic.
 
+For a statement block that has a real default, use a defaulted block hole:
+
+```python
+root = astichi.compile(
+    """
+def run():
+    with astichi_hole(body) as astichi_fallback:
+        return None
+"""
+)
+```
+
+If `body` is not wired, `materialize()` emits the fallback `return None`. If
+the builder inserts into `body`, the insert payload replaces the whole `with`
+statement and the fallback is discarded.
+
 Managed `astichi_pyimport(...)` declarations are also realized here. The marker
 is removed, the imported local participates in hygiene, and the final module
 receives an ordinary Python import statement.

@@ -80,6 +80,19 @@ work.
     only; other braces pass through. Source files are carried on private
     `_astichi_src_file` AST metadata attached during `compile(...)` and
     propagated by `copy_astichi_location(...)`.
+- Defaulted block-hole support is implemented:
+  - `with astichi_hole(name) as astichi_fallback:` declares a block insertion
+    target with an authored fallback suite. The sentinel name
+    `astichi_fallback` is required to distinguish the marker form from
+    ordinary legal `with` statements.
+  - The whole `with` statement is the hole. Build may attach normal block
+    inserts to `name`; materialize lowers a filled site to the ordinary
+    block-hole/insert flattening path and discards the fallback.
+  - If no local insert shell targets the site, materialize lowers the fallback
+    suite in place and then recognizes/validates markers inside the selected
+    fallback. Discarded fallback contents remain branch-inactive.
+  - `astichi_pyimport(...)` is rejected inside fallback suites, because managed
+    imports must remain top-of-Astichi-scope declarations.
 - Implemented V2 work:
   - V2 Phase 1 external bind is complete.
   - V2 Phase 2 loop unroll: `2a`–`2e` complete. Phase 2 gate closed.
@@ -395,6 +408,7 @@ Convenience methods:
 - `address`: `TargetAddress`
 - `port`: `PortDescriptor`
 - `add_policy`: `SINGLE_ADD` or `MULTI_ADD`
+- `has_default`: true for defaulted block holes
 
 `TargetAddress` is the data-driven builder address:
 
@@ -426,6 +440,7 @@ reserves `__iter_<n>` target suffixes.
 Add policy mapping:
 
 - block holes: `MULTI_ADD`
+- defaulted block holes: `MULTI_ADD`
 - positional variadic holes (`*astichi_hole(...)`): `MULTI_ADD`
 - named variadic holes (`**astichi_hole(...)` / dict expansion): `MULTI_ADD`
 - parameter holes: `MULTI_ADD`, still subject to final signature validation
@@ -582,6 +597,7 @@ Current implementation reality:
 | Marker / surface | Status | Notes |
 |---|---|---|
 | `astichi_hole(name)` | implemented | Demand port. Shape inferred from AST position. |
+| `with astichi_hole(name) as astichi_fallback:` | implemented | Defaulted block hole. Filled sites discard the fallback; unfilled sites lower the fallback suite during materialize. |
 | `@astichi_insert(name, order=...)` | internal/emitted | Block-form supply metadata. Must match a hole. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
 | `astichi_funcargs(...)` | implemented | Authored call-argument payload surface. Lowered through generated internal placement wrappers. |
 | `astichi_insert(name, expr)` | internal/emitted | Generated placement metadata for expression targets. Rejected by default authored `compile(...)`; only accepted with `source_kind="astichi-emitted"`. |
@@ -677,6 +693,9 @@ Shipped behavior:
 Current materialize behavior that is already in place:
 
 - unresolved `astichi_hole(...)` rejects
+- unfilled defaulted block holes lower their fallback suite before the
+  materialize gate checks selected markers; filled defaulted block holes lower
+  to ordinary block-hole anchors and their local insert shells
 - unresolved `astichi_bind_external(...)` rejects
 - unmatched block-form `@astichi_insert(name)` rejects
 - unmatched bare statement `astichi_insert(name, expr)` rejects
