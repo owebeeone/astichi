@@ -167,6 +167,14 @@ class PortInventoryPayload(InventoryPayload):
 
 
 @dataclass(frozen=True)
+class HoleInventoryPayload(PortInventoryPayload):
+    """Payload for a hole record, including defaulted-hole metadata."""
+
+    port: DemandPort
+    has_default: bool = False
+
+
+@dataclass(frozen=True)
 class BlockProductionInventoryPayload(InventoryPayload):
     """Payload for the default block production."""
 
@@ -413,7 +421,7 @@ def build_inventory(
                     marker=marker,
                     name_id=name_id,
                     kind=kind,
-                    payload=PortInventoryPayload(demand_port),
+                    payload=_payload_for_demand_marker(marker, demand_port),
                 )
         supply_port = supply_by_name.get(name_id)
         if supply_port is not None:
@@ -506,6 +514,21 @@ def _add_marker_record(
         payload=payload,
         source_location=_source_location_for(marker.node),
     )
+
+
+def _payload_for_demand_marker(
+    marker: RecognizedMarker, demand_port: DemandPort
+) -> InventoryPayload:
+    if demand_port.is_additive_hole_demand() or demand_port.is_parameter_hole_demand():
+        return HoleInventoryPayload(
+            port=demand_port,
+            has_default=(
+                demand_port.is_additive_hole_demand()
+                and demand_port.shape.is_block()
+                and isinstance(marker.node, ast.With)
+            ),
+        )
+    return PortInventoryPayload(demand_port)
 
 
 def _resource_name_for_marker(

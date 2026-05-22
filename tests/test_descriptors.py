@@ -32,6 +32,21 @@ def run(params__astichi_param_hole__):
     assert holes["params"].add_policy is MULTI_ADD
 
 
+def test_describe_exposes_defaulted_block_hole_state() -> None:
+    compiled = astichi.compile(
+        """
+def validate():
+    with astichi_hole(validate_body) as astichi_fallback:
+        return True
+"""
+    )
+
+    hole = compiled.describe().single_hole_named("validate_body")
+
+    assert hole.has_default is True
+    assert hole.with_root_instance("Root").has_default is True
+
+
 def test_describe_exposes_external_and_identifier_surfaces() -> None:
     compiled = astichi.compile(
         """
