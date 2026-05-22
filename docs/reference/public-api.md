@@ -77,7 +77,8 @@ Additional descriptor value objects for advanced inspection are exported from
 `astichi.model`, including `PortDescriptor`, `HoleDescriptor`,
 `ProductionDescriptor`, `ExternalBindDescriptor`,
 `IdentifierDemandDescriptor`, `IdentifierSupplyDescriptor`, `SINGLE_ADD`, and
-`MULTI_ADD`.
+`MULTI_ADD`. Clause-target metadata exports include `ELIF_CLAUSE` and
+`REJECT_EMPTY`.
 
 Inventory value objects for lower-level resource discovery are also
 exported from `astichi.model`, including `Inventory`, `InventoryRecord`,

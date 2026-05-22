@@ -10,6 +10,10 @@ astichi_hole(slot)       # scalar expression hole (in expr position)
 
 `slot`, `args`, `kwargs` are **identifiers**, not string literals.
 
+Clause targets are separate from ordinary holes. Use
+`astichi_elif(name)` when the target is an additive `elif` branch slot inside
+an existing `if` / `elif` chain.
+
 ## Semantics
 
 - The argument **names the hole** for builder wiring and internal emitted
@@ -27,4 +31,5 @@ astichi_hole(slot)       # scalar expression hole (in expr position)
 ## See also
 
 - [marker-overview.md](marker-overview.md)
+- [marker-clause-targets.md](marker-clause-targets.md)
 - **[§5.1](../../dev-docs/historical/AstichiApiDesignV1.md)**

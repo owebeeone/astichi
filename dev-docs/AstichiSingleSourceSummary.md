@@ -34,6 +34,22 @@ work.
     parameter names are function-scope bindings and hygiene must not rename
     them to repair a signature; body-local collisions rename away from the
     parameter binding.
+- Implemented elif clause targets:
+  - `elif astichi_elif(name): pass` declares a mandatory, multi-add clause
+    target in a real `if` / `elif` chain.
+  - `def astichi_elif(): ...` supplies one generated branch; after optional
+    prefix boundary markers, the function body must contain exactly one
+    `if`, whose test/body become the generated `elif` test/body.
+  - Build emits internal
+    `@astichi_insert(name, kind="elif", ref=..., order=...)` shells as
+    siblings of the owning chain. The `ref=` path identifies source
+    provenance, not target matching.
+  - Materialize validates matched clause shells, runs hygiene with each shell
+    as a fresh Astichi scope, right-folds generated branches into the chain,
+    strips the shells, and rejects unresolved targets.
+  - Descriptor/inventory support is live: `ELIF_CLAUSE`, `hole.elif`,
+    `production.elif`, `ComposableHole.add_policy is MULTI_ADD`, and
+    `ComposableHole.when_empty is REJECT_EMPTY`.
 - Managed Python import support is implemented:
   - `astichi_pyimport(module=..., names=(...))` declares managed
     `from module import name` bindings. `names=` must be a non-empty tuple of

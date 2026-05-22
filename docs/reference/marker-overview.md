@@ -17,6 +17,7 @@ not from encoding a “kind” in the hole name.
 
 ```text
 astichi_hole(name)
+astichi_elif(name)
 astichi_bind_external(name)
 astichi_keep(name)
 astichi_import(name)
@@ -26,6 +27,7 @@ astichi_for(domain)
 astichi_funcargs(...)
 def astichi_params(...): pass
 async def astichi_params(...): pass
+def astichi_elif(): ...
 astichi_ref(value)
 astichi_ref(external=name)
 astichi_pyimport(module=module_path, names=(name,))
@@ -66,6 +68,15 @@ Parameter note:
   carriers; only the signature is inserted.
 - Astichi may emit internal `@astichi_insert(name, kind="params", ...)`
   wrappers in pre-materialized source. They are not authored user surface.
+
+Clause target note:
+
+- `astichi_elif(name)` declares an additive target in a real `elif` position.
+- `def astichi_elif(): ...` supplies one generated `elif` branch; its single
+  inner `if` statement provides the generated branch test and body.
+- Astichi may emit internal `@astichi_insert(name, kind="elif", ...)`
+  wrappers in pre-materialized source. They are not authored user surface.
+- Unfilled `astichi_elif(...)` targets reject at `materialize()`.
 
 Reference-path note:
 
@@ -150,6 +161,7 @@ or bind; it is **not** a hole-kind enum like `"expr"` vs `"block"`.
 | Topic | Page |
 |-------|------|
 | Holes, `*`, `**`, block position | [marker-holes.md](marker-holes.md) |
+| Elif clause targets | [marker-clause-targets.md](marker-clause-targets.md) |
 | Binds and exports | [marker-binds-and-exports.md](marker-binds-and-exports.md) |
 | Loops and inserts | [marker-for-and-insert.md](marker-for-and-insert.md) |
 | Parameter holes | [marker-params.md](marker-params.md) |

@@ -115,6 +115,7 @@ Fields:
 | `address` | A `TargetAddress` usable with `builder.target(...)` after root resolution. |
 | `port` | The demand-side `PortDescriptor` for the hole. |
 | `add_policy` | `SINGLE_ADD` or `MULTI_ADD`, exposed as behavior-bearing singleton objects. |
+| `when_empty` | Clause empty policy for `ELIF_CLAUSE` holes; ordinary holes use `None`. |
 
 Helpers:
 
@@ -263,7 +264,7 @@ Fields:
 | Field | Meaning |
 | --- | --- |
 | `name` | Port name. |
-| `shape` | Marker shape object, such as block, scalar expression, variadic argument, parameter, or identifier. |
+| `shape` | Marker shape object, such as block, scalar expression, variadic argument, parameter, identifier, or elif clause. |
 | `placement` | Behavior-bearing placement object. Definition parameters and call arguments are different placements. |
 | `mutability` | Behavior-bearing mutability object. |
 | `origins` | `PortOrigins` object describing why the port exists. |
@@ -316,6 +317,7 @@ and is backed by inventory production records:
 | Snippet accepted as an implicit expression source | Expression production, and also block production where valid. |
 | `astichi_funcargs(...)` payload snippet | Expression-family production checked against compatible `*` / `**` call-argument holes. |
 | `astichi_params(...)` payload snippet | Parameter production. |
+| `def astichi_elif(): ...` payload snippet | Elif-clause production. |
 | Identifier export | Identifier supply descriptor, not an additive production. |
 
 Use `production.satisfies(hole.descriptor).is_accepted()` for one production, or
@@ -457,6 +459,7 @@ Common imports:
 from astichi import ComposableDescription, ComposableHole, TargetAddress
 from astichi.model import (
     AddPolicy,
+    ELIF_CLAUSE,
     ExternalBindDescriptor,
     HoleDescriptor,
     IdentifierDemandDescriptor,
@@ -464,6 +467,7 @@ from astichi.model import (
     MULTI_ADD,
     PortDescriptor,
     ProductionDescriptor,
+    REJECT_EMPTY,
     SINGLE_ADD,
 )
 ```

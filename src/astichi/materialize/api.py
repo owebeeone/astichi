@@ -3629,6 +3629,10 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
         def _prefix_node(
             self, node: ast.FunctionDef | ast.AsyncFunctionDef
         ) -> None:
+            block_info = extract_block_insert_shell(node, phase="materialize")
+            elif_info = extract_elif_insert_shell(node, phase="materialize")
+            if block_info is None and elif_info is None:
+                return
             for decorator in node.decorator_list:
                 if not is_astichi_insert_call(decorator):
                     continue

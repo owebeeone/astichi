@@ -16,6 +16,7 @@ Fast orientation:
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |
 | [marker-holes.md](marker-holes.md) | `astichi_hole`, `*`, `**`, block sites |
+| [marker-clause-targets.md](marker-clause-targets.md) | `astichi_elif` additive clause targets |
 | [marker-binds-and-exports.md](marker-binds-and-exports.md) | `bind_*`, `export` |
 | [marker-for-and-insert.md](marker-for-and-insert.md) | `astichi_for`, `astichi_funcargs`, internal insert metadata |
 | [marker-params.md](marker-params.md) | Function parameter holes and `astichi_params` payloads |

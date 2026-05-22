@@ -10,10 +10,12 @@ Inventory includes resources that a builder, descriptor adapter, or assembler
 needs to discover without rescanning the AST:
 
 - additive holes
+- elif clause targets
 - parameter holes
 - identifier demands and supplies
 - external binds
-- production surfaces such as `__block__`, `__expr__`, and `__funcargs__`
+- production surfaces such as `__block__`, `__expr__`, `__funcargs__`, and
+  `astichi_elif`
 
 Comment markers and keep directives are not bindable or producible resources
 and do not appear in the inventory maps.
@@ -51,8 +53,8 @@ Each `InventoryRecord` carries the split identity needed by staged builds:
 - `build_path`: builder identity such as `Root` or `Root/Step`
 - `code_owner`: logical Python owner path such as `GeneratedClass/run`
 - `name`: logical Astichi name, with suffixes such as `__astichi_arg__` stripped
-- `kind`: boundary string such as `hole.block`, `external.bind`, or
-  `production.block`
+- `kind`: boundary string such as `hole.block`, `hole.elif`,
+  `external.bind`, `production.elif`, or `production.block`
 - `locator`: structural path back to the AST node
 - `payload`: semantic data used by descriptor reconstruction and compatibility
 - `source_location`: optional logical source file and line for diagnostics

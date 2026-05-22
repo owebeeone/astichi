@@ -49,6 +49,15 @@ builder.Pipeline.Root.Parse.rows[1, 2].Normalize.body.add.Step(order=10)
 builder.assign.Step.total.to().Pipeline.Root.Right.total
 ```
 
+The same target-adder surface is used for clause targets:
+
+```python
+builder.Root.branches.add.Create(order=10)
+builder.Root.branches.add.Delete(order=20)
+```
+
+where `branches` is declared by `elif astichi_elif(branches): ...`.
+
 On the target-adder surface, specialization is **edge-local**:
 
 - `builder.Target.hole.add.Source(arg_names=..., keep_names=...)` affects only

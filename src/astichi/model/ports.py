@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from itertools import groupby
 from typing import TYPE_CHECKING
 
-from astichi.asttools import BLOCK, IDENTIFIER, PARAMETER, SCALAR_EXPR, MarkerShape
+from astichi.asttools import (
+    BLOCK,
+    ELIF_CLAUSE,
+    IDENTIFIER,
+    PARAMETER,
+    SCALAR_EXPR,
+    MarkerShape,
+)
 from astichi.lowering import RecognizedMarker
 from astichi.model.semantics import (
     ARG_IDENTIFIER_ORIGIN,
@@ -59,6 +66,7 @@ __all__ = (
     "BIND_EXTERNAL_ORIGIN",
     "CONST_MUTABILITY",
     "DemandPort",
+    "ELIF_CLAUSE",
     "ELIF_PAYLOAD_ORIGIN",
     "EXPORT_ORIGIN",
     "HOLE_ORIGIN",
