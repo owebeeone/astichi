@@ -26,6 +26,59 @@ def test_materialize_rejects_unresolved_holes() -> None:
         compiled.materialize()
 
 
+def test_materialize_defaulted_block_hole_uses_fallback_when_unfilled() -> None:
+    compiled = astichi.compile(
+        """
+def f():
+    with astichi_hole(body) as astichi_fallback:
+        return 1
+"""
+    )
+
+    assert ast.unparse(compiled.materialize().tree) == "def f():\n    return 1"
+
+
+def test_materialize_defaulted_block_hole_supports_class_body_fallback() -> None:
+    compiled = astichi.compile(
+        """
+class C:
+    with astichi_hole(body) as astichi_fallback:
+        pass
+"""
+    )
+
+    assert ast.unparse(compiled.materialize().tree) == "class C:\n    pass"
+
+
+def test_materialize_defaulted_block_hole_supports_nested_suite_fallback() -> None:
+    compiled = astichi.compile(
+        """
+def f(flag):
+    if flag:
+        with astichi_hole(body) as astichi_fallback:
+            return 1
+"""
+    )
+
+    assert ast.unparse(compiled.materialize().tree) == (
+        "def f(flag):\n"
+        "    if flag:\n"
+        "        return 1"
+    )
+
+
+def test_materialize_selected_defaulted_fallback_rejects_unresolved_nested_hole() -> None:
+    compiled = astichi.compile(
+        """
+with astichi_hole(body) as astichi_fallback:
+    astichi_hole(nested)
+"""
+    )
+
+    with pytest.raises(ValueError, match="mandatory holes remain unresolved: nested"):
+        compiled.materialize()
+
+
 def test_materialize_rejects_unresolved_bind_external_demands() -> None:
     compiled = astichi.compile("astichi_bind_external(fields)\nprint(fields)\n")
 
