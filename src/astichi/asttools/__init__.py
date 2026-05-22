@@ -2,6 +2,7 @@
 
 from astichi.asttools.shapes import (
     BLOCK,
+    ELIF_CLAUSE,
     IDENTIFIER,
     NAMED_VARIADIC,
     PARAMETER,
@@ -30,6 +31,7 @@ __all__ = [
     "AstichiScope",
     "AstichiScopeMap",
     "BLOCK",
+    "ELIF_CLAUSE",
     "IDENTIFIER",
     "NAMED_VARIADIC",
     "PARAMETER",

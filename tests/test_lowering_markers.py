@@ -10,6 +10,7 @@ from astichi.lowering import (
     marker_metadata_name_nodes,
 )
 from astichi.lowering.markers import (
+    ELIF,
     EXPORT,
     IMPORT,
     KEEP,
@@ -20,6 +21,8 @@ from astichi.lowering.markers import (
 def test_marker_registry_exposes_behavior_objects_by_source_name() -> None:
     assert "astichi_hole" in MARKERS_BY_NAME
     assert MARKERS_BY_NAME["astichi_hole"].is_name_bearing() is True
+    assert MARKERS_BY_NAME["astichi_elif"] is ELIF
+    assert MARKERS_BY_NAME["astichi_elif"].is_renamed_per_iteration() is True
     assert "astichi_bind_once" in MARKERS_BY_NAME
     assert "astichi_bind_shared" in MARKERS_BY_NAME
     insert = MARKERS_BY_NAME["astichi_insert"]
@@ -176,6 +179,208 @@ def test_marker_validation_rejects_non_identifier_name_args() -> None:
 astichi_hole("body")
 """
         )
+
+
+def test_compile_recognizes_elif_clause_target_marker() -> None:
+    compiled = astichi.compile(
+        """
+if enabled:
+    pass
+elif astichi_elif(branches):
+    astichi_comment("generated branches")
+    pass
+else:
+    fallback()
+"""
+    )
+
+    elif_markers = [
+        marker for marker in compiled.markers if marker.source_name == "astichi_elif"
+    ]
+
+    assert len(elif_markers) == 1
+    assert elif_markers[0].name_id == "branches"
+    assert elif_markers[0].shape is not None
+    assert elif_markers[0].shape.is_elif_clause()
+
+
+def test_compile_recognizes_elif_contribution_payload() -> None:
+    compiled = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(event_type)
+    if event_type == "create":
+        return "created"
+"""
+    )
+
+    elif_markers = [
+        marker for marker in compiled.markers if marker.source_name == "astichi_elif"
+    ]
+
+    assert len(elif_markers) == 1
+    assert elif_markers[0].context == "definitional"
+    assert elif_markers[0].name_id == "astichi_elif"
+    assert elif_markers[0].shape is not None
+    assert elif_markers[0].shape.is_elif_clause()
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        (
+            """
+if astichi_elif(branches):
+    pass
+""",
+            "real elif position",
+        ),
+        (
+            """
+if enabled:
+    pass
+elif astichi_elif("branches"):
+    pass
+""",
+            "bare identifier-like",
+        ),
+        (
+            """
+if enabled:
+    pass
+elif astichi_elif(_):
+    pass
+""",
+            "may not be `_`",
+        ),
+        (
+            """
+if enabled:
+    pass
+elif astichi_elif(branches, other):
+    pass
+""",
+            "expects 1 positional",
+        ),
+        (
+            """
+if enabled:
+    pass
+elif astichi_elif(branches, optional=True):
+    pass
+""",
+            "keyword arguments",
+        ),
+        (
+            """
+if enabled:
+    pass
+elif astichi_elif(branches):
+    real_statement()
+""",
+            "empty-equivalent",
+        ),
+        (
+            """
+if first:
+    pass
+elif astichi_elif(branches):
+    pass
+
+if second:
+    pass
+elif astichi_elif(branches):
+    pass
+""",
+            "duplicate astichi_elif target",
+        ),
+    ],
+)
+def test_compile_rejects_invalid_elif_target_forms(source: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        astichi.compile(source)
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        (
+            """
+@decorator
+def astichi_elif():
+    if enabled:
+        pass
+""",
+            "decorators",
+        ),
+        (
+            """
+def astichi_elif(value):
+    if enabled:
+        pass
+""",
+            "must not declare parameters",
+        ),
+        (
+            """
+def astichi_elif() -> str:
+    if enabled:
+        pass
+""",
+            "return annotation",
+        ),
+        (
+            """
+def astichi_elif():
+    astichi_pass(value)
+    if enabled:
+        pass
+""",
+            "value-form only",
+        ),
+        (
+            """
+def astichi_elif():
+    if enabled:
+        pass
+    if other:
+        pass
+""",
+            "exactly one if",
+        ),
+        (
+            """
+def astichi_elif():
+    if enabled:
+        pass
+    else:
+        pass
+""",
+            "if.orelse",
+        ),
+        (
+            """
+def astichi_elif():
+    if (value := enabled):
+        pass
+""",
+            "walrus",
+        ),
+        (
+            """
+def astichi_elif():
+    if enabled:
+        yield value
+""",
+            "yield",
+        ),
+    ],
+)
+def test_compile_rejects_invalid_elif_contribution_forms(
+    source: str, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        astichi.compile(source)
 
 
 def test_compile_recognizes_keep_and_arg_identifier_sites() -> None:

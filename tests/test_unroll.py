@@ -60,6 +60,28 @@ def test_unroll_hole_gets_iter_suffix() -> None:
     assert result == ["astichi_hole(slot__iter_0)", "astichi_hole(slot__iter_1)"]
 
 
+def test_unroll_elif_target_gets_iter_suffix() -> None:
+    result = _lines(
+        """
+        for x in astichi_for((10, 20)):
+            if x < 0:
+                pass
+            elif astichi_elif(branches):
+                pass
+        """
+    )
+    assert result == [
+        "if 10 < 0:",
+        "pass",
+        "elif astichi_elif(branches__iter_0):",
+        "pass",
+        "if 20 < 0:",
+        "pass",
+        "elif astichi_elif(branches__iter_1):",
+        "pass",
+    ]
+
+
 def test_unroll_empty_domain_removes_loop() -> None:
     assert _unroll("for x in astichi_for(()):\n    f(x)") == ""
 

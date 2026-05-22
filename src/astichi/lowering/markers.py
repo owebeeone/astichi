@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from astichi.asttools import (
     BLOCK,
+    ELIF_CLAUSE,
     IDENTIFIER,
     NAMED_VARIADIC,
     PARAMETER,
@@ -482,6 +483,38 @@ class _HoleMarker(_SimpleMarker):
         )
 
 
+class _ElifMarker(_SimpleMarker):
+    """`astichi_elif(name)` target and `def astichi_elif(): ...` contribution."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "astichi_elif",
+            positional_args=1,
+            name_bearing=True,
+            renamed_per_iteration=True,
+        )
+
+    def call_context_shape(self) -> MarkerShape | None:
+        return ELIF_CLAUSE
+
+    def is_payload_carrier(self) -> bool:
+        return True
+
+    def validate_node(self, node: ast.AST) -> None:
+        if isinstance(node, ast.Call):
+            super().validate_node(node)
+            first_arg = node.args[0]
+            if isinstance(first_arg, ast.Name) and first_arg.id == "_":
+                raise ValueError("astichi_elif target name may not be `_`")
+            if node.keywords:
+                raise ValueError("astichi_elif(...) does not accept keyword arguments")
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _validate_elif_contribution_function(node)
+            return
+        raise TypeError("astichi_elif must be recognized from a call or function")
+
+
 class _InsertMarker(MarkerSpec):
     """Dual-context insert marker: decorator (1 arg) and expression (2 args)."""
 
@@ -748,6 +781,7 @@ class _CommentMarker(MarkerSpec):
 
 
 HOLE = _HoleMarker()
+ELIF = _ElifMarker()
 BIND_ONCE = _ReservedMarker(
     "astichi_bind_once",
     hint="use ordinary Python assignment for single-evaluation reuse",
@@ -825,6 +859,7 @@ PASS = _BoundaryIdentifierMarker(
 # so new markers are picked up automatically.
 ALL_MARKERS: tuple[MarkerSpec, ...] = (
     HOLE,
+    ELIF,
     BIND_ONCE,
     BIND_SHARED,
     BIND_EXTERNAL,
@@ -940,6 +975,8 @@ class RecognizedMarker:
                 return first_arg.id
             return None
         if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if self.spec is ELIF and isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return self.node.name
             if self.spec is PARAMS and isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 return self.node.name
             base, suffix_marker = strip_identifier_suffix(self.node.name)
@@ -1070,6 +1107,7 @@ class _MarkerVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.markers: list[RecognizedMarker] = []
         self._stack: list[ast.AST] = []
+        self._elif_target_names: set[str] = set()
 
     def visit(self, node: ast.AST) -> object:
         self._stack.append(node)
@@ -1085,6 +1123,16 @@ class _MarkerVisitor(ast.NodeVisitor):
             shape = marker.call_context_shape()
             if shape is None:
                 shape = _infer_shape(node, self._parent())
+            if marker is ELIF:
+                _validate_elif_target_position(node, self._parent(), self._grandparent())
+                assert shape is ELIF_CLAUSE
+                name = _elif_target_name(node)
+                if name in self._elif_target_names:
+                    raise ValueError(
+                        "duplicate astichi_elif target in the same source: "
+                        f"{name}"
+                    )
+                self._elif_target_names.add(name)
             self.markers.append(
                 RecognizedMarker(
                     spec=marker,
@@ -1096,12 +1144,14 @@ class _MarkerVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_elif_payload(node)
         self._visit_params_payload(node)
         self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_elif_payload(node)
         self._visit_params_payload(node)
         self._visit_suffix_identifier(node)
         self._visit_decorators(node.decorator_list)
@@ -1187,6 +1237,19 @@ class _MarkerVisitor(ast.NodeVisitor):
             )
         )
 
+    def _visit_elif_payload(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if node.name != ELIF.source_name:
+            return
+        ELIF.validate_node(node)
+        self.markers.append(
+            RecognizedMarker(
+                spec=ELIF,
+                node=node,
+                context=DEFINITIONAL_CONTEXT,
+                shape=ELIF_CLAUSE,
+            )
+        )
+
     def _visit_decorators(self, decorators: list[ast.expr]) -> None:
         for decorator in decorators:
             if not isinstance(decorator, ast.Call):
@@ -1236,6 +1299,11 @@ class _MarkerVisitor(ast.NodeVisitor):
             return None
         return self._stack[-2]
 
+    def _grandparent(self) -> ast.AST | None:
+        if len(self._stack) < 3:
+            return None
+        return self._stack[-3]
+
 
 def _infer_shape(node: ast.Call, parent: ast.AST | None) -> MarkerShape:
     if isinstance(parent, ast.Starred) and parent.value is node:
@@ -1251,6 +1319,111 @@ def _infer_shape(node: ast.Call, parent: ast.AST | None) -> MarkerShape:
     if isinstance(parent, ast.Expr) and parent.value is node:
         return BLOCK
     return SCALAR_EXPR
+
+
+def _elif_target_name(call: ast.Call) -> str:
+    if len(call.args) != 1 or not isinstance(call.args[0], ast.Name):
+        raise ValueError("astichi_elif requires a bare identifier-like first argument")
+    return call.args[0].id
+
+
+def _validate_elif_target_position(
+    call: ast.Call,
+    parent: ast.AST | None,
+    grandparent: ast.AST | None,
+) -> None:
+    if not (
+        isinstance(parent, ast.If)
+        and parent.test is call
+        and isinstance(grandparent, ast.If)
+        and len(grandparent.orelse) == 1
+        and grandparent.orelse[0] is parent
+    ):
+        raise ValueError("astichi_elif(...) is valid only in real elif position")
+    for stmt in parent.body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if _is_astichi_comment_statement(stmt):
+            COMMENT.validate_node(stmt.value)  # type: ignore[arg-type]
+            continue
+        raise ValueError(
+            "astichi_elif marker body must be empty-equivalent: pass plus "
+            "optional astichi_comment(...) markers"
+        )
+
+
+def _is_astichi_comment_statement(stmt: ast.stmt) -> bool:
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and call_name(stmt.value) == COMMENT.source_name
+    )
+
+
+def _validate_elif_contribution_function(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> None:
+    if node.decorator_list:
+        raise ValueError("astichi_elif contribution may not have decorators")
+    if node.returns is not None:
+        raise ValueError("astichi_elif contribution may not have a return annotation")
+    if getattr(node, "type_params", ()):
+        raise ValueError("astichi_elif contribution may not have type params")
+    args = node.args
+    if (
+        args.posonlyargs
+        or args.args
+        or args.vararg is not None
+        or args.kwonlyargs
+        or args.kw_defaults
+        or args.defaults
+        or args.kwarg is not None
+    ):
+        raise ValueError("astichi_elif contribution must not declare parameters")
+    first_body_index = _elif_contribution_prefix_end(node.body)
+    remaining = node.body[first_body_index:]
+    if len(remaining) != 1 or not isinstance(remaining[0], ast.If):
+        raise ValueError(
+            "astichi_elif contribution body must contain exactly one if "
+            "statement after prefix markers"
+        )
+    inner_if = remaining[0]
+    if inner_if.orelse:
+        raise ValueError("astichi_elif contribution if.orelse is not supported")
+    if _contains_named_expr(inner_if.test):
+        raise ValueError("astichi_elif contribution if.test may not contain walrus")
+    for child in ast.walk(ast.Module(body=inner_if.body, type_ignores=[])):
+        if isinstance(child, (ast.Yield, ast.YieldFrom, ast.Await, ast.Break, ast.Continue)):
+            raise ValueError(
+                "astichi_elif contribution branch body may not contain yield, "
+                "yield from, await, break, or continue in Phase 1"
+            )
+
+
+def _elif_contribution_prefix_end(body: Sequence[ast.stmt]) -> int:
+    allowed_prefix = {
+        id(IMPORT),
+        id(EXPORT),
+        id(KEEP),
+        id(BIND_EXTERNAL),
+        id(PYIMPORT),
+        id(COMMENT),
+    }
+    index = 0
+    while index < len(body):
+        stmt = body[index]
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            break
+        marker = _marker_from_call(stmt.value)
+        if marker is None or id(marker) not in allowed_prefix:
+            break
+        marker.validate_node(stmt.value)
+        index += 1
+    return index
+
+
+def _contains_named_expr(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.NamedExpr) for child in ast.walk(node))
 
 
 def recognize_markers(tree: ast.AST) -> tuple[RecognizedMarker, ...]:

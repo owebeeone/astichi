@@ -32,6 +32,9 @@ class MarkerShape(ABC):
     def is_parameter(self) -> bool:
         return False
 
+    def is_elif_clause(self) -> bool:
+        return False
+
 
 class _ScalarExprShape(MarkerShape):
     def __init__(self) -> None:
@@ -81,9 +84,18 @@ class _ParameterShape(MarkerShape):
         return True
 
 
+class _ElifClauseShape(MarkerShape):
+    def __init__(self) -> None:
+        super().__init__("elif_clause")
+
+    def is_elif_clause(self) -> bool:
+        return True
+
+
 SCALAR_EXPR = _ScalarExprShape()
 POSITIONAL_VARIADIC = _PositionalVariadicShape()
 NAMED_VARIADIC = _NamedVariadicShape()
 BLOCK = _BlockShape()
 IDENTIFIER = _IdentifierShape()
 PARAMETER = _ParameterShape()
+ELIF_CLAUSE = _ElifClauseShape()
