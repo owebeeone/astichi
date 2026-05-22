@@ -978,7 +978,9 @@ For each real substep:
 - run the Python-version matrix for changes that affect emitted source,
   materialization, syntax, or version-sensitive AST behavior
 - update this summary when the project state changes
-- if following roll-build discipline, commit and tag by step
+- if following roll-build discipline, commit and tag by step in the current
+  owning checkout/branch; do not use worktrees or parallel rollout branches
+  unless the user explicitly asks for them
 
 Soft implementation rule:
 

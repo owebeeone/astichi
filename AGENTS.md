@@ -50,6 +50,15 @@ explicitly asks.
 - An unqualified `roll-build` means: run all phases for that plan in sequence,
   committing and tagging each completed phase, and continue into the next phase
   without stopping unless the guardrails below require a pause.
+- Run the roll-build in the current owning checkout and current branch. Do not
+  create git worktrees, sibling checkouts, or parallel rollout branches unless
+  the user explicitly asks for them in that request.
+- Do not split phases or adjacent roll-build requests into parallel branches.
+  If one roll-build has already produced commits, the next roll-build starts on
+  top of those commits after they are integrated into the current branch.
+- If the current branch is not the intended integration branch, stop and ask
+  before creating or switching branches. Do not invent a branch/worktree strategy
+  from the tag prefix.
 - Implement one phase at a time.
 - After a phase is complete, only commit and tag it if:
   - the phase goal is actually met
