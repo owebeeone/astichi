@@ -32,6 +32,7 @@ from astichi.model.descriptors import (
 )
 from astichi.path_resolution import (
     ShellIndex,
+    collect_elif_target_names_in_body,
     collect_hole_names_in_body,
     collect_identifier_demands_in_body,
     collect_identifier_suppliers_in_body,
@@ -551,6 +552,7 @@ def _validate_registered_target_site(
     )
     if target.target_name in (
         collect_hole_names_in_body(shell.body)
+        | collect_elif_target_names_in_body(shell.body)
         | collect_param_hole_names_in_body(shell.body)
     ):
         return

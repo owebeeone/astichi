@@ -13,6 +13,7 @@ from astichi.asttools import (
 from astichi.diagnostics import default_build_path_hint, format_astichi_error
 from astichi.lowering.markers import (
     ARG_IDENTIFIER,
+    ELIF,
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
     strip_identifier_suffix,
@@ -37,6 +38,9 @@ class InsertMetadataKind(SemanticSingleton):
     def is_parameter_shell(self) -> bool:
         return False
 
+    def is_elif_shell(self) -> bool:
+        return False
+
 
 @dataclass(frozen=True, eq=False)
 class _BlockInsertMetadataKind(InsertMetadataKind):
@@ -54,8 +58,17 @@ class _ParameterInsertMetadataKind(InsertMetadataKind):
         return True
 
 
+@dataclass(frozen=True, eq=False)
+class _ElifInsertMetadataKind(InsertMetadataKind):
+    name: str = "elif"
+
+    def is_elif_shell(self) -> bool:
+        return True
+
+
 BLOCK_INSERT_METADATA = _BlockInsertMetadataKind()
 PARAMETER_INSERT_METADATA = _ParameterInsertMetadataKind()
+ELIF_INSERT_METADATA = _ElifInsertMetadataKind()
 
 
 def _insert_kind_from_source(value: str, *, phase: str) -> InsertMetadataKind:
@@ -63,11 +76,13 @@ def _insert_kind_from_source(value: str, *, phase: str) -> InsertMetadataKind:
         return BLOCK_INSERT_METADATA
     if value == PARAMETER_INSERT_METADATA.name:
         return PARAMETER_INSERT_METADATA
+    if value == ELIF_INSERT_METADATA.name:
+        return ELIF_INSERT_METADATA
     raise ValueError(
         format_astichi_error(
             phase,
             f"unsupported astichi_insert kind `{value}`",
-            hint="supported internal insert kinds are `block` and `params`",
+            hint="supported internal insert kinds are `block`, `params`, and `elif`",
         )
     )
 
@@ -84,6 +99,15 @@ class BlockInsertShell:
 @dataclass(frozen=True)
 class ParamInsertShell:
     """Metadata carried by a parameter ``astichi_insert`` shell."""
+
+    target_name: str
+    order: int
+    ref_path: RefPath | None = None
+
+
+@dataclass(frozen=True)
+class ElifInsertShell:
+    """Metadata carried by an elif-clause ``astichi_insert`` shell."""
 
     target_name: str
     order: int
@@ -178,6 +202,31 @@ def extract_param_insert_shell(
             continue
         order = _extract_insert_order(decorator, phase=phase)
         return ParamInsertShell(
+            target_name=first_arg.id,
+            order=order,
+            ref_path=extract_insert_ref(decorator, phase=phase),
+        )
+    return None
+
+
+def extract_elif_insert_shell(
+    stmt: ast.stmt, *, phase: str = "build"
+) -> ElifInsertShell | None:
+    if not isinstance(stmt, ast.FunctionDef):
+        return None
+    for decorator in stmt.decorator_list:
+        if not is_astichi_insert_call(decorator):
+            continue
+        if len(decorator.args) != 1:
+            continue
+        kind = _extract_insert_kind(decorator, phase=phase)
+        if not kind.is_elif_shell():
+            continue
+        first_arg = decorator.args[0]
+        if not isinstance(first_arg, ast.Name):
+            continue
+        order = _extract_insert_order(decorator, phase=phase)
+        return ElifInsertShell(
             target_name=first_arg.id,
             order=order,
             ref_path=extract_insert_ref(decorator, phase=phase),
@@ -550,6 +599,47 @@ def collect_hole_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
                 and isinstance(node.args[0], ast.Name)
             ):
                 names.add(node.args[0].id)
+            self.generic_visit(node)
+
+    collector = _Collector()
+    for statement in body:
+        collector.visit(statement)
+    return frozenset(names)
+
+
+def collect_elif_target_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
+    """Collect clause target names in ``body``, excluding nested shells."""
+    names: set[str] = set()
+
+    def _target_name(node: ast.AST) -> str | None:
+        if not isinstance(node, ast.Call):
+            return None
+        if not isinstance(node.func, ast.Name) or node.func.id != ELIF.source_name:
+            return None
+        if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+            return None
+        return node.args[0].id
+
+    class _Collector(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if is_astichi_insert_shell(node):
+                return
+            self.generic_visit(node)
+
+        def visit_If(self, node: ast.If) -> None:
+            name = _target_name(node.test)
+            if name is not None:
+                names.add(name)
             self.generic_visit(node)
 
     collector = _Collector()

@@ -26,6 +26,64 @@ def test_materialize_rejects_unresolved_holes() -> None:
         compiled.materialize()
 
 
+def test_materialize_rejects_unresolved_elif_targets() -> None:
+    compiled = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+"""
+    )
+
+    with pytest.raises(
+        ValueError, match=r"materialize: mandatory holes remain unresolved: branches"
+    ):
+        compiled.materialize()
+
+
+def test_materialize_rejects_dangling_elif_insert_shells() -> None:
+    compiled = astichi.compile(
+        """
+@astichi_insert(branches, kind="elif")
+def branch():
+    if condition:
+        pass
+""",
+        source_kind="astichi-emitted",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"astichi_insert\(branches, kind='elif'\).*no matching astichi_elif",
+    ):
+        compiled.materialize()
+
+
+def test_materialize_rejects_module_level_elif_return() -> None:
+    compiled = astichi.compile(
+        """
+if kind == "base":
+    pass
+elif astichi_elif(branches):
+    pass
+
+@astichi_insert(branches, kind="elif")
+def branch():
+    if kind == "create":
+        return "create"
+""",
+        source_kind="astichi-emitted",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="elif contribution contains return for a module-level target",
+    ):
+        compiled.materialize()
+
+
 def test_materialize_rejects_unresolved_bind_external_demands() -> None:
     compiled = astichi.compile("astichi_bind_external(fields)\nprint(fields)\n")
 

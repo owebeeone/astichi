@@ -154,6 +154,175 @@ def test_build_chain_resolution() -> None:
     assert materialized_src.index("x = 1") < materialized_src.index("y = 2")
 
 
+def test_build_elif_clause_target_preserves_shell_and_materializes() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "fallback"
+"""
+    )
+    create = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        result = "created"
+        return result
+"""
+    )
+    delete = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "delete":
+        result = "deleted"
+        return result
+"""
+    )
+    builder = astichi.build()
+    builder.add.Root(root)
+    builder.add.Create(create)
+    builder.add.Delete(delete)
+    builder.Root.branches.add.Create(order=1)
+    builder.Root.branches.add.Delete(order=2)
+
+    built = builder.build()
+    pre_materialized = built.emit(provenance=False)
+
+    assert "elif astichi_elif(branches):" in pre_materialized
+    assert "@astichi_insert(branches, kind='elif', order=1, ref=Root.Create)" in pre_materialized
+    assert "@astichi_insert(branches, kind='elif', order=2, ref=Root.Delete)" in pre_materialized
+
+    source = built.materialize().emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+
+    assert "astichi_elif" not in source
+    assert "astichi_insert" not in source
+    assert source.index("kind == 'create'") < source.index("kind == 'delete'")
+    dispatch = namespace["dispatch"]
+    assert dispatch("create") == "created"  # type: ignore[operator]
+    assert dispatch("delete") == "deleted"  # type: ignore[operator]
+    assert dispatch("base") == "base"  # type: ignore[operator]
+    assert dispatch("other") == "fallback"  # type: ignore[operator]
+
+
+def test_build_elif_roundtrip_can_add_more_to_same_ref_path() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+"""
+    )
+    create = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "create"
+"""
+    )
+    extra = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "extra":
+        return "extra"
+"""
+    )
+    stage1 = astichi.build()
+    stage1.add.Root(root)
+    stage1.add.Create(create)
+    stage1.Root.branches.add.Create()
+    built_stage1 = stage1.build()
+    roundtripped = astichi.compile(
+        built_stage1.emit(provenance=False),
+        source_kind="astichi-emitted",
+    )
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(roundtripped)
+    stage2.add.Extra(extra)
+    stage2.Pipeline.Root.branches.add.Extra(order=5)
+    source = stage2.build().materialize().emit(provenance=False)
+
+    assert source.index("kind == 'create'") < source.index("kind == 'extra'")
+
+
+def test_build_elif_duplicate_textual_targets_do_not_cross_staged_refs() -> None:
+    root = astichi.compile("astichi_hole(left)\nastichi_hole(right)\n")
+    chain_a = astichi.compile(
+        """
+def dispatch_a(kind):
+    if kind == "base":
+        return "a-base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "a-fallback"
+"""
+    )
+    chain_b = astichi.compile(
+        """
+def dispatch_b(kind):
+    if kind == "base":
+        return "b-base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "b-fallback"
+"""
+    )
+    branch_a = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "a":
+        return "a-hit"
+"""
+    )
+    branch_b = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "b":
+        return "b-hit"
+"""
+    )
+    stage1 = astichi.build()
+    stage1.add.Root(root)
+    stage1.add.ChainA(chain_a)
+    stage1.add.ChainB(chain_b)
+    stage1.Root.left.add.ChainA()
+    stage1.Root.right.add.ChainB()
+    built_stage1 = stage1.build()
+
+    stage2 = astichi.build()
+    stage2.add.Pipeline(built_stage1)
+    stage2.add.A(branch_a)
+    stage2.add.B(branch_b)
+    stage2.Pipeline.Root.ChainA.branches.add.A()
+    stage2.Pipeline.Root.ChainB.branches.add.B()
+    source = stage2.build().materialize().emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+
+    dispatch_a = namespace["dispatch_a"]
+    dispatch_b = namespace["dispatch_b"]
+    assert dispatch_a("a") == "a-hit"  # type: ignore[operator]
+    assert dispatch_a("b") == "a-fallback"  # type: ignore[operator]
+    assert dispatch_b("a") == "b-fallback"  # type: ignore[operator]
+    assert dispatch_b("b") == "b-hit"  # type: ignore[operator]
+
+
 def test_build_merge_raw_graph_rejects_unknown_descendant_target_path() -> None:
     stage1 = astichi.build()
     stage1.add.Root(astichi.compile("astichi_hole(body)\n"))
@@ -265,6 +434,45 @@ def test_indexed_edge_autounrolls_and_routes_per_index() -> None:
     assert "zero = 0" in rendered
     assert "one = 1" in rendered
     assert [p.name for p in result.demand_ports] == []
+
+
+def test_indexed_elif_edges_autounroll_and_route_per_index() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    for item in astichi_for(("a", "b")):
+        if kind == "base":
+            pass
+        elif astichi_elif(branches):
+            pass
+"""
+    )
+    branch_a = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "a":
+        return "a"
+"""
+    )
+    branch_b = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "b":
+        return "b"
+"""
+    )
+    builder = astichi.build()
+    builder.add.Root(root)
+    builder.add.A(branch_a)
+    builder.add.B(branch_b)
+    builder.Root.branches[0].add.A()
+    builder.Root.branches[1].add.B()
+
+    source = builder.build().materialize().emit(provenance=False)
+
+    assert source.index("kind == 'a'") < source.index("kind == 'b'")
 
 
 def test_indexed_edges_materialize_end_to_end() -> None:

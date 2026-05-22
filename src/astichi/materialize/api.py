@@ -59,6 +59,7 @@ from astichi.lowering.markers import (
     ALL_MARKERS,
     ARG_IDENTIFIER,
     COMMENT,
+    ELIF,
     IMPORT,
     KEEP,
     PASS,
@@ -108,6 +109,7 @@ from astichi.path_resolution import (
     collect_param_hole_names_in_body,
     effective_root_body as _effective_root_body,
     extract_block_insert_shell,
+    extract_elif_insert_shell,
     extract_hole_name as _extract_hole_name,
     extract_param_insert_shell,
     format_instance_leaf,
@@ -161,6 +163,17 @@ class _ParamContribution:
     args: ast.arguments
     shell_name: str
     ref_path: RefPath
+
+
+@dataclass(frozen=True)
+class _ElifContribution:
+    source_instance: str
+    order: int
+    edge_index: int
+    body: list[ast.stmt]
+    shell_name: str
+    ref_path: RefPath
+    keep_names: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -1173,6 +1186,7 @@ def build_merge(
         scoped_block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]] = {}
         scoped_expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]] = {}
         scoped_param_replacements: dict[tuple[RefPath, str], list[_ParamContribution]] = {}
+        scoped_elif_replacements: dict[tuple[RefPath, str], list[_ElifContribution]] = {}
         for (
             root,
             target_ref_path,
@@ -1195,6 +1209,7 @@ def build_merge(
                 not in (
                     collect_hole_names_in_body(target_shell.body)
                     | collect_param_hole_names_in_body(target_shell.body)
+                    | _collect_elif_target_names_in_body(target_shell.body)
                 )
             ):
                 raise ValueError(
@@ -1213,6 +1228,7 @@ def build_merge(
             contributions: list[_BlockContribution] = []
             inserts: list[_ExpressionInsert] = []
             param_contributions: list[_ParamContribution] = []
+            elif_contributions: list[_ElifContribution] = []
             for counter, (_idx, edge) in enumerate(indexed_edges):
                 source_record = instance_records[edge.source_instance]
                 source_piece = _edge_scoped_composable(source_record, edge)
@@ -1233,6 +1249,47 @@ def build_merge(
                 )
                 if target_port is not None and source_port is not None:
                     validate_port_pair(target_port, source_port)
+                if target_port is not None and target_port.shape.is_elif_clause():
+                    elif_supply = _lookup_elif_supply_port(source_piece)
+                    if elif_supply is None:
+                        raise ValueError(
+                            format_astichi_error(
+                                "materialize",
+                                f"source instance {edge.source_instance} cannot satisfy "
+                                f"elif target {inst_name}.{effective_target_name}",
+                                hint="supply a `def astichi_elif(): ...` source snippet",
+                            )
+                        )
+                    validate_port_pair(target_port, elif_supply)
+                    shell_name = (
+                        f"__astichi_elif__"
+                        f"{_sanitize_for_identifier(inst_name)}"
+                        f"__{_sanitize_for_identifier(effective_target_name)}"
+                        f"__{counter}"
+                        f"__{_sanitize_for_identifier(edge.source_instance)}"
+                    )
+                    inserted_ref_path = normalize_ref_path(
+                        edge.target.ref_path
+                        + (edge.source_instance,)
+                        + edge.target.path
+                    )
+                    payload_body = _extract_elif_payload_body(
+                        source_effective_body,
+                        source_instance=edge.source_instance,
+                    )
+                    _prefix_shell_refs_in_body(payload_body, inserted_ref_path)
+                    elif_contributions.append(
+                        _ElifContribution(
+                            source_instance=edge.source_instance,
+                            order=edge.order,
+                            edge_index=_idx,
+                            body=payload_body,
+                            shell_name=shell_name,
+                            ref_path=inserted_ref_path,
+                            keep_names=source_piece.keep_names,
+                        )
+                    )
+                    continue
                 if (
                     source_is_param_payload
                     and (
@@ -1382,12 +1439,23 @@ def build_merge(
                     param_contributions,
                     key=lambda item: (item.order, item.edge_index),
                 )
-        if scoped_block_replacements or scoped_expr_replacements or scoped_param_replacements:
+            if elif_contributions:
+                scoped_elif_replacements[(target_ref_path, effective_target_name)] = sorted(
+                    elif_contributions,
+                    key=lambda item: (item.order, item.edge_index),
+                )
+        if (
+            scoped_block_replacements
+            or scoped_expr_replacements
+            or scoped_param_replacements
+            or scoped_elif_replacements
+        ):
             _replace_targets_in_tree(
                 trees[inst_name],
                 block_replacements=scoped_block_replacements,
                 expr_replacements=scoped_expr_replacements,
                 param_replacements=scoped_param_replacements,
+                elif_replacements=scoped_elif_replacements,
             )
 
     root_names = list(resolved_graph.root_names)
@@ -1547,6 +1615,7 @@ def _is_single_additive_hole_demand(port: DemandPort) -> bool:
         return False
     return not (
         port.shape.is_block()
+        or port.shape.is_elif_clause()
         or port.shape.is_positional_variadic()
         or port.shape.is_named_variadic()
     )
@@ -1726,6 +1795,60 @@ def _make_param_insert_shell(
     return shell
 
 
+def _make_elif_insert_shell(
+    *,
+    target_name: str,
+    order: int,
+    shell_name: str,
+    body: list[ast.stmt],
+    ref_path: RefPath | None = None,
+    keep_names: frozenset[str] = frozenset(),
+    location_donor: ast.AST | None = None,
+    copy_body: bool = True,
+) -> ast.FunctionDef:
+    if not body:
+        shell_body: list[ast.stmt] = [ast.Pass()]
+    elif copy_body:
+        shell_body = [clone_ast(stmt) for stmt in body]
+    else:
+        shell_body = list(body)
+    keywords: list[ast.keyword] = [
+        ast.keyword(arg="kind", value=ast.Constant(value="elif"))
+    ]
+    if order != 0:
+        keywords.append(
+            ast.keyword(arg="order", value=ast.Constant(value=order))
+        )
+    decorator = ast.Call(
+        func=ast.Name(id="astichi_insert", ctx=ast.Load()),
+        args=[ast.Name(id=target_name, ctx=ast.Load())],
+        keywords=keywords,
+    )
+    if ref_path is not None:
+        set_insert_ref(decorator, ref_path, phase="materialize")
+    shell = ast.FunctionDef(
+        name=shell_name,
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
+        ),
+        body=shell_body,
+        decorator_list=[decorator],
+        returns=None,
+        type_comment=None,
+        type_params=[],
+    )
+    add_astichi_scope_keep_names(shell, keep_names)
+    donor = location_donor or (shell_body[0] if shell_body else None)
+    _propagate_insert_shell_locations(shell, donor)
+    return shell
+
+
 def _root_scope_anchor(instance_name: str) -> str:
     """Anchor name for the per-root-instance scope-isolation shell.
 
@@ -1822,6 +1945,48 @@ def _lookup_parameter_supply_port(
             )
         )
     return matches[0]
+
+
+def _lookup_elif_supply_port(
+    composable: BasicComposable,
+) -> SupplyPort | None:
+    matches = [port for port in composable.supply_ports if port.shape.is_elif_clause()]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                "elif payload source exposes multiple elif supplies",
+                hint="use one `def astichi_elif(): ...` payload per source snippet",
+            )
+        )
+    return matches[0]
+
+
+def _extract_elif_payload_body(
+    body: list[ast.stmt],
+    *,
+    source_instance: str,
+) -> list[ast.stmt]:
+    if len(body) != 1 or not isinstance(body[0], ast.FunctionDef):
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                f"source instance {source_instance} has no root `def astichi_elif():` payload",
+                hint="elif targets require a source snippet containing exactly one `def astichi_elif(): ...`",
+            )
+        )
+    payload = body[0]
+    if payload.name != ELIF.source_name:
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                f"source instance {source_instance} has no root `def astichi_elif():` payload",
+                hint="elif targets require a source snippet containing exactly one `def astichi_elif(): ...`",
+            )
+        )
+    return clone_ast(payload.body)
 
 
 _BOUNDARY_EXPR_PREFIX_SPECS = tuple(
@@ -2115,6 +2280,37 @@ def _extract_expr_hole_name(node: ast.AST) -> str | None:
     if isinstance(first_arg, ast.Name):
         return first_arg.id
     return None
+
+
+def _extract_elif_hole_name(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call):
+        return None
+    if not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id != ELIF.source_name:
+        return None
+    if len(node.args) != 1:
+        return None
+    first_arg = node.args[0]
+    if isinstance(first_arg, ast.Name):
+        return first_arg.id
+    return None
+
+
+def _collect_elif_target_names_in_body(body: list[ast.stmt]) -> frozenset[str]:
+    names: set[str] = set()
+
+    class _Collector(_SkipInsertShellVisitorWithClassMixin, ast.NodeVisitor):
+        def visit_If(self, node: ast.If) -> None:
+            name = _extract_elif_hole_name(node.test)
+            if name is not None:
+                names.add(name)
+            self.generic_visit(node)
+
+    collector = _Collector()
+    for statement in body:
+        collector.visit(statement)
+    return frozenset(names)
 
 
 def _required_hole_names(tree: ast.AST) -> frozenset[str]:
@@ -3103,14 +3299,25 @@ def materialize_composable(
         )
 
     unmatched_block_shells = list(gate_facts.unmatched_block_shells)
+    unmatched_elif_shells = list(gate_facts.unmatched_elif_shells)
     unmatched_param_shells = list(gate_facts.unmatched_param_shells)
     unmatched_expr_inserts = list(gate_facts.unmatched_expr_inserts)
-    if unmatched_block_shells or unmatched_param_shells or unmatched_expr_inserts:
+    if (
+        unmatched_block_shells
+        or unmatched_elif_shells
+        or unmatched_param_shells
+        or unmatched_expr_inserts
+    ):
         parts: list[str] = []
         for name, lineno in unmatched_block_shells:
             parts.append(
                 f"@astichi_insert({name}) at line {lineno} has no matching "
                 f"astichi_hole({name}) in the same body"
+            )
+        for name, lineno in unmatched_elif_shells:
+            parts.append(
+                f"@astichi_insert({name}, kind='elif') at line {lineno} has no "
+                f"matching astichi_elif({name}) chain target in the same body"
             )
         for name, lineno in unmatched_expr_inserts:
             parts.append(
@@ -3240,6 +3447,7 @@ def materialize_composable(
     payload_local_directives = collect_payload_local_directives(tree)
     _realize_expression_insert_wrappers(tree)
     _flatten_block_inserts(tree)
+    _realize_elif_insert_wrappers(tree)
     insert_managed_imports(tree, managed_imports)
 
     pre_strip_markers = (
@@ -3421,17 +3629,121 @@ def _prefix_shell_refs_in_body(body: list[ast.stmt], prefix: RefPath) -> None:
         def _prefix_node(
             self, node: ast.FunctionDef | ast.AsyncFunctionDef
         ) -> None:
-            info = extract_block_insert_shell(node, phase="materialize")
-            if info is None or info.ref_path is None:
-                return
             for decorator in node.decorator_list:
-                if is_astichi_insert_call(decorator):
-                    prefix_insert_ref(decorator, prefix, phase="materialize")
-                    return
+                if not is_astichi_insert_call(decorator):
+                    continue
+                prefix_insert_ref(decorator, prefix, phase="materialize")
+                return
 
     prefixer = _ShellRefPrefixer()
     for index, stmt in enumerate(body):
         body[index] = prefixer.visit(stmt)  # type: ignore[assignment]
+
+
+def _append_elif_insert_shells(
+    body: list[ast.stmt],
+    *,
+    elif_replacements: dict[str, list[_ElifContribution]],
+) -> list[ast.stmt]:
+    appender = _ElifInsertShellAppender(elif_replacements)
+    return appender.apply_body(body)
+
+
+class _ElifInsertShellAppender:
+    def __init__(
+        self,
+        replacements: dict[str, list[_ElifContribution]],
+    ) -> None:
+        self._replacements = replacements
+        self._moved_contribution_ids: set[int] = set()
+
+    def apply_body(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        result: list[ast.stmt] = []
+        for stmt in body:
+            self._visit_nested_statement(stmt)
+            result.append(stmt)
+            if not isinstance(stmt, ast.If):
+                continue
+            for target_name in _elif_target_names_in_chain(stmt):
+                contributions = self._replacements.get(target_name)
+                if not contributions:
+                    continue
+                for contrib in contributions:
+                    contribution_id = id(contrib)
+                    copy_body = contribution_id in self._moved_contribution_ids
+                    self._moved_contribution_ids.add(contribution_id)
+                    result.append(
+                        _make_elif_insert_shell(
+                            target_name=target_name,
+                            order=contrib.order,
+                            shell_name=contrib.shell_name,
+                            body=contrib.body,
+                            ref_path=contrib.ref_path,
+                            keep_names=contrib.keep_names,
+                            location_donor=stmt,
+                            copy_body=copy_body,
+                        )
+                    )
+        return result
+
+    def _visit_nested_statement(self, stmt: ast.stmt) -> None:
+        if is_astichi_insert_shell(stmt):
+            return
+        if isinstance(stmt, ast.If):
+            self._visit_if_chain(stmt)
+            return
+        for _field_name, value in ast.iter_fields(stmt):
+            if not isinstance(value, list):
+                if isinstance(value, ast.AST):
+                    self._visit_nested_ast(value)
+                continue
+            if value and all(isinstance(item, ast.stmt) for item in value):
+                value[:] = self.apply_body(
+                    [item for item in value if isinstance(item, ast.stmt)]
+                )
+                continue
+            for item in value:
+                if isinstance(item, ast.AST):
+                    self._visit_nested_ast(item)
+
+    def _visit_nested_ast(self, node: ast.AST) -> None:
+        if isinstance(node, ast.stmt):
+            self._visit_nested_statement(node)
+            return
+        for _field_name, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if value and all(isinstance(item, ast.stmt) for item in value):
+                    value[:] = self.apply_body(
+                        [item for item in value if isinstance(item, ast.stmt)]
+                    )
+                    continue
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        self._visit_nested_ast(item)
+                continue
+            if isinstance(value, ast.AST):
+                self._visit_nested_ast(value)
+
+    def _visit_if_chain(self, stmt: ast.If) -> None:
+        current = stmt
+        while True:
+            current.body = self.apply_body(current.body)
+            if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+                current = current.orelse[0]
+                continue
+            current.orelse = self.apply_body(current.orelse)
+            return
+
+
+def _elif_target_names_in_chain(stmt: ast.If) -> tuple[str, ...]:
+    names: list[str] = []
+    current = stmt
+    while len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+        current = current.orelse[0]
+        name = _extract_elif_hole_name(current.test)
+        if name is not None:
+            names.append(name)
+    return tuple(names)
 
 
 def _replace_targets_in_tree(
@@ -3440,6 +3752,7 @@ def _replace_targets_in_tree(
     block_replacements: dict[tuple[RefPath, str], list[_BlockContribution]],
     expr_replacements: dict[tuple[RefPath, str], list[_ExpressionInsert]],
     param_replacements: dict[tuple[RefPath, str], list[_ParamContribution]],
+    elif_replacements: dict[tuple[RefPath, str], list[_ElifContribution]],
 ) -> None:
     """Apply target replacements keyed by ``(shell_ref_path, hole_name)``."""
 
@@ -3459,12 +3772,22 @@ def _replace_targets_in_tree(
             for (ref_path, target_name), contributions in param_replacements.items()
             if ref_path == current_ref
         }
+        local_elif = {
+            target_name: contributions
+            for (ref_path, target_name), contributions in elif_replacements.items()
+            if ref_path == current_ref
+        }
         if local_block or local_expr or local_param:
             body = _replace_targets_in_body(
                 body,
                 block_replacements=local_block,
                 expr_replacements=local_expr,
                 param_replacements=local_param,
+            )
+        if local_elif:
+            body = _append_elif_insert_shells(
+                body,
+                elif_replacements=local_elif,
             )
         for stmt in body:
             info = extract_block_insert_shell(stmt, phase="materialize")
@@ -3486,6 +3809,7 @@ class _MaterializeGateFacts:
     satisfied_param_holes: frozenset[str]
     unresolved_arg_identifiers: tuple[tuple[str, tuple[int, ...]], ...]
     unmatched_block_shells: tuple[tuple[str, int], ...]
+    unmatched_elif_shells: tuple[tuple[str, int], ...]
     unmatched_param_shells: tuple[tuple[str, int], ...]
     unmatched_expr_inserts: tuple[tuple[str, int], ...]
 
@@ -3509,6 +3833,7 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
         self._satisfied_param_holes: set[str] = set()
         self._unresolved_arg_lines: dict[str, list[int]] = {}
         self._unmatched_block_shells: list[tuple[str, int]] = []
+        self._unmatched_elif_shells: list[tuple[str, int]] = []
         self._unmatched_param_shells: list[tuple[str, int]] = []
         self._unmatched_expr_inserts: list[tuple[str, int]] = []
 
@@ -3528,6 +3853,7 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
             satisfied_param_holes=frozenset(self._satisfied_param_holes),
             unresolved_arg_identifiers=unresolved,
             unmatched_block_shells=tuple(self._unmatched_block_shells),
+            unmatched_elif_shells=tuple(self._unmatched_elif_shells),
             unmatched_param_shells=tuple(self._unmatched_param_shells),
             unmatched_expr_inserts=tuple(self._unmatched_expr_inserts),
         )
@@ -3564,6 +3890,9 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
         hole_name = _extract_expr_hole_name(node)
         if hole_name is not None and id(node) not in self._optional_annotation_hole_ids:
             self._required_holes.add(hole_name)
+        elif_name = _extract_elif_hole_name(node)
+        if elif_name is not None:
+            self._required_holes.add(elif_name)
         if isinstance(node, ast.Call):
             self._satisfied_holes.update(_call_region_locally_satisfied(node))
 
@@ -3604,6 +3933,8 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
         stmt_body = [item for item in body if isinstance(item, ast.stmt)]
         block_holes: set[str] = set()
         block_shells: list[tuple[str, int]] = []
+        elif_holes = _elif_targets_in_statement_list(stmt_body)
+        elif_shells: list[tuple[str, int]] = []
         param_shells: list[tuple[str, int]] = []
         for stmt in stmt_body:
             hole_name = _extract_hole_name(stmt)
@@ -3613,6 +3944,11 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
             if block_info is not None:
                 block_shells.append(
                     (block_info.target_name, getattr(stmt, "lineno", 0) or 0)
+                )
+            elif_info = extract_elif_insert_shell(stmt, phase="materialize")
+            if elif_info is not None:
+                elif_shells.append(
+                    (elif_info.target_name, getattr(stmt, "lineno", 0) or 0)
                 )
             param_info = extract_param_insert_shell(stmt, phase="materialize")
             if param_info is not None:
@@ -3624,6 +3960,12 @@ class _MaterializeGateFactsCollector(ast.NodeVisitor):
         self._satisfied_holes.update(block_holes & block_shell_names)
         self._unmatched_block_shells.extend(
             (name, lineno) for name, lineno in block_shells if name not in block_holes
+        )
+
+        elif_shell_names = {name for name, _lineno in elif_shells}
+        self._satisfied_holes.update(elif_holes & elif_shell_names)
+        self._unmatched_elif_shells.extend(
+            (name, lineno) for name, lineno in elif_shells if name not in elif_holes
         )
 
         param_holes = _param_holes_in_statement_list(stmt_body)
@@ -3755,6 +4097,8 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                 continue
             holes: set[str] = set()
             shells: set[str] = set()
+            elif_holes = _elif_targets_in_statement_list(value)
+            elif_shells: set[str] = set()
             for stmt in value:
                 hole_name = _extract_hole_name(stmt)
                 if hole_name is not None:
@@ -3762,7 +4106,11 @@ def _locally_satisfied_hole_names(tree: ast.AST) -> frozenset[str]:
                 info = extract_block_insert_shell(stmt, phase="materialize")
                 if info is not None:
                     shells.add(info.target_name)
+                elif_info = extract_elif_insert_shell(stmt, phase="materialize")
+                if elif_info is not None:
+                    elif_shells.add(elif_info.target_name)
             matched.update(holes & shells)
+            matched.update(elif_holes & elif_shells)
         if isinstance(node, ast.Call):
             matched.update(_call_region_locally_satisfied(node))
     return frozenset(matched)
@@ -3857,6 +4205,15 @@ def _param_holes_in_statement_list(body: list[ast.stmt]) -> set[str]:
     return names
 
 
+def _elif_targets_in_statement_list(body: list[ast.stmt]) -> set[str]:
+    names: set[str] = set()
+    for statement in body:
+        if not isinstance(statement, ast.If):
+            continue
+        names.update(_elif_target_names_in_chain(statement))
+    return names
+
+
 def _flatten_block_inserts(tree: ast.AST) -> None:
     """Recursively flatten `astichi_hole`/`astichi_insert` pairs in bodies.
 
@@ -3871,6 +4228,158 @@ def _flatten_block_inserts(tree: ast.AST) -> None:
     See `AstichiApiDesignV1-CompositionUnification.md §4`.
     """
     _BlockInsertFlattener().visit(tree)
+
+
+def _realize_elif_insert_wrappers(tree: ast.Module) -> None:
+    _ElifInsertRealizer().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+class _ElifInsertRealizer(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self._function_depth = 0
+        super().__init__()
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                new_items: list[object] = []
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        visited = self.visit(item)
+                        if visited is None:
+                            continue
+                        if isinstance(visited, list):
+                            new_items.extend(visited)
+                            continue
+                        new_items.append(visited)
+                    else:
+                        new_items.append(item)
+                if new_items and all(isinstance(item, ast.stmt) for item in new_items):
+                    stmt_list: list[ast.stmt] = [
+                        item for item in new_items if isinstance(item, ast.stmt)
+                    ]
+                    value[:] = self._realize_body(stmt_list)
+                else:
+                    value[:] = new_items
+                continue
+            if isinstance(value, ast.AST):
+                setattr(node, field, self.visit(value))
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        if is_astichi_insert_shell(node):
+            return self.generic_visit(node)
+        self._function_depth += 1
+        try:
+            return self.generic_visit(node)
+        finally:
+            self._function_depth -= 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        if is_astichi_insert_shell(node):
+            return self.generic_visit(node)
+        self._function_depth += 1
+        try:
+            return self.generic_visit(node)
+        finally:
+            self._function_depth -= 1
+
+    def _realize_body(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        shells_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]] = {}
+        for index, stmt in enumerate(body):
+            info = extract_elif_insert_shell(stmt, phase="materialize")
+            if info is None:
+                continue
+            assert isinstance(stmt, ast.FunctionDef)
+            shells_by_target.setdefault(info.target_name, []).append(
+                (info.order, index, stmt)
+            )
+        if not shells_by_target:
+            return body
+
+        consumed_shell_ids: set[int] = set()
+        result: list[ast.stmt] = []
+        for stmt in body:
+            if id(stmt) in consumed_shell_ids:
+                continue
+            if isinstance(stmt, ast.If):
+                consumed = self._apply_to_if_chain(stmt, shells_by_target)
+                consumed_shell_ids.update(consumed)
+                result.append(stmt)
+                continue
+            result.append(stmt)
+        return result
+
+    def _apply_to_if_chain(
+        self,
+        root: ast.If,
+        shells_by_target: dict[str, list[tuple[int, int, ast.FunctionDef]]],
+    ) -> set[int]:
+        consumed: set[int] = set()
+        current = root
+        while len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+            marker_if = current.orelse[0]
+            target_name = _extract_elif_hole_name(marker_if.test)
+            if target_name is None or target_name not in shells_by_target:
+                current = marker_if
+                continue
+            ordered = sorted(
+                shells_by_target[target_name],
+                key=lambda item: (item[0], item[1]),
+            )
+            current.orelse = self._fold_elif_contributions(
+                marker_if.orelse,
+                ordered,
+            )
+            consumed.update(id(shell) for _order, _index, shell in ordered)
+            return consumed
+        return consumed
+
+    def _fold_elif_contributions(
+        self,
+        tail: list[ast.stmt],
+        ordered: list[tuple[int, int, ast.FunctionDef]],
+    ) -> list[ast.stmt]:
+        chain = tail
+        for _order, _index, shell in reversed(ordered):
+            payload_if = _extract_elif_shell_payload_if(shell)
+            if self._function_depth == 0 and _body_contains_return(payload_if.body):
+                raise ValueError(
+                    format_astichi_error(
+                        "materialize",
+                        "elif contribution contains return for a module-level target",
+                        hint="place return-producing elif targets inside a function or remove the return",
+                    )
+                )
+            body = clone_ast(payload_if.body)
+            if not body:
+                body = [copy_astichi_location(ast.Pass(), payload_if)]
+            generated = ast.If(
+                test=clone_ast(payload_if.test),
+                body=body,
+                orelse=chain,
+            )
+            copy_astichi_location(generated, payload_if)
+            chain = [generated]
+        return chain
+
+
+def _extract_elif_shell_payload_if(shell: ast.FunctionDef) -> ast.If:
+    candidates = [stmt for stmt in shell.body if isinstance(stmt, ast.If)]
+    if len(candidates) != 1:
+        raise ValueError(
+            format_astichi_error(
+                "materialize",
+                "elif insert shell must contain exactly one payload if statement",
+                hint="rebuild the composable from a valid `def astichi_elif(): ...` source",
+            )
+        )
+    return candidates[0]
+
+
+def _body_contains_return(body: list[ast.stmt]) -> bool:
+    return any(isinstance(node, ast.Return) for stmt in body for node in ast.walk(stmt))
 
 
 class _BlockInsertFlattener(ast.NodeTransformer):

@@ -18,6 +18,7 @@ from astichi.asttools import (
     POSITIONAL_VARIADIC,
     SCALAR_EXPR,
     MarkerShape,
+    is_astichi_insert_shell,
 )
 from astichi.model.semantics import (
     ARG_IDENTIFIER_ORIGIN,
@@ -589,10 +590,11 @@ class _InsertMarker(MarkerSpec):
                     )
                 if not isinstance(keyword.value, ast.Constant) or keyword.value.value not in {
                     "block",
+                    "elif",
                     "params",
                 }:
                     raise ValueError(
-                        "astichi_insert kind= must be the literal string 'block' or 'params'"
+                        "astichi_insert kind= must be the literal string 'block', 'elif', or 'params'"
                     )
                 continue
             if keyword.arg == "order":
@@ -1126,7 +1128,7 @@ class _MarkerVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.markers: list[RecognizedMarker] = []
         self._stack: list[ast.AST] = []
-        self._elif_target_names: set[str] = set()
+        self._elif_target_names: set[tuple[int, str]] = set()
 
     def visit(self, node: ast.AST) -> object:
         self._stack.append(node)
@@ -1146,12 +1148,13 @@ class _MarkerVisitor(ast.NodeVisitor):
                 _validate_elif_target_position(node, self._parent(), self._grandparent())
                 assert shape is ELIF_CLAUSE
                 name = _elif_target_name(node)
-                if name in self._elif_target_names:
+                duplicate_key = (id(self._elif_target_scope()), name)
+                if duplicate_key in self._elif_target_names:
                     raise ValueError(
                         "duplicate astichi_elif target in the same source: "
                         f"{name}"
                     )
-                self._elif_target_names.add(name)
+                self._elif_target_names.add(duplicate_key)
             self.markers.append(
                 RecognizedMarker(
                     spec=marker,
@@ -1322,6 +1325,16 @@ class _MarkerVisitor(ast.NodeVisitor):
         if len(self._stack) < 3:
             return None
         return self._stack[-3]
+
+    def _elif_target_scope(self) -> ast.AST:
+        for node in reversed(self._stack):
+            if isinstance(node, ast.Module):
+                return node
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ) and is_astichi_insert_shell(node):
+                return node
+        return self._stack[0]
 
 
 def _infer_shape(node: ast.Call, parent: ast.AST | None) -> MarkerShape:
