@@ -39,6 +39,9 @@ N4b extends `extract_template_snapshot(...)` to direct call markers for
 expression/block holes, external/ref bindings, identifier import/pass/export,
 keep, pyimport, and comments.
 
+N4c extends `extract_template_snapshot(...)` to identifier suffix markers for
+names, definition spellings, function parameters, call keywords, and imports.
+
 Build explicitly from the Astichi repo root:
 
 ```bash

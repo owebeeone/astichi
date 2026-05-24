@@ -77,10 +77,10 @@ def test_native_template_extract_rejects_marker_source_when_available() -> None:
     if module is None:
         pytest.skip("native engine extension is not built")
 
-    with pytest.raises(ValueError, match="suffix marker extraction starts in N4c"):
+    with pytest.raises(ValueError, match="metadata and payload extraction"):
         module.extract_template_snapshot(
             _engine_with_current_bundle(module),
-            "class Name__astichi_arg__:\n    pass\n",
+            "@astichi_insert(slot)\ndef build():\n    pass\n",
             "marker.py",
             1,
         )
@@ -145,6 +145,36 @@ def test_native_template_extract_rejects_bad_direct_call_shape_when_available() 
             "bad_marker.py",
             1,
         )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "result = name__astichi_arg__\n",
+        "class Name__astichi_arg__:\n    pass\n",
+        "def func__astichi_arg__():\n    pass\n",
+        "def f(value__astichi_arg__):\n    pass\n",
+        "result = target(first__astichi_arg__=1)\n",
+        "from module_name__astichi_arg__ import symbol__astichi_arg__\n",
+        "result = name__astichi_keep__\n",
+    ],
+)
+def test_native_template_extract_identifier_suffixes_match_python_reference_when_available(
+    source: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    actual = module.extract_template_snapshot(
+        _engine_with_current_bundle(module),
+        source,
+        "identifier_suffix.py",
+        1,
+    )
+    expected = astichi.compile(source)._lower_template.structural_snapshot()
+
+    assert actual == expected
 
 
 def _engine_with_current_bundle(module: object) -> object:

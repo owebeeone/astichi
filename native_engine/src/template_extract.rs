@@ -6,6 +6,8 @@ use rustpython_parser::text_size::TextRange;
 use crate::handles::EngineHandle;
 
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
+const ARG_SUFFIX: &str = "__astichi_arg__";
+const KEEP_SUFFIX: &str = "__astichi_keep__";
 
 #[derive(Clone)]
 struct SourceMap {
@@ -42,6 +44,7 @@ struct ExtractedRecord {
     resource_name: String,
     semantic_summary: String,
     surface_key: String,
+    code_owner: Vec<String>,
 }
 
 #[pyfunction]
@@ -86,11 +89,6 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn reject_deferred_markers(source: &str) -> PyResult<()> {
-    if source.contains("__astichi_") {
-        return Err(crate::errors::schema_error(
-            "native suffix marker extraction starts in N4c",
-        ));
-    }
     if source.contains("astichi_insert") || source.contains("astichi_params") {
         return Err(crate::errors::schema_error(
             "native metadata and payload extraction starts after N4b",
@@ -168,6 +166,21 @@ fn stmt_records(
             Ok(())
         }
         ast::Stmt::FunctionDef(node) => {
+            if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    Vec::new(),
+                ));
+            }
+            function_argument_suffix_records(
+                &node.args,
+                path,
+                &strip_known_suffix(node.name.as_str()),
+                source_map,
+                records,
+            );
             for (index, stmt) in node.body.iter().enumerate() {
                 stmt_records(
                     stmt,
@@ -180,6 +193,14 @@ fn stmt_records(
             Ok(())
         }
         ast::Stmt::ClassDef(node) => {
+            if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    Vec::new(),
+                ));
+            }
             for (index, stmt) in node.body.iter().enumerate() {
                 stmt_records(
                     stmt,
@@ -188,6 +209,38 @@ fn stmt_records(
                     false,
                     records,
                 )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Import(node) => {
+            for (index, alias) in node.names.iter().enumerate() {
+                alias_suffix_records(
+                    alias,
+                    &format!("{path}/names[{index}]"),
+                    source_map,
+                    records,
+                );
+            }
+            Ok(())
+        }
+        ast::Stmt::ImportFrom(node) => {
+            if let Some(module) = node.module.as_ref() {
+                if let Some(resource_name) = strip_arg_suffix(module.as_str()) {
+                    records.push(identifier_demand_record(
+                        path,
+                        &resource_name,
+                        source_map.line(node.range),
+                        Vec::new(),
+                    ));
+                }
+            }
+            for (index, alias) in node.names.iter().enumerate() {
+                alias_suffix_records(
+                    alias,
+                    &format!("{path}/names[{index}]"),
+                    source_map,
+                    records,
+                );
             }
             Ok(())
         }
@@ -217,6 +270,16 @@ fn expr_records(
                 )?;
             }
             for (index, keyword) in node.keywords.iter().enumerate() {
+                if let Some(arg) = keyword.arg.as_ref() {
+                    if let Some(resource_name) = strip_arg_suffix(arg.as_str()) {
+                        records.push(identifier_demand_record(
+                            &format!("{path}/keywords[{index}]"),
+                            &resource_name,
+                            source_map.line(keyword.range),
+                            Vec::new(),
+                        ));
+                    }
+                }
                 expr_records(
                     &keyword.value,
                     &format!("{path}/keywords[{index}]/value"),
@@ -224,6 +287,17 @@ fn expr_records(
                     false,
                     records,
                 )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Name(node) => {
+            if let Some(resource_name) = strip_arg_suffix(node.id.as_str()) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    Vec::new(),
+                ));
             }
             Ok(())
         }
@@ -293,6 +367,104 @@ fn call_name(expr: &ast::Expr) -> Option<&str> {
     match expr {
         ast::Expr::Name(node) => Some(node.id.as_str()),
         _ => None,
+    }
+}
+
+fn function_argument_suffix_records(
+    args: &ast::Arguments,
+    path: &str,
+    owner_name: &str,
+    source_map: &SourceMap,
+    records: &mut Vec<ExtractedRecord>,
+) {
+    let owner = vec![owner_name.to_string()];
+    for (index, arg) in args.posonlyargs.iter().enumerate() {
+        arg_suffix_record(
+            &arg.def,
+            &format!("{path}/args/posonlyargs[{index}]"),
+            source_map,
+            owner.clone(),
+            records,
+        );
+    }
+    for (index, arg) in args.args.iter().enumerate() {
+        arg_suffix_record(
+            &arg.def,
+            &format!("{path}/args/args[{index}]"),
+            source_map,
+            owner.clone(),
+            records,
+        );
+    }
+    for (index, arg) in args.kwonlyargs.iter().enumerate() {
+        arg_suffix_record(
+            &arg.def,
+            &format!("{path}/args/kwonlyargs[{index}]"),
+            source_map,
+            owner.clone(),
+            records,
+        );
+    }
+    if let Some(arg) = args.vararg.as_ref() {
+        arg_suffix_record(
+            arg,
+            &(path.to_string() + "/args/vararg"),
+            source_map,
+            owner.clone(),
+            records,
+        );
+    }
+    if let Some(arg) = args.kwarg.as_ref() {
+        arg_suffix_record(
+            arg,
+            &(path.to_string() + "/args/kwarg"),
+            source_map,
+            owner,
+            records,
+        );
+    }
+}
+
+fn arg_suffix_record(
+    arg: &ast::Arg,
+    path: &str,
+    source_map: &SourceMap,
+    owner: Vec<String>,
+    records: &mut Vec<ExtractedRecord>,
+) {
+    if let Some(resource_name) = strip_arg_suffix(arg.arg.as_str()) {
+        records.push(identifier_demand_record(
+            path,
+            &resource_name,
+            source_map.line(arg.range),
+            owner,
+        ));
+    }
+}
+
+fn alias_suffix_records(
+    alias: &ast::Alias,
+    path: &str,
+    source_map: &SourceMap,
+    records: &mut Vec<ExtractedRecord>,
+) {
+    if let Some(resource_name) = strip_arg_suffix(alias.name.as_str()) {
+        records.push(identifier_demand_record(
+            path,
+            &resource_name,
+            source_map.line(alias.range),
+            Vec::new(),
+        ));
+    }
+    if let Some(asname) = alias.asname.as_ref() {
+        if let Some(resource_name) = strip_arg_suffix(asname.as_str()) {
+            records.push(identifier_demand_record(
+                path,
+                &resource_name,
+                source_map.line(alias.range),
+                Vec::new(),
+            ));
+        }
     }
 }
 
@@ -445,6 +617,24 @@ fn external_record(path: &str, resource_name: &str, line_number: usize) -> Extra
     )
 }
 
+fn identifier_demand_record(
+    path: &str,
+    resource_name: &str,
+    line_number: usize,
+    owner: Vec<String>,
+) -> ExtractedRecord {
+    record_with_owner(
+        path,
+        &authored_summary(resource_name, line_number),
+        "identifier.demand",
+        "rewrite-identifier",
+        "identifier.demand",
+        resource_name,
+        "astichi.surface.identifier.demand",
+        owner,
+    )
+}
+
 fn block_production_record(line_number: u32) -> ExtractedRecord {
     record(
         ".",
@@ -466,6 +656,33 @@ fn record(
     resource_name: &str,
     surface_key: &str,
 ) -> ExtractedRecord {
+    record_with_owner(
+        ast_path,
+        authored_summary,
+        role_key,
+        materialization_anchor,
+        inventory_kind,
+        resource_name,
+        surface_key,
+        Vec::new(),
+    )
+}
+
+fn record_with_owner(
+    ast_path: &str,
+    authored_summary: &str,
+    role_key: &str,
+    materialization_anchor: &str,
+    inventory_kind: &str,
+    resource_name: &str,
+    surface_key: &str,
+    code_owner: Vec<String>,
+) -> ExtractedRecord {
+    let owner_summary = if code_owner.is_empty() {
+        ".".to_string()
+    } else {
+        code_owner.join(".")
+    };
     ExtractedRecord {
         ast_path: ast_path.to_string(),
         authored_summary: authored_summary.to_string(),
@@ -473,13 +690,30 @@ fn record(
         materialization_anchor: materialization_anchor.to_string(),
         inventory_kind: inventory_kind.to_string(),
         resource_name: resource_name.to_string(),
-        semantic_summary: format!("{inventory_kind} name={resource_name} owner=. build_path=."),
+        semantic_summary: format!(
+            "{inventory_kind} name={resource_name} owner={owner_summary} build_path=."
+        ),
         surface_key: surface_key.to_string(),
+        code_owner,
     }
 }
 
 fn authored_summary(resource_name: &str, line_number: usize) -> String {
     format!("{resource_name} at line {line_number}")
+}
+
+fn strip_arg_suffix(value: &str) -> Option<String> {
+    value
+        .strip_suffix(ARG_SUFFIX)
+        .map(|stripped| stripped.to_string())
+}
+
+fn strip_known_suffix(value: &str) -> String {
+    value
+        .strip_suffix(ARG_SUFFIX)
+        .or_else(|| value.strip_suffix(KEEP_SUFFIX))
+        .unwrap_or(value)
+        .to_string()
 }
 
 fn template_key(py: Python<'_>, ast_dump: &str, source_summary: &str) -> PyResult<String> {
@@ -565,7 +799,7 @@ fn record_snapshots(py: Python<'_>, records: &[ExtractedRecord]) -> PyResult<Py<
     let list = PyList::empty(py);
     for (index, record) in records.iter().enumerate() {
         let item = PyDict::new(py);
-        item.set_item("code_owner", Vec::<&str>::new())?;
+        item.set_item("code_owner", &record.code_owner)?;
         item.set_item("inventory_kind", &record.inventory_kind)?;
         item.set_item("locator_id", index)?;
         item.set_item("occurrence_id", 0)?;
