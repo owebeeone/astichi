@@ -59,6 +59,10 @@ Completed tags:
 - `perf-refactor/slice-12b1`: unfilled defaulted block holes materialize their
   fallback suites on the lower path, with fallback selection visible in lower
   structural snapshots.
+- `perf-refactor/slice-12b2`: static managed pyimports materialize on the lower
+  path with managed-import requests visible in lower hygiene snapshots;
+  collision and dynamic-module cases still exercise the counted adapter
+  fallback.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

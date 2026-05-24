@@ -124,6 +124,13 @@
       "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=dispatch name=branches kind=hole.elif locator=body[0]/body[0]/orelse[0]/test\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Create/#1 build_path=Root/Create code_owner=. name=astichi_elif kind=production.elif locator=body[0]\n  Root/Create/#2 build_path=Root/Create code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n\nport_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n\nhole_map:\n  branches: Root/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1"
     },
     {
+      "candidate_checks": [],
+      "final_source": "from foo import a, b\nresult = a + b\n",
+      "lower_source": "from foo import a, b\nresult = a + b\n",
+      "name": "pyimport_static",
+      "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#1\n\nport_map:\n  __block__: Root/#1\n\nproduction_map:\n  __block__: Root/#1"
+    },
+    {
       "candidate_checks": [
         {
           "candidate_lines": [

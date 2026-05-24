@@ -634,11 +634,11 @@ overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
 structural data. `scope.lower_materialize()` can explicitly materialize the
 current expression-insert, ordinary block-insert, unfilled defaulted-block
 fallback, simple parameter-insert, simple elif-clause insert, and
-external/identifier overlay subset without calling builder merge; unsupported
-surfaces still use a counted adapter fallback. `scope.build(...)` now selects
-that lower path automatically when the lower result is closed, meaning no
-demand ports remain after materialization. Unsupported or not-yet-closed states
-stay on the counted builder-adapter path.
+static managed-pyimport plus external/identifier overlay subset without calling
+builder merge; unsupported surfaces still use a counted adapter fallback.
+`scope.build(...)` now selects that lower path automatically when the lower
+result is closed, meaning no demand ports remain after materialization.
+Unsupported or not-yet-closed states stay on the counted builder-adapter path.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
@@ -648,11 +648,11 @@ post-Python profile gate. A transient lower differential harness now lives in
 `tests/test_lower_engine_differential_harness.py`; it compares lower candidate
 lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
-It covers block, defaulted-block fallback, expression, parameter, elif,
-external overlay, identifier overlay, and single-add satisfaction fixtures. For
-lower-supported fixtures it also records lower-source output. Delete it once
-lower materialization is authoritative enough that the adapter comparison is no
-longer useful.
+It covers block, defaulted-block fallback, expression, parameter, elif, static
+pyimport, external overlay, identifier overlay, and single-add satisfaction
+fixtures. For lower-supported fixtures it also records lower-source output.
+Delete it once lower materialization is authoritative enough that the adapter
+comparison is no longer useful.
 
 Parameter-hole materialization is represented in lower operation and hygiene
 streams, has a structural plan golden, and final lower materialization supports
@@ -671,6 +671,12 @@ streams with an explicit fallback capture and structural plan golden. Filled
 defaulted block holes use the same lower block-splice operation as ordinary
 block holes; unfilled defaulted holes now materialize their fallback suites on
 the lower path.
+
+Managed pyimports are represented in lower hygiene streams and have a
+structural plan golden. Final lower materialization supports static module
+imports without local-name collisions; dynamic module refs, collision renaming,
+and source-payload boundary interactions still use the adapter path until the
+boundary/hygiene slices.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

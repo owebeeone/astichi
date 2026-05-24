@@ -77,6 +77,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("expression_insert", _expression_insert),
         _Fixture("parameter_insert", _parameter_insert),
         _Fixture("elif_insert", _elif_insert),
+        _Fixture("pyimport_static", _pyimport_static),
         _Fixture("external_overlay", _external_overlay),
         _Fixture("identifier_overlay", _identifier_overlay),
         _Fixture("single_add_satisfaction", _single_add_satisfaction),
@@ -210,6 +211,18 @@ def _elif_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("elif_insert", scope, (check,), lower_supported=True)
+
+
+def _pyimport_static() -> dict[str, Any]:
+    root = _piece("astichi_pyimport(module=foo, names=(a, b))\nresult = a + b")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    return _fixture_result(
+        "pyimport_static",
+        scope,
+        (),
+        lower_supported=True,
+    )
 
 
 def _external_overlay() -> dict[str, Any]:

@@ -230,6 +230,38 @@ def test_scope_build_selects_lower_materialization_for_parameters() -> None:
     assert counts.get("build_merge", 0) == 0
 
 
+def test_lower_materializes_static_pyimport_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        "astichi_pyimport(module=foo, names=(a, b))\nresult = a + b\n"
+    )
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == "from foo import a, b\nresult = a + b\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_scope_build_uses_adapter_for_pyimport_name_collision() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("astichi_pyimport(module=foo, names=(a,))\na = 1\n")
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        source = scope.build().materialize().emit(provenance=False)
+
+    assert "astichi_pyimport" not in source
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_adapter_fallback"] == 1
+    assert counts["build_merge"] == 1
+
+
 def test_lower_materializes_elif_clauses_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(

@@ -9,13 +9,14 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from astichi.ast_provenance import astichi_source_file
-from astichi.asttools import clone_ast
+from astichi.asttools import clone_ast, import_statement_binding_names
 from astichi.builder.graph import (
     format_indexed_instance_name,
     parse_indexed_instance_name,
 )
 from astichi.builder.handles import BuilderHandle, InstanceHandle
 from astichi.lower_engine import (
+    HygieneOperation,
     LowerEngine,
     LowerTemplateBinding,
     LowerTemplateCache,
@@ -329,7 +330,8 @@ class AssemblyScope:
 
     def lower_materialization_plan(self) -> MaterializationPlan:
         """Return the lower-owned materialization plan for diagnostics/tests."""
-        return self._lower_engine.build_materialization_plan(self._lower_state)
+        plan = self._lower_engine.build_materialization_plan(self._lower_state)
+        return self._append_lower_pyimport_hygiene(plan)
 
     def lower_structural_snapshot(
         self,
@@ -758,6 +760,8 @@ class AssemblyScope:
             elif_operations,
         ):
             return None
+        if not self._apply_lower_managed_pyimports(tree):
+            return None
         ast.fix_missing_locations(tree)
         from astichi.model.basic import _rebuild_composable
 
@@ -773,6 +777,48 @@ class AssemblyScope:
     def _lower_materialize_if_supported(self) -> BasicComposable | None:
         return self._try_lower_materialize_expression_overlay_subset(
             self.lower_materialization_plan()
+        )
+
+    def _append_lower_pyimport_hygiene(
+        self,
+        plan: MaterializationPlan,
+    ) -> MaterializationPlan:
+        root_id = plan.root_occurrence_id
+        if root_id is None:
+            return plan
+        root = self._lower_composable_by_occurrence.get(root_id)
+        if root is None:
+            return plan
+        try:
+            from astichi.materialize.pyimport import collect_managed_imports
+
+            records = collect_managed_imports(root.markers)
+        except ValueError:
+            return plan
+        if not records:
+            return plan
+        hygiene = tuple(
+            HygieneOperation(
+                operation_key="astichi.operation.managed_import_request",
+                target_scope_id=0,
+                captures={
+                    "final_local_name": record.final_local_name,
+                    "module_path": ".".join(record.module_path),
+                    "original_symbol": record.original_symbol,
+                    "root_occurrence_id": root_id.index,
+                },
+            )
+            for record in records
+        )
+        return MaterializationPlan(
+            root_occurrence_id=plan.root_occurrence_id,
+            operation_stream=plan.operation_stream,
+            hygiene_stream=hygiene + plan.hygiene_stream,
+            debug_views={
+                **plan.debug_views,
+                "managed_import_request_count": len(hygiene),
+            },
+            artifact_requests=plan.artifact_requests,
         )
 
     def _collect_identifier_operation(
@@ -809,6 +855,37 @@ class AssemblyScope:
             operation.overlay_id
         ]
         return True
+
+    def _apply_lower_managed_pyimports(self, tree: ast.Module) -> bool:
+        from astichi.lowering import apply_external_ref_lowering, recognize_markers
+        from astichi.materialize.pyimport import (
+            collect_managed_imports,
+            has_pyimport_marker,
+            insert_managed_imports,
+        )
+
+        try:
+            apply_external_ref_lowering(tree)
+            markers = recognize_markers(tree)
+            if not has_pyimport_marker(markers):
+                return True
+            marker_call_ids = {
+                id(marker.node)
+                for marker in markers
+                if marker.source_name == "astichi_pyimport"
+            }
+            if not marker_call_ids <= _module_pyimport_call_ids(tree):
+                return False
+            records = collect_managed_imports(markers)
+        except ValueError:
+            return False
+        if not records:
+            return False
+        if _lower_pyimport_collides_with_existing_bindings(tree, records):
+            return False
+        insert_managed_imports(tree, records)
+        _strip_lower_pyimport_declarations(tree)
+        return not has_pyimport_marker(recognize_markers(tree))
 
     def _apply_lower_expression_operation(
         self,
@@ -1440,6 +1517,77 @@ def _body_contains_return(body: Iterable[ast.stmt]) -> bool:
         isinstance(node, ast.Return)
         for statement in body
         for node in ast.walk(statement)
+    )
+
+
+def _module_pyimport_call_ids(tree: ast.Module) -> frozenset[int]:
+    call_ids: set[int] = set()
+    for statement in tree.body:
+        if not isinstance(statement, ast.Expr):
+            continue
+        if _is_lower_pyimport_call(statement.value):
+            call_ids.add(id(statement.value))
+    return frozenset(call_ids)
+
+
+def _lower_pyimport_collides_with_existing_bindings(
+    tree: ast.Module,
+    records: Iterable[object],
+) -> bool:
+    final_names = tuple(
+        name
+        for record in records
+        if isinstance((name := getattr(record, "final_local_name", None)), str)
+    )
+    if len(final_names) != len(set(final_names)):
+        return True
+    bindings: set[str] = set()
+
+    class _BindingCollector(ast.NodeVisitor):
+        def visit_Expr(self, node: ast.Expr) -> None:
+            if _is_lower_pyimport_call(node.value):
+                return
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                bindings.add(node.id)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            bindings.add(node.name)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            bindings.add(node.name)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            bindings.add(node.name)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            bindings.update(import_statement_binding_names(node, include_star=True))
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            bindings.update(import_statement_binding_names(node, include_star=True))
+
+    _BindingCollector().visit(tree)
+    return bool(set(final_names) & bindings)
+
+
+def _strip_lower_pyimport_declarations(tree: ast.Module) -> None:
+    class _Stripper(ast.NodeTransformer):
+        def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+            if _is_lower_pyimport_call(node.value):
+                return None
+            return self.generic_visit(node)
+
+    _Stripper().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+def _is_lower_pyimport_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "astichi_pyimport"
     )
 
 
