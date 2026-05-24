@@ -558,11 +558,14 @@ builder and inventory APIs. It is implemented, but it is not the full future
 YIDL assembler contract.
 
 The top-level `astichi.assembler` export surface is intentionally limited to
-the documented helper APIs plus the generic runner/production client APIs.
-Low-level candidate/resource implementation classes remain in
-`astichi.assembler.scope` for the current runner and YIDL route-through, but
-they are adapter surfaces for the lower-engine refactor rather than stable
-top-level public exports.
+the documented scope helper APIs used by YIDL. The old generic
+`astichi.assembler.client`, `AssemblyRunner`, and
+`astichi.assembler.production` adapter surface was removed during the
+performance refactor API-pruning checkpoint because no YIDL/runtime caller used
+it. Low-level candidate/resource implementation classes remain in
+`astichi.assembler.scope` for the current YIDL route-through, but they are
+adapter surfaces for the lower-engine refactor rather than stable top-level
+public exports.
 
 Current assembler helper surface:
 
@@ -583,15 +586,6 @@ Current assembler helper surface:
   source location where available, and locator
 - `scope.apply(candidate)`: mutates the underlying builder graph using the
   selected candidate
-- `AssemblyRunner(client)`: drives client-described scopes by adding a root
-  resource, applying root actions, iterating producer lists, recursively
-  building child scopes, and applying child results back into the parent scope
-- `astichi.assembler.production`: generic production interpreter for clients
-  that can describe generation as named production specs. A production has a
-  root template choice and zero or more producer specs. Producers either apply a
-  template resource into the current scope or build another named production and
-  apply the child result. Template choices are ordered; the first matching
-  choice wins, so an unconditional final choice acts as a fallback.
 
 ### 3.6 Emit, materialize, and provenance contract
 

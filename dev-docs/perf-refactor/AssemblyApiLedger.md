@@ -1,10 +1,13 @@
 # Assembly API Ledger
 
-Status: Slice 0 audit checkpoint.
+Status: Slice 0 corrective pruning checkpoint.
 
 This ledger is the Slice 0 deliverable. It names the assembly APIs that Astichi
 and YIDL actually use before the lower-engine refactor starts deleting or
-quarantining obsolete surfaces.
+quarantining obsolete surfaces. The corrective pruning checkpoint removes the
+generic assembler client/runner/production adapter because its only callers
+were Astichi adapter tests and summary docs; YIDL uses the scope facade
+directly.
 
 ## Classification Labels
 
@@ -35,19 +38,22 @@ API surface:
 
 | API surface | Current callers | YIDL caller | Classification | Replacement | Removal slice | Coverage |
 | --- | --- | --- | --- | --- | --- | --- |
-| `AssemblyScope.add` | `src/astichi/assembler/runner.py`, `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append | keep; route in Slice 8 | assembler scope tests and YIDL final goldens |
-| `AssemblyScope.apply` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays | keep; route in Slices 9-10 | assembler scope tests and YIDL final goldens |
-| `AssemblyScope.build` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
+| `AssemblyScope.add` | `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append | keep; route in Slice 8 | assembler scope tests and YIDL final goldens |
+| `AssemblyScope.apply` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays | keep; route in Slices 9-10 | assembler scope tests and YIDL final goldens |
+| `AssemblyScope.build` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
 | `AssemblyScope.inventory` | `find_candidates(scope.inventory, ...)`, inventory tests | `yidl/src/yidl/generation/assembly_runtime.py` | `adapter-only` | direct lower candidate query plus debug projection | decide in Slice 8; remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
-| `find_candidates` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower index query returning candidate handles | route in Slice 7 | assembler diagnostics tests and structural goldens |
-| `require_one` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `validation-only` | lower candidate batch diagnostic formatter | keep until diagnostics migrate | bespoke missing/ambiguous tests |
-| `as_composable` | assembler runner/production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | composable resource descriptor | keep facade; lower in Slice 7 | assembler scope/runner tests |
-| `as_external_value` | assembler production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | external-value resource descriptor with facade object slot | keep facade; lower in Slice 7 | external bind goldens and diagnostics tests |
-| `as_identifier` | assembler production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | identifier resource descriptor | keep facade; lower in Slice 7 | identifier bind goldens and diagnostics tests |
+| `find_candidates` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower index query returning candidate handles | route in Slice 7 | assembler diagnostics tests and structural goldens |
+| `require_one` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `validation-only` | lower candidate batch diagnostic formatter | keep until diagnostics migrate | bespoke missing/ambiguous tests |
+| `as_composable` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | composable resource descriptor | keep facade; lower in Slice 7 | assembler scope tests |
+| `as_external_value` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | external-value resource descriptor with facade object slot | keep facade; lower in Slice 7 | external bind goldens and diagnostics tests |
+| `as_identifier` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | identifier resource descriptor | keep facade; lower in Slice 7 | identifier bind goldens and diagnostics tests |
 | `BindingCandidate` and concrete candidate classes | `src/astichi/assembler/scope.py`, YIDL type hints | `yidl/src/yidl/generation/assembly_runtime.py` imports `BindingCandidate` from `astichi.assembler.scope` | `adapter-only` | opaque lower candidate handle plus diagnostic view | remove from YIDL-facing hot path by Slice 13 | bespoke unsupported/ambiguous candidate diagnostics |
-| `BindingResource`, `DemandSelector`, and concrete resource classes | assembler client/runner/production internals | no top-level YIDL import; resources created through helpers | `adapter-only` | registered resource descriptors and selector objects | remove or make private after Slice 7 | assembler runner tests |
+| `BindingResource`, `DemandSelector`, and concrete resource classes | `src/astichi/assembler/scope.py`, assembler scope tests | no top-level YIDL import; resources created through helpers | `adapter-only` | registered resource descriptors and selector objects | remove or make private after Slice 7 | assembler scope tests |
 | top-level exports of candidate/resource implementation classes from `astichi.assembler` | docs snippet type annotation and one bespoke test | none | `removable` | import low-level test-only types from `astichi.assembler.scope`; keep public top-level helpers only | removed in Slice 0 | assembler scope test adjusted |
 | `code_owner_parts` top-level export | none outside `scope.py` | none | `removable` | private helper inside candidate matching | removed in Slice 0 | covered by owner-match tests |
+| `astichi.assembler.client` and `BuildIndex` | deleted generic adapter implementation/tests only | none | `removable` | direct `AssemblyScope` facade used by YIDL | removed in corrective Slice 0 | adapter tests removed; YIDL final goldens carry success path |
+| `AssemblyRunner` and `astichi.assembler.runner` | deleted generic adapter implementation/tests only | none | `removable` | direct YIDL scope orchestration | removed in corrective Slice 0 | adapter tests removed; assembler scope tests cover remaining mechanics |
+| `astichi.assembler.production` generic production specs | deleted generic adapter implementation/tests only | none | `removable` | YIDL-owned production orchestration over scope API | removed in corrective Slice 0 | adapter tests removed; YIDL final goldens carry success path |
 | `astichi.compile` | package users, tests, docs, YIDL generators | `yidl/src/yidl/generation/*.py` | `required-hot` | lower-backed composable facade | route in Slice 5 | compile/final-output goldens |
 | `astichi.compile(file_name=...)` | tests/data/gold_src, docs | YIDL generated source helpers may pass provenance | `required-final` | lower source locator metadata | keep | location/provenance goldens |
 | `astichi.compile(line_number=...)` | tests and diagnostics fixtures | no direct YIDL hot-path call found | `required-final` | lower source locator metadata | keep | location diagnostics tests |
