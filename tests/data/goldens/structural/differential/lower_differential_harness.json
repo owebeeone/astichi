@@ -164,6 +164,35 @@
         {
           "candidate_lines": [
             [
+              "demand: build_path=Root owner=run@<astichi>:1 name=body kind=hole.block location=<astichi>:4 locator=body[0]/body[2]/value",
+              "resource: composable build_name=Body",
+              "  production: name=__block__ kind=production.block location=<astichi>:1 locator=."
+            ]
+          ],
+          "lower_count": 1,
+          "projection_count": 1,
+          "selector": {
+            "build_match": [
+              "Root"
+            ],
+            "name": "body",
+            "owner_match": [
+              "run"
+            ]
+          },
+          "step": "body"
+        }
+      ],
+      "final_source": "def run():\n    value = 1\n    value__astichi_scoped_1 = 2\n    seen = value__astichi_scoped_1\n    return value\n",
+      "lower_source": "def run():\n    value = 1\n    value__astichi_scoped_1 = 2\n    seen = value__astichi_scoped_1\n    return value\n",
+      "name": "keep_collision",
+      "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=run name=body kind=hole.block locator=body[0]/body[2]/value\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Body/#1 build_path=Root/Body code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nport_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nhole_map:\n  body: Root/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Body/#1"
+    },
+    {
+      "candidate_checks": [
+        {
+          "candidate_lines": [
+            [
               "demand: build_path=Root owner=. name=value kind=external.bind location=<astichi>:1 locator=body[0]/value",
               "resource: external value"
             ]

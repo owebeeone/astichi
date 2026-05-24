@@ -265,6 +265,54 @@ astichi_export(value)
     assert actual_text == expected_text
 
 
+def test_scope_lower_keep_collision_plan_matches_structural_golden() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def run():
+    value = 1
+    astichi_keep(value)
+    astichi_hole(body)
+    return value
+""".strip()
+        + "\n"
+    )
+    body = astichi.compile("value = 2\nseen = value\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(body, build_name="Body"),
+                name="body",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    plan = scope.lower_materialization_plan()
+    assert tuple(operation.operation_key for operation in plan.operation_stream) == (
+        "astichi.operation.splice_body_at_marker",
+    )
+    assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
+        "astichi.operation.rename_if_collides",
+        "astichi.operation.keep_name",
+        "astichi.operation.gate_no_unresolved",
+    )
+
+    actual_text = write_structural_snapshot(
+        scope.lower_structural_snapshot(materialization_plan=plan)
+    )
+
+    _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_STRUCTURAL_DIR / "scope_keep_collision_plan.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (
+        _STRUCTURAL_GOLDENS_DIR / "scope_keep_collision_plan.json"
+    ).read_text(encoding="utf-8")
+    assert actual_text == expected_text
+
+
 def test_scope_lower_elif_plan_matches_structural_golden() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(

@@ -635,7 +635,11 @@ structural data. `scope.lower_materialize()` can explicitly materialize the
 current expression-insert, ordinary block-insert, unfilled defaulted-block
 fallback, simple parameter-insert, simple elif-clause insert, and
 static managed-pyimport plus simple boundary import/pass/export and
-external/identifier overlay subset without calling builder merge; unsupported
+external/identifier overlay subset without calling builder merge. The lower
+path also owns the simple keep-name/collision subset: marker-only
+`astichi_keep(...)` calls are stripped after materialization, and direct block
+payload locals that collide with names already bound in the target scope are
+renamed deterministically unless the source explicitly keeps them. Unsupported
 surfaces still use a counted adapter fallback. `scope.build(...)` now selects
 that lower path automatically when the lower result is closed, meaning no
 demand ports remain after materialization. Unsupported or not-yet-closed states
@@ -651,8 +655,9 @@ lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
 It covers block, defaulted-block fallback, expression, parameter, elif, static
 pyimport, boundary import/pass/export, external overlay, identifier overlay,
-and single-add satisfaction fixtures. For lower-supported fixtures it also
-records lower-source output. Delete it once lower materialization is
+keep/collision hygiene, and single-add satisfaction fixtures. For
+lower-supported fixtures it also records lower-source output. Delete it once
+lower materialization is
 authoritative enough that the adapter comparison is no longer useful.
 
 Parameter-hole materialization is represented in lower operation and hygiene
@@ -685,6 +690,13 @@ supports simple block payload boundary markers when the imported/passed names
 can be resolved against the target scope or are explicitly bound; broader
 cross-scope diagnostics remain on the adapter path until the full hygiene
 slice.
+
+Keep-name and simple collision decisions are represented in lower hygiene
+streams through `keep_name` and `rename_if_collides` operations and have a
+structural plan golden. Final lower materialization strips simple keep markers
+and renames direct block-local collisions away from target-scope bindings;
+source payloads that pin a colliding name still use the adapter path until the
+lower diagnostic gate owns the full unrepairable-collision surface.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

@@ -318,6 +318,52 @@ astichi_export(value)
     assert counts.get("materialize_composable", 0) == 0
 
 
+def test_lower_renames_colliding_block_locals_and_strips_keep() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def run():
+    value = 1
+    astichi_keep(value)
+    astichi_hole(body)
+    return value
+""".strip()
+        + "\n"
+    )
+    body = astichi.compile("value = 2\nseen = value\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(body, build_name="Body"),
+                name="body",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == (
+        "def run():\n"
+        "    value = 1\n"
+        "    value__astichi_scoped_1 = 2\n"
+        "    seen = value__astichi_scoped_1\n"
+        "    return value\n"
+    )
+    assert "astichi_keep" not in source
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    assert namespace["run"]() == 1  # type: ignore[operator]
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
 def test_lower_materializes_elif_clauses_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(

@@ -762,6 +762,7 @@ class AssemblyScope:
         ):
             return None
         _strip_lower_boundary_markers(tree)
+        _strip_lower_keep_markers(tree)
         if not self._apply_lower_managed_pyimports(tree):
             return None
         ast.fix_missing_locations(tree)
@@ -828,6 +829,46 @@ class AssemblyScope:
         plan: MaterializationPlan,
     ) -> MaterializationPlan:
         hygiene: list[HygieneOperation] = []
+        for operation in plan.operation_stream:
+            source_id = operation.source_occurrence_id
+            if source_id is None:
+                continue
+            if operation.operation_key != "astichi.operation.splice_body_at_marker":
+                continue
+            source = self._lower_composable_by_occurrence.get(source_id)
+            if source is None or source.classification is None:
+                continue
+            target = self._lower_composable_by_occurrence.get(
+                operation.target_record_id.occurrence_id
+            )
+            if target is None:
+                continue
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                operation.target_record_id,
+            )
+            target_statement_path = _block_statement_path_for_locator(
+                target.tree,
+                target_locator.ast_path,
+            )
+            boundary_names = _lower_boundary_available_names(
+                target.tree,
+                target_statement_path,
+            )
+            collisions = tuple(sorted(boundary_names & source.classification.locals))
+            if not collisions:
+                continue
+            hygiene.append(
+                HygieneOperation(
+                    operation_key="astichi.operation.rename_if_collides",
+                    target_scope_id=0,
+                    record_id=operation.target_record_id,
+                    captures={
+                        "colliding_names": list(collisions),
+                        "source_occurrence_id": source_id.index,
+                    },
+                )
+            )
         for occurrence_id, composable in self._lower_composable_by_occurrence.items():
             if not self._lower_engine.occurrence(self._lower_state, occurrence_id).live:
                 continue
@@ -835,12 +876,17 @@ class AssemblyScope:
                 if marker.source_name not in {
                     "astichi_export",
                     "astichi_import",
+                    "astichi_keep",
                     "astichi_pass",
                 }:
                     continue
                 hygiene.append(
                     HygieneOperation(
-                        operation_key="astichi.operation.strip_marker",
+                        operation_key=(
+                            "astichi.operation.keep_name"
+                            if marker.source_name == "astichi_keep"
+                            else "astichi.operation.strip_marker"
+                        ),
                         target_scope_id=0,
                         captures={
                             "marker": marker.source_name,
@@ -982,7 +1028,8 @@ class AssemblyScope:
                 ),
             )
             statements: list[ast.stmt] = []
-            local_names: set[str] = set()
+            emitted_names: set[str] = set(boundary_names)
+            rename_counter = 1
             for operation in ordered:
                 source_id = operation.source_occurrence_id
                 if source_id is None and operation.captures.get("fallback_selected"):
@@ -1008,10 +1055,23 @@ class AssemblyScope:
                     if source.classification is None
                     else source.classification.locals
                 )
-                if local_names & source_locals:
+                collisions = emitted_names & source_locals
+                if collisions and source.keep_names:
                     return False
-                local_names.update(source_locals)
-                statements.extend(clone_ast(source.tree.body))
+                rename_map: dict[str, str] = {}
+                for name in sorted(collisions):
+                    next_name, rename_counter = _fresh_lower_scoped_name(
+                        name,
+                        emitted_names | set(source_locals) | set(rename_map.values()),
+                        rename_counter,
+                    )
+                    rename_map[name] = next_name
+                source_statements = clone_ast(source.tree.body)
+                if rename_map:
+                    _rename_lower_names(source_statements, rename_map)
+                emitted_names.update(source_locals - collisions)
+                emitted_names.update(rename_map.values())
+                statements.extend(source_statements)
             _replace_ast_statement_at_path(
                 tree,
                 target_statement_path,
@@ -1705,6 +1765,104 @@ def _strip_lower_boundary_markers(tree: ast.Module) -> None:
     ast.fix_missing_locations(tree)
 
 
+def _strip_lower_keep_markers(tree: ast.Module) -> None:
+    from astichi.lowering.markers import strip_identifier_suffix
+
+    class _Stripper(ast.NodeTransformer):
+        def generic_visit(self, node: ast.AST) -> ast.AST:
+            for field, value in ast.iter_fields(node):
+                if isinstance(value, list):
+                    original = tuple(value)
+                    new_values: list[object] = []
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            visited = self.visit(item)
+                            if visited is None:
+                                continue
+                            if isinstance(visited, list):
+                                new_values.extend(visited)
+                                continue
+                            new_values.append(visited)
+                            continue
+                        new_values.append(item)
+                    if (
+                        not new_values
+                        and any(isinstance(item, ast.stmt) for item in original)
+                        and _is_lower_suite_statement_list(node, field)
+                    ):
+                        new_values.append(ast.Pass())
+                    value[:] = new_values
+                    continue
+                if isinstance(value, ast.AST):
+                    visited = self.visit(value)
+                    if visited is None:
+                        setattr(node, field, None)
+                    else:
+                        setattr(node, field, visited)
+            return node
+
+        def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+            if _is_lower_keep_call(node.value):
+                return None
+            return self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            if _is_lower_keep_call(node):
+                replacement = _lower_keep_replacement(node)
+                if replacement is not None:
+                    return replacement
+            return self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            stripped, marker = strip_identifier_suffix(node.id)
+            if marker is not None and marker.source_name == "astichi_keep_identifier":
+                node.id = stripped
+            return node
+
+        def visit_arg(self, node: ast.arg) -> ast.AST:
+            stripped, marker = strip_identifier_suffix(node.arg)
+            if marker is not None and marker.source_name == "astichi_keep_identifier":
+                node.arg = stripped
+            return node
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+            stripped, marker = strip_identifier_suffix(node.name)
+            if marker is not None and marker.source_name == "astichi_keep_identifier":
+                node.name = stripped
+            return self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            stripped, marker = strip_identifier_suffix(node.name)
+            if marker is not None and marker.source_name == "astichi_keep_identifier":
+                node.name = stripped
+            return self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+            stripped, marker = strip_identifier_suffix(node.name)
+            if marker is not None and marker.source_name == "astichi_keep_identifier":
+                node.name = stripped
+            return self.generic_visit(node)
+
+    _Stripper().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+def _lower_keep_replacement(node: ast.Call) -> ast.expr | None:
+    if len(node.args) != 1 or node.keywords:
+        return None
+    replacement = clone_ast(node.args[0])
+    ast.copy_location(replacement, node)
+    return replacement
+
+
+def _is_lower_keep_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "astichi_keep"
+    )
+
+
 def _lower_boundary_replacement(node: ast.Call) -> ast.expr | None:
     name = _lower_boundary_call_name(node)
     if name is None:
@@ -1740,6 +1898,55 @@ def _is_lower_suite_statement_list(node: ast.AST, field: str) -> bool:
     if isinstance(node, (ast.With, ast.AsyncWith)):
         return field == "body"
     return False
+
+
+def _fresh_lower_scoped_name(
+    name: str,
+    unavailable: set[str],
+    counter: int,
+) -> tuple[str, int]:
+    while True:
+        candidate = f"{name}__astichi_scoped_{counter}"
+        counter += 1
+        if candidate not in unavailable:
+            return candidate, counter
+
+
+def _rename_lower_names(body: list[ast.stmt], rename_map: dict[str, str]) -> None:
+    class _Renamer(ast.NodeTransformer):
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            replacement = rename_map.get(node.id)
+            if replacement is not None:
+                node.id = replacement
+            return node
+
+        def visit_arg(self, node: ast.arg) -> ast.AST:
+            replacement = rename_map.get(node.arg)
+            if replacement is not None:
+                node.arg = replacement
+            return node
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return self.generic_visit(node)
+
+    renamer = _Renamer()
+    for statement in body:
+        renamer.visit(statement)
 
 
 def _module_pyimport_call_ids(tree: ast.Module) -> frozenset[int]:

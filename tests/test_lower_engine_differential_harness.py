@@ -79,6 +79,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("elif_insert", _elif_insert),
         _Fixture("pyimport_static", _pyimport_static),
         _Fixture("boundary_markers", _boundary_markers),
+        _Fixture("keep_collision", _keep_collision),
         _Fixture("external_overlay", _external_overlay),
         _Fixture("identifier_overlay", _identifier_overlay),
         _Fixture("single_add_satisfaction", _single_add_satisfaction),
@@ -256,6 +257,32 @@ def _boundary_markers() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("boundary_markers", scope, (check,), lower_supported=True)
+
+
+def _keep_collision() -> dict[str, Any]:
+    root = _piece(
+        """
+        def run():
+            value = 1
+            astichi_keep(value)
+            astichi_hole(body)
+            return value
+        """
+    )
+    body = _piece("value = 2\nseen = value")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "body",
+        scope,
+        as_composable(body, build_name="Body"),
+        name="body",
+        build_match=("Root",),
+        owner_match=("run",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result("keep_collision", scope, (check,), lower_supported=True)
 
 
 def _external_overlay() -> dict[str, Any]:
