@@ -304,6 +304,29 @@ class AssemblyScope:
             mutable.add_existing_record(record)
         return mutable.freeze()
 
+    @counted_perf_call("candidate_lookup_lower")
+    def find_candidates(
+        self,
+        resource: BindingResource,
+        *,
+        name: str | None = None,
+        build_match: tuple[str, ...] | None = None,
+        owner_match: tuple[str, ...] | None = None,
+    ) -> tuple[BindingCandidate, ...]:
+        """Return binding candidates from lower indexes without inventory projection."""
+        selector = DemandSelector(
+            name=name,
+            build_match=build_match,
+            owner_match=owner_match,
+        )
+        if isinstance(resource, ComposableResource):
+            return self._find_lower_composable_candidates(resource, selector)
+        if isinstance(resource, ExternalValueResource):
+            return self._find_lower_external_candidates(resource, selector)
+        if isinstance(resource, IdentifierNameResource):
+            return self._find_lower_identifier_candidates(resource, selector)
+        raise TypeError(f"unsupported binding resource: {type(resource).__name__}")
+
     @counted_perf_call("assembly_scope_apply")
     def apply(self, candidate: BindingCandidate) -> None:
         """Apply one candidate to the underlying builder graph."""
@@ -585,6 +608,113 @@ class AssemblyScope:
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
 
+    def _find_lower_composable_candidates(
+        self,
+        resource: ComposableResource,
+        selector: DemandSelector,
+    ) -> tuple[BindingCandidate, ...]:
+        production_records = _production_records(resource.composable)
+        candidates: list[BindingCandidate] = []
+        for target_record in self._lower_records_for_selector(
+            selector,
+            inventory_kinds=_lower_hole_inventory_kinds(),
+        ):
+            hole = _hole_descriptor(target_record)
+            if hole is None:
+                continue
+            compatible = tuple(
+                production
+                for production in production_records
+                if _production_satisfies(production, hole)
+            )
+            if not compatible:
+                continue
+            candidates.append(
+                ComposableCandidate(
+                    target_record=target_record,
+                    resource=resource,
+                    compatible_productions=compatible,
+                )
+            )
+        return tuple(candidates)
+
+    def _find_lower_external_candidates(
+        self,
+        resource: ExternalValueResource,
+        selector: DemandSelector,
+    ) -> tuple[BindingCandidate, ...]:
+        return tuple(
+            ExternalValueCandidate(demand_record=record, resource=resource)
+            for record in self._lower_records_for_selector(
+                selector,
+                inventory_kinds=("external.bind",),
+            )
+        )
+
+    def _find_lower_identifier_candidates(
+        self,
+        resource: IdentifierNameResource,
+        selector: DemandSelector,
+    ) -> tuple[BindingCandidate, ...]:
+        return tuple(
+            IdentifierNameCandidate(demand_record=record, resource=resource)
+            for record in self._lower_records_for_selector(
+                selector,
+                inventory_kinds=("identifier.demand",),
+            )
+        )
+
+    def _lower_records_for_selector(
+        self,
+        selector: DemandSelector,
+        *,
+        inventory_kinds: tuple[str, ...],
+    ) -> tuple[InventoryRecord, ...]:
+        record_ids = self._lower_candidate_record_ids(
+            selector,
+            inventory_kinds=inventory_kinds,
+        )
+        records: list[InventoryRecord] = []
+        seen: set[RecordId] = set()
+        for record_id in record_ids:
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            record = self._visible_lower_projection_record(record_id)
+            if record is None:
+                continue
+            if record.kind not in inventory_kinds:
+                continue
+            if not _record_matches(record, selector):
+                continue
+            records.append(record)
+        return tuple(records)
+
+    def _lower_candidate_record_ids(
+        self,
+        selector: DemandSelector,
+        *,
+        inventory_kinds: tuple[str, ...],
+    ) -> tuple[RecordId, ...]:
+        indexes = self._lower_state.indexes
+        if selector.name is not None:
+            return tuple(indexes.by_resource_name.get(selector.name, ()))
+        return tuple(
+            record_id
+            for kind in inventory_kinds
+            for record_id in indexes.by_inventory_kind.get(kind, ())
+        )
+
+    def _visible_lower_projection_record(
+        self,
+        record_id: RecordId,
+    ) -> InventoryRecord | None:
+        if record_id in self._lower_state.dead_records:
+            return None
+        if record_id in self._lower_state.satisfied_records:
+            return None
+        return self._lower_projection_by_record_id.get(record_id)
+
     def _refresh_inventory_from_build(self) -> None:
         instances = self.builder.graph.instances
         if not instances:
@@ -654,6 +784,17 @@ def _operation_key_for_target(record: InventoryRecord) -> str:
     if record.kind.startswith("hole."):
         return "astichi.operation.splice_call_arguments"
     return "astichi.operation.append_body"
+
+
+def _lower_hole_inventory_kinds() -> tuple[str, ...]:
+    return (
+        "hole.block",
+        "hole.expr",
+        "hole.params",
+        "hole.elif",
+        "hole.positional_variadic",
+        "hole.named_variadic",
+    )
 
 
 def _projection_record_for(

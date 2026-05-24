@@ -336,6 +336,17 @@ Golden policy:
 
 Goal: make `find_candidates` work against lower indexes.
 
+Implementation split:
+
+- Slice 7a adds `AssemblyScope.find_candidates(...)`, which queries lower
+  indexes for composable, external-value, and identifier resources and returns
+  the existing candidate adapter objects. The standalone
+  `find_candidates(scope.inventory, ...)` remains for compatibility until YIDL
+  is moved.
+- Slice 7b moves YIDL and Astichi success-path callers to the scope method,
+  then keeps the standalone inventory function as a compatibility/debug adapter
+  only.
+
 Work:
 
 - lower resource descriptors for composable, external value, and identifier

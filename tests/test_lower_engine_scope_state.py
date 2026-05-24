@@ -7,6 +7,8 @@ import astichi
 from astichi.assembler import (
     AssemblyScope,
     as_composable,
+    as_external_value,
+    as_identifier,
     find_candidates,
     require_one,
 )
@@ -28,16 +30,21 @@ def test_scope_lower_occurrence_state_matches_structural_golden() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    scope.apply(
-        require_one(
-            find_candidates(
-                scope.inventory,
-                as_composable(value, build_name="Value"),
-                name="value",
-                build_match=("Root",),
-            )
-        )
+    resource = as_composable(value, build_name="Value")
+    legacy_candidates = find_candidates(
+        scope.inventory,
+        resource,
+        name="value",
+        build_match=("Root",),
     )
+    lower_candidates = scope.find_candidates(
+        resource,
+        name="value",
+        build_match=("Root",),
+    )
+    assert lower_candidates == legacy_candidates
+
+    scope.apply(require_one(lower_candidates))
 
     assert scope.project_lower_inventory() == scope.inventory
 
@@ -50,3 +57,31 @@ def test_scope_lower_occurrence_state_matches_structural_golden() -> None:
         _STRUCTURAL_GOLDENS_DIR / "scope_lower_occurrence_state.json"
     ).read_text(encoding="utf-8")
     assert actual_text == expected_text
+
+
+def test_scope_lower_candidate_lookup_matches_legacy_for_bindings() -> None:
+    root = astichi.compile(
+        """
+class class_name__astichi_arg__:
+    default = astichi_bind_external(default_value)
+"""
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    for resource, name in (
+        (as_identifier("Generated"), "class_name"),
+        (as_external_value(1), "default_value"),
+    ):
+        legacy_candidates = find_candidates(
+            scope.inventory,
+            resource,
+            name=name,
+            build_match=("Root",),
+        )
+        lower_candidates = scope.find_candidates(
+            resource,
+            name=name,
+            build_match=("Root",),
+        )
+        assert lower_candidates == legacy_candidates
