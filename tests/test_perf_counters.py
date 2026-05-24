@@ -48,3 +48,23 @@ def test_perf_counters_are_inactive_by_default() -> None:
     scope.add("Root", astichi.compile("value = 1\n"))
 
     assert scope.build().materialize().emit(provenance=False) == "value = 1\n"
+
+
+def test_external_apply_queues_overlay_without_rebuild() -> None:
+    root = astichi.compile("value = astichi_bind_external(value)\n")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    candidate = require_one(
+        scope.find_candidates(
+            as_external_value(1),
+            name="value",
+            build_match=("Root",),
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.apply(candidate)
+
+    counts = counters.snapshot()["counts"]
+    assert counts["assembly_scope_apply_external_value"] == 1
+    assert counts.get("rebuild_composable", 0) == 0

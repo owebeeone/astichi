@@ -534,6 +534,14 @@ Acceptance:
 Goal: stop eager `BasicComposable.bind` and `bind_identifier` during scope
 assembly.
 
+Implementation split:
+
+- Slice 10a makes external-value applies lower overlays and queues builder
+  adapter binding until `scope.build(...)`; focused counters assert external
+  apply itself does not rebuild a composable.
+- Slice 10b moves identifier applies after lower-owned selector/name resolution
+  can preserve later owner/name matching without eager AST rewrites.
+
 Work:
 
 - add lower overlay bindings;

@@ -615,7 +615,12 @@ lower debug projection rather than the legacy `_inventory` cache; callers that
 use it are intentionally on the slow compatibility path. The old
 `_replace_occurrence_inventory` projection is no longer called by the scope
 add/apply path; lower template records carry the projection payload needed for
-debug inventory output.
+debug inventory output. External value applies are lower overlays during
+`scope.apply(...)`; they are flushed to the temporary builder adapter only at
+`scope.build(...)`, so external apply no longer triggers a composable rebuild.
+Identifier applies still use eager binding because identifier rewrites affect
+later owner/name selectors until lower-owned selector resolution replaces that
+behavior.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

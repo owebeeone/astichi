@@ -266,6 +266,10 @@ class AssemblyScope:
         default_factory=dict,
         init=False,
     )
+    _pending_external_binds_by_owner: dict[str, dict[str, object]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
@@ -347,6 +351,7 @@ class AssemblyScope:
 
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Build the current scope graph."""
+        self._flush_pending_external_binds()
         return self.builder.build(unroll=unroll)
 
     def _apply_composable(self, candidate: ComposableCandidate) -> None:
@@ -399,12 +404,11 @@ class AssemblyScope:
             source_label=candidate.demand_record.name.logical_name(),
         )
         owner = self._owner_for(candidate.demand_record)
-        composable = self._registered_basic(owner)
-        rebound = composable.bind(
-            {candidate.demand_record.name.logical_name(): candidate.resource.value}
+        self._queue_external_bind(
+            owner,
+            candidate.demand_record.name.logical_name(),
+            candidate.resource.value,
         )
-        self.builder.graph.replace_instance(owner, rebound)
-        self._refresh_owner_occurrences(owner, rebound)
 
     def _apply_identifier_name(self, candidate: IdentifierNameCandidate) -> None:
         self._append_lower_overlay(
@@ -590,6 +594,22 @@ class AssemblyScope:
             target_record_id=record_id,
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
+
+    def _queue_external_bind(self, owner: str, name: str, value: object) -> None:
+        owner_binds = self._pending_external_binds_by_owner.setdefault(owner, {})
+        if name in owner_binds:
+            raise ValueError(f"external binding `{name}` is already queued")
+        owner_binds[name] = value
+
+    def _flush_pending_external_binds(self) -> None:
+        if not self._pending_external_binds_by_owner:
+            return
+        pending = self._pending_external_binds_by_owner
+        self._pending_external_binds_by_owner = {}
+        for owner in sorted(pending):
+            composable = self._registered_basic(owner)
+            rebound = composable.bind(pending[owner])
+            self.builder.graph.replace_instance(owner, rebound)
 
     def _find_lower_composable_candidates(
         self,
