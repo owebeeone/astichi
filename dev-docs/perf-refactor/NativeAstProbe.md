@@ -265,3 +265,14 @@ templates.
 
 The probe answers whether the native AST path is viable. The main lower-engine
 design still owns correctness, snapshots, and golden parity.
+
+## Slice 14a Result
+
+The 2026-05-25 decision profile keeps this probe as valid evidence, but does
+not use it to justify starting the full native lower-engine implementation.
+The probe parsed and converted all current `tests/data/gold_src/*.py` fixtures
+without fallback, and fixture-shaped native parsing beat
+`ast.parse(...) + minimal Python scan`. The win was not the 5x threshold, and
+artifact-copy cost remained significant.
+
+See `NativeDecisionProfile.md` for the current gate result.

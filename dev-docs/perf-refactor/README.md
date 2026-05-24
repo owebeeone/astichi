@@ -28,6 +28,8 @@ design artifacts for implementation planning:
   for the later native spike.
 - `NativeAstProbe.md`: parallel proof-of-concept plan for a native parser and
   final CPython AST emitter.
+- `NativeDecisionProfile.md`: Slice 14a profile gate and decision record for
+  whether to proceed past native skeleton work.
 - `SlicedBuildPlan.md`: commit-sized implementation slices, including API
   pruning before lower-engine changes.
 

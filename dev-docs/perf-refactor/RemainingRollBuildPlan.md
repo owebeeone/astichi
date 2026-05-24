@@ -648,6 +648,11 @@ only when the shared lower-engine contract remains unchanged.
 
 Goal: decide whether to start native library implementation.
 
+Status: closed by `NativeDecisionProfile.md`. The native parser/IR probe
+remains viable, but the current YIDL lifecycle profile does not justify starting
+`15a`-`16d`; most remaining measured time is outside Astichi lower tables.
+`14b` and `14c` may proceed as boundary/skeleton work only.
+
 Work:
 
 - Run the Slice 13c import workload and capture a profile.
