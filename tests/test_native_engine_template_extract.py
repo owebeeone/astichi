@@ -72,16 +72,16 @@ def test_native_template_extract_requires_registered_bundle_when_available() -> 
         module.extract_template_snapshot(module.engine_create(), "result = 1\n")
 
 
-def test_native_template_extract_rejects_marker_source_when_available() -> None:
+def test_native_template_extract_rejects_bad_insert_metadata_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
         pytest.skip("native engine extension is not built")
 
-    with pytest.raises(ValueError, match="metadata extraction"):
+    with pytest.raises(ValueError, match="ref= is only valid on decorator-form"):
         module.extract_template_snapshot(
             _engine_with_current_bundle(module),
-            "@astichi_insert(slot)\ndef build():\n    pass\n",
-            "marker.py",
+            "result = astichi_insert(slot, payload, ref=Root)\n",
+            "bad_insert.py",
             1,
         )
 
@@ -204,6 +204,50 @@ def test_native_template_extract_payload_markers_match_python_reference_when_ava
         1,
     )
     expected = astichi.compile(source)._lower_template.structural_snapshot()
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "result = astichi_insert(slot, payload)\n",
+        (
+            "result = astichi_insert("
+            "slot, astichi_funcargs(name__astichi_arg__), "
+            "pyimport=(astichi_pyimport(module=foo, names=(bar,)),)"
+            ")\n"
+        ),
+        "@astichi_insert(body)\ndef contrib():\n    x = astichi_hole(value)\n",
+        "@astichi_insert(params, kind='params')\ndef contrib(x):\n    pass\n",
+        (
+            "astichi_hole(root)\n\n"
+            "@astichi_insert(root, ref=Root)\n"
+            "def root():\n"
+            "    astichi_hole(body)\n\n"
+            "    @astichi_insert(body, order=1, ref=Root.Step)\n"
+            "    def step():\n"
+            "        x = 1\n"
+        ),
+    ],
+)
+def test_native_template_extract_insert_metadata_matches_python_reference_when_available(
+    source: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    actual = module.extract_template_snapshot(
+        _engine_with_current_bundle(module),
+        source,
+        "insert_metadata.py",
+        1,
+    )
+    expected = astichi.compile(
+        source,
+        source_kind="astichi-emitted",
+    )._lower_template.structural_snapshot()
 
     assert actual == expected
 

@@ -66,7 +66,12 @@ fn extract_template_snapshot(
     let module = crate::parser_ir::parse_native_module(&source, &filename)?;
     let mut records = extract_records(&source, &module)?;
     if should_include_block_production(&module) {
-        records.push(block_production_record(line_number));
+        let source_map = SourceMap::new(&source);
+        records.push(block_production_record(block_production_line_number(
+            &module,
+            &source_map,
+            line_number,
+        )));
     }
 
     let source_summary = "compile line=".to_string()
@@ -91,11 +96,11 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn reject_deferred_markers(source: &str) -> PyResult<()> {
-    if source.contains("astichi_insert") {
-        return Err(crate::errors::schema_error(
-            "native metadata extraction starts after N4d",
-        ));
-    }
+    validate_deferred_marker_text(source)?;
+    Ok(())
+}
+
+fn validate_deferred_marker_text(_source: &str) -> PyResult<()> {
     Ok(())
 }
 
@@ -107,11 +112,89 @@ fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<Extrac
             stmt,
             &format!("body[{index}]"),
             &source_map,
-            false,
+            &[],
             &mut records,
         )?;
     }
+    if let Some(record) = root_funcargs_production_record(module, &source_map) {
+        records.push(record);
+    }
+    if let Some(record) = implicit_expression_production_record(module, &source_map) {
+        records.push(record);
+    }
     Ok(records)
+}
+
+fn root_funcargs_production_record(
+    module: &ast::ModModule,
+    source_map: &SourceMap,
+) -> Option<ExtractedRecord> {
+    let ast::Stmt::Expr(stmt) = single_root_statement(module)? else {
+        return None;
+    };
+    if !is_call_named(&stmt.value, "astichi_funcargs") {
+        return None;
+    }
+    Some(record(
+        "body[0]/value",
+        &authored_summary("__funcargs__", source_map.line(stmt.range)),
+        "production.funcargs",
+        "copy-call-arguments",
+        "production.funcargs",
+        "__funcargs__",
+        "astichi.surface.funcargs.production",
+    ))
+}
+
+fn implicit_expression_production_record(
+    module: &ast::ModModule,
+    source_map: &SourceMap,
+) -> Option<ExtractedRecord> {
+    let mut expression: Option<(&ast::Expr, String, usize)> = None;
+    for (index, stmt) in module.body.iter().enumerate() {
+        if is_boundary_prefix_statement(stmt) {
+            continue;
+        }
+        let ast::Stmt::Expr(expr_stmt) = stmt else {
+            return None;
+        };
+        if expression.is_some() {
+            return None;
+        }
+        if is_call_named(&expr_stmt.value, "astichi_insert")
+            || is_call_named(&expr_stmt.value, "astichi_funcargs")
+        {
+            return None;
+        }
+        expression = Some((
+            &expr_stmt.value,
+            format!("body[{index}]/value"),
+            source_map.line(expr_stmt.range),
+        ));
+    }
+    let (_expr, path, line_number) = expression?;
+    Some(expression_production_record(&path, line_number))
+}
+
+fn single_root_statement(module: &ast::ModModule) -> Option<&ast::Stmt> {
+    if module.body.len() == 1 {
+        Some(&module.body[0])
+    } else {
+        None
+    }
+}
+
+fn is_boundary_prefix_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    match expr_stmt.value.as_ref() {
+        ast::Expr::Call(node) => matches!(
+            call_name(&node.func),
+            Some("astichi_keep" | "astichi_export" | "astichi_import" | "astichi_pyimport")
+        ),
+        _ => false,
+    }
 }
 
 fn should_include_block_production(module: &ast::ModModule) -> bool {
@@ -125,11 +208,39 @@ fn should_include_block_production(module: &ast::ModModule) -> bool {
     }
 }
 
+fn block_production_line_number(
+    module: &ast::ModModule,
+    source_map: &SourceMap,
+    fallback: u32,
+) -> usize {
+    let Some(stmt) = module.body.first() else {
+        return fallback as usize;
+    };
+    match stmt {
+        ast::Stmt::FunctionDef(node) => source_map.line(node.range),
+        ast::Stmt::AsyncFunctionDef(node) => source_map.line(node.range),
+        ast::Stmt::ClassDef(node) => source_map.line(node.range),
+        ast::Stmt::Expr(node) => source_map.line(node.range),
+        ast::Stmt::Assign(node) => source_map.line(node.range),
+        ast::Stmt::AnnAssign(node) => source_map.line(node.range),
+        ast::Stmt::Return(node) => source_map.line(node.range),
+        ast::Stmt::Import(node) => source_map.line(node.range),
+        ast::Stmt::ImportFrom(node) => source_map.line(node.range),
+        _ => fallback as usize,
+    }
+}
+
+fn child_owner(owner: &[String], name: &str) -> Vec<String> {
+    let mut child = owner.to_vec();
+    child.push(strip_known_suffix(name));
+    child
+}
+
 fn stmt_records(
     stmt: &ast::Stmt,
     path: &str,
     source_map: &SourceMap,
-    _in_expr_stmt: bool,
+    owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
     match stmt {
@@ -139,14 +250,9 @@ fn stmt_records(
                 &(path.to_string() + "/value"),
                 source_map,
                 true,
+                owner,
                 records,
             )?;
-            if should_add_expression_production(&node.value) {
-                records.push(expression_production_record(
-                    &(path.to_string() + "/value"),
-                    source_map.line(node.range),
-                ));
-            }
             Ok(())
         }
         ast::Stmt::Assign(node) => expr_records(
@@ -154,6 +260,7 @@ fn stmt_records(
             &(path.to_string() + "/value"),
             source_map,
             false,
+            owner,
             records,
         ),
         ast::Stmt::AnnAssign(node) => {
@@ -162,6 +269,7 @@ fn stmt_records(
                 &(path.to_string() + "/annotation"),
                 source_map,
                 false,
+                owner,
                 records,
             )?;
             if let Some(value) = node.value.as_ref() {
@@ -170,6 +278,7 @@ fn stmt_records(
                     &(path.to_string() + "/value"),
                     source_map,
                     false,
+                    owner,
                     records,
                 )?;
             }
@@ -182,12 +291,14 @@ fn stmt_records(
                     &(path.to_string() + "/value"),
                     source_map,
                     false,
+                    owner,
                     records,
                 )?;
             }
             Ok(())
         }
         ast::Stmt::FunctionDef(node) => {
+            let function_owner = child_owner(owner, node.name.as_str());
             if node.name.as_str() == "astichi_params" {
                 records.push(record(
                     path,
@@ -201,7 +312,7 @@ fn stmt_records(
                 function_argument_suffix_records(
                     &node.args,
                     path,
-                    "astichi_params",
+                    &function_owner,
                     source_map,
                     records,
                 );
@@ -212,13 +323,20 @@ fn stmt_records(
                     path,
                     &resource_name,
                     source_map.line(node.range),
-                    Vec::new(),
+                    owner.to_vec(),
                 ));
             }
+            decorator_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &function_owner,
+                records,
+            )?;
             function_argument_suffix_records(
                 &node.args,
                 path,
-                &strip_known_suffix(node.name.as_str()),
+                &function_owner,
                 source_map,
                 records,
             );
@@ -227,27 +345,35 @@ fn stmt_records(
                     stmt,
                     &format!("{path}/body[{index}]"),
                     source_map,
-                    false,
+                    &function_owner,
                     records,
                 )?;
             }
             Ok(())
         }
         ast::Stmt::ClassDef(node) => {
+            let class_owner = child_owner(owner, node.name.as_str());
             if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
                 records.push(identifier_demand_record(
                     path,
                     &resource_name,
                     source_map.line(node.range),
-                    Vec::new(),
+                    owner.to_vec(),
                 ));
             }
+            decorator_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &class_owner,
+                records,
+            )?;
             for (index, stmt) in node.body.iter().enumerate() {
                 stmt_records(
                     stmt,
                     &format!("{path}/body[{index}]"),
                     source_map,
-                    false,
+                    &class_owner,
                     records,
                 )?;
             }
@@ -259,6 +385,7 @@ fn stmt_records(
                     alias,
                     &format!("{path}/names[{index}]"),
                     source_map,
+                    owner,
                     records,
                 );
             }
@@ -271,7 +398,7 @@ fn stmt_records(
                         path,
                         &resource_name,
                         source_map.line(node.range),
-                        Vec::new(),
+                        owner.to_vec(),
                     ));
                 }
             }
@@ -280,6 +407,7 @@ fn stmt_records(
                     alias,
                     &format!("{path}/names[{index}]"),
                     source_map,
+                    owner,
                     records,
                 );
             }
@@ -294,16 +422,14 @@ fn expr_records(
     path: &str,
     source_map: &SourceMap,
     in_expr_stmt: bool,
+    owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
     match expr {
         ast::Expr::Call(node) => {
             let name = call_name(&node.func);
-            let defer_direct_record = name == Some("astichi_funcargs");
             if let Some(name) = name {
-                if !defer_direct_record {
-                    direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
-                }
+                direct_call_record(name, node, path, source_map, in_expr_stmt, owner, records)?;
             }
             for (index, arg) in node.args.iter().enumerate() {
                 expr_records(
@@ -311,6 +437,7 @@ fn expr_records(
                     &format!("{path}/args[{index}]"),
                     source_map,
                     false,
+                    owner,
                     records,
                 )?;
             }
@@ -321,7 +448,7 @@ fn expr_records(
                             &format!("{path}/keywords[{index}]"),
                             &resource_name,
                             source_map.line(keyword.range),
-                            Vec::new(),
+                            owner.to_vec(),
                         ));
                     }
                 }
@@ -330,13 +457,9 @@ fn expr_records(
                     &format!("{path}/keywords[{index}]/value"),
                     source_map,
                     false,
+                    owner,
                     records,
                 )?;
-            }
-            if let Some(name) = name {
-                if defer_direct_record {
-                    direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
-                }
             }
             Ok(())
         }
@@ -346,7 +469,7 @@ fn expr_records(
                     path,
                     &resource_name,
                     source_map.line(node.range),
-                    Vec::new(),
+                    owner.to_vec(),
                 ));
             }
             Ok(())
@@ -358,6 +481,7 @@ fn expr_records(
                     &format!("{path}/values[{index}]"),
                     source_map,
                     false,
+                    owner,
                     records,
                 )?;
             }
@@ -369,6 +493,7 @@ fn expr_records(
                 &(path.to_string() + "/left"),
                 source_map,
                 false,
+                owner,
                 records,
             )?;
             expr_records(
@@ -376,6 +501,7 @@ fn expr_records(
                 &(path.to_string() + "/right"),
                 source_map,
                 false,
+                owner,
                 records,
             )
         }
@@ -384,6 +510,7 @@ fn expr_records(
             &(path.to_string() + "/operand"),
             source_map,
             false,
+            owner,
             records,
         ),
         ast::Expr::IfExp(node) => {
@@ -392,6 +519,7 @@ fn expr_records(
                 &(path.to_string() + "/test"),
                 source_map,
                 false,
+                owner,
                 records,
             )?;
             expr_records(
@@ -399,6 +527,7 @@ fn expr_records(
                 &(path.to_string() + "/body"),
                 source_map,
                 false,
+                owner,
                 records,
             )?;
             expr_records(
@@ -406,6 +535,7 @@ fn expr_records(
                 &(path.to_string() + "/orelse"),
                 source_map,
                 false,
+                owner,
                 records,
             )
         }
@@ -427,41 +557,19 @@ fn is_call_named(expr: &ast::Expr, name: &str) -> bool {
     }
 }
 
-fn should_add_expression_production(expr: &ast::Expr) -> bool {
-    match expr {
-        ast::Expr::Call(node) => match call_name(&node.func) {
-            Some(
-                "astichi_hole"
-                | "astichi_bind_external"
-                | "astichi_ref"
-                | "astichi_export"
-                | "astichi_import"
-                | "astichi_pass"
-                | "astichi_comment"
-                | "astichi_funcargs"
-                | "astichi_keep"
-                | "astichi_pyimport",
-            ) => false,
-            _ => true,
-        },
-        _ => true,
-    }
-}
-
 fn function_argument_suffix_records(
     args: &ast::Arguments,
     path: &str,
-    owner_name: &str,
+    owner: &[String],
     source_map: &SourceMap,
     records: &mut Vec<ExtractedRecord>,
 ) {
-    let owner = vec![owner_name.to_string()];
     for (index, arg) in args.posonlyargs.iter().enumerate() {
         arg_suffix_record(
             &arg.def,
             &format!("{path}/args/posonlyargs[{index}]"),
             source_map,
-            owner.clone(),
+            owner.to_vec(),
             records,
         );
     }
@@ -470,7 +578,7 @@ fn function_argument_suffix_records(
             &arg.def,
             &format!("{path}/args/args[{index}]"),
             source_map,
-            owner.clone(),
+            owner.to_vec(),
             records,
         );
     }
@@ -479,7 +587,7 @@ fn function_argument_suffix_records(
             &arg.def,
             &format!("{path}/args/kwonlyargs[{index}]"),
             source_map,
-            owner.clone(),
+            owner.to_vec(),
             records,
         );
     }
@@ -488,7 +596,7 @@ fn function_argument_suffix_records(
             arg,
             &(path.to_string() + "/args/vararg"),
             source_map,
-            owner.clone(),
+            owner.to_vec(),
             records,
         );
     }
@@ -497,7 +605,7 @@ fn function_argument_suffix_records(
             arg,
             &(path.to_string() + "/args/kwarg"),
             source_map,
-            owner,
+            owner.to_vec(),
             records,
         );
     }
@@ -524,6 +632,7 @@ fn alias_suffix_records(
     alias: &ast::Alias,
     path: &str,
     source_map: &SourceMap,
+    owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) {
     if let Some(resource_name) = strip_arg_suffix(alias.name.as_str()) {
@@ -531,7 +640,7 @@ fn alias_suffix_records(
             path,
             &resource_name,
             source_map.line(alias.range),
-            Vec::new(),
+            owner.to_vec(),
         ));
     }
     if let Some(asname) = alias.asname.as_ref() {
@@ -540,7 +649,7 @@ fn alias_suffix_records(
                 path,
                 &resource_name,
                 source_map.line(alias.range),
-                Vec::new(),
+                owner.to_vec(),
             ));
         }
     }
@@ -552,13 +661,14 @@ fn direct_call_record(
     path: &str,
     source_map: &SourceMap,
     in_expr_stmt: bool,
+    owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
     match name {
         "astichi_hole" => {
             let resource_name = first_name_arg(node, name)?;
             if in_expr_stmt {
-                records.push(record(
+                records.push(record_with_owner(
                     path,
                     &authored_summary(&resource_name, source_map.line(node.range)),
                     "hole.block",
@@ -566,18 +676,10 @@ fn direct_call_record(
                     "hole.block",
                     &resource_name,
                     "astichi.surface.block.hole",
-                ));
-                records.push(record(
-                    path,
-                    &authored_summary("__expr__", source_map.line(node.range)),
-                    "production.expression",
-                    "copy-expression",
-                    "production.expression",
-                    "__expr__",
-                    "astichi.surface.expression.production",
+                    owner.to_vec(),
                 ));
             } else {
-                records.push(record(
+                records.push(record_with_owner(
                     path,
                     &authored_summary(&resource_name, source_map.line(node.range)),
                     "hole.expr",
@@ -585,6 +687,7 @@ fn direct_call_record(
                     "hole.expr",
                     &resource_name,
                     "astichi.surface.expression.hole",
+                    owner.to_vec(),
                 ));
             }
             Ok(())
@@ -595,6 +698,7 @@ fn direct_call_record(
                 path,
                 &resource_name,
                 source_map.line(node.range),
+                owner.to_vec(),
             ));
             Ok(())
         }
@@ -604,13 +708,14 @@ fn direct_call_record(
                     &(path.to_string() + "/args[0]"),
                     &resource_name,
                     source_map.line(node.range),
+                    owner.to_vec(),
                 ));
             }
             Ok(())
         }
         "astichi_export" => {
             let resource_name = first_name_arg(node, name)?;
-            records.push(record(
+            records.push(record_with_owner(
                 path,
                 &authored_summary(&resource_name, source_map.line(node.range)),
                 "identifier.supply",
@@ -618,12 +723,13 @@ fn direct_call_record(
                 "identifier.supply",
                 &resource_name,
                 "astichi.surface.identifier.supply",
+                owner.to_vec(),
             ));
             Ok(())
         }
         "astichi_import" | "astichi_pass" => {
             let resource_name = first_name_arg(node, name)?;
-            records.push(record(
+            records.push(record_with_owner(
                 path,
                 &authored_summary(&resource_name, source_map.line(node.range)),
                 "identifier.demand",
@@ -631,33 +737,245 @@ fn direct_call_record(
                 "identifier.demand",
                 &resource_name,
                 "astichi.surface.identifier.demand",
+                owner.to_vec(),
             ));
             Ok(())
         }
-        "astichi_comment" => {
-            records.push(expression_production_record(
+        "astichi_insert" => {
+            validate_insert_call(node, InsertContext::Expression)?;
+            let resource_name = first_name_arg(node, name)?;
+            records.push(record_with_owner(
                 path,
-                source_map.line(node.range),
+                &authored_summary(&resource_name, source_map.line(node.range)),
+                "production.supply",
+                "copy-expression",
+                "production.supply",
+                &resource_name,
+                "astichi.surface.expression.production",
+                owner.to_vec(),
             ));
             Ok(())
         }
-        "astichi_funcargs" => {
-            records.push(record(
-                path,
-                &authored_summary("__funcargs__", source_map.line(node.range)),
-                "production.funcargs",
-                "copy-call-arguments",
-                "production.funcargs",
-                "__funcargs__",
-                "astichi.surface.funcargs.production",
-            ));
-            Ok(())
-        }
+        "astichi_comment" => Ok(()),
+        "astichi_funcargs" => Ok(()),
         "astichi_keep" | "astichi_pyimport" => Ok(()),
         other if other.starts_with("astichi_") => Err(crate::errors::schema_error(&format!(
             "unsupported native direct call marker: {other}"
         ))),
         _ => Ok(()),
+    }
+}
+
+fn decorator_records(
+    decorators: &[ast::Expr],
+    owner_path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    for (index, decorator) in decorators.iter().enumerate() {
+        let ast::Expr::Call(node) = decorator else {
+            continue;
+        };
+        if call_name(&node.func) != Some("astichi_insert") {
+            continue;
+        }
+        validate_insert_call(node, InsertContext::Decorator)?;
+        let resource_name = first_name_arg(node, "astichi_insert")?;
+        let Some(kind) = matching_hole_record_kind(records, &resource_name) else {
+            continue;
+        };
+        let path = format!("{owner_path}/decorator_list[{index}]");
+        records.push(record_with_owner(
+            &path,
+            &authored_summary(&resource_name, source_map.line(node.range)),
+            kind.role_key,
+            kind.materialization_anchor,
+            kind.inventory_kind,
+            &resource_name,
+            kind.surface_key,
+            owner.to_vec(),
+        ));
+    }
+    Ok(())
+}
+
+fn matching_hole_record_kind(
+    records: &[ExtractedRecord],
+    resource_name: &str,
+) -> Option<InsertDecoratorKind> {
+    for record in records {
+        if record.resource_name != resource_name {
+            continue;
+        }
+        match record.inventory_kind.as_str() {
+            "hole.block" => {
+                return Some(InsertDecoratorKind {
+                    role_key: "hole.block",
+                    materialization_anchor: "splice-body-at-marker",
+                    inventory_kind: "hole.block",
+                    surface_key: "astichi.surface.block.hole",
+                });
+            }
+            "hole.params" => {
+                return Some(InsertDecoratorKind {
+                    role_key: "hole.params",
+                    materialization_anchor: "splice-parameters",
+                    inventory_kind: "hole.params",
+                    surface_key: "astichi.surface.parameter.hole",
+                });
+            }
+            "hole.elif" => {
+                return Some(InsertDecoratorKind {
+                    role_key: "hole.elif",
+                    materialization_anchor: "append-clause",
+                    inventory_kind: "hole.elif",
+                    surface_key: "astichi.surface.elif.target",
+                });
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Clone, Copy)]
+enum InsertContext {
+    Decorator,
+    Expression,
+}
+
+#[derive(Clone, Copy)]
+struct InsertDecoratorKind {
+    role_key: &'static str,
+    materialization_anchor: &'static str,
+    inventory_kind: &'static str,
+    surface_key: &'static str,
+}
+
+fn insert_decorator_kind(node: &ast::ExprCall) -> PyResult<InsertDecoratorKind> {
+    let mut kind = "block";
+    for keyword in &node.keywords {
+        if keyword.arg.as_ref().map(|arg| arg.as_str()) != Some("kind") {
+            continue;
+        }
+        kind = string_constant(&keyword.value).ok_or_else(|| {
+            crate::errors::schema_error("astichi_insert kind= must be a string constant")
+        })?;
+    }
+    match kind {
+        "block" => Ok(InsertDecoratorKind {
+            role_key: "hole.block",
+            materialization_anchor: "splice-body-at-marker",
+            inventory_kind: "hole.block",
+            surface_key: "astichi.surface.block.hole",
+        }),
+        "params" => Ok(InsertDecoratorKind {
+            role_key: "hole.params",
+            materialization_anchor: "splice-parameters",
+            inventory_kind: "hole.params",
+            surface_key: "astichi.surface.parameter.hole",
+        }),
+        "elif" => Ok(InsertDecoratorKind {
+            role_key: "hole.elif",
+            materialization_anchor: "append-clause",
+            inventory_kind: "hole.elif",
+            surface_key: "astichi.surface.elif.target",
+        }),
+        _ => Err(crate::errors::schema_error(
+            "astichi_insert kind= must be the literal string 'block', 'elif', or 'params'",
+        )),
+    }
+}
+
+fn validate_insert_call(node: &ast::ExprCall, context: InsertContext) -> PyResult<()> {
+    let expected_args = match context {
+        InsertContext::Decorator => 1,
+        InsertContext::Expression => 2,
+    };
+    if node.args.len() != expected_args {
+        return Err(crate::errors::schema_error(
+            "astichi_insert expects 1 positional argument (decorator) or 2 positional arguments (expression)",
+        ));
+    }
+    let _ = first_name_arg(node, "astichi_insert")?;
+    for keyword in &node.keywords {
+        let Some(arg) = keyword.arg.as_ref().map(|arg| arg.as_str()) else {
+            return Err(crate::errors::schema_error(
+                "astichi_insert does not accept **kwargs",
+            ));
+        };
+        match arg {
+            "ref" => {
+                if !matches!(context, InsertContext::Decorator) {
+                    return Err(crate::errors::schema_error(
+                        "astichi_insert ref= is only valid on decorator-form shells",
+                    ));
+                }
+            }
+            "kind" => {
+                if !matches!(context, InsertContext::Decorator) {
+                    return Err(crate::errors::schema_error(
+                        "astichi_insert kind= is only valid on decorator-form shells",
+                    ));
+                }
+                let _ = insert_decorator_kind(node)?;
+            }
+            "order" => {
+                if !is_int_constant(&keyword.value) {
+                    return Err(crate::errors::schema_error(
+                        "astichi_insert order must be an integer constant",
+                    ));
+                }
+            }
+            "pyimport" => {
+                if !matches!(context, InsertContext::Expression) {
+                    return Err(crate::errors::schema_error(
+                        "astichi_insert pyimport= is only valid on expression-form inserts",
+                    ));
+                }
+                validate_insert_pyimport(&keyword.value)?;
+            }
+            _ => {
+                return Err(crate::errors::schema_error(&format!(
+                    "astichi_insert does not accept keyword `{arg}`"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_insert_pyimport(expr: &ast::Expr) -> PyResult<()> {
+    let ast::Expr::Tuple(tuple) = expr else {
+        return Err(crate::errors::schema_error(
+            "astichi_insert pyimport= must be a tuple",
+        ));
+    };
+    for element in &tuple.elts {
+        if !is_call_named(element, "astichi_pyimport") {
+            return Err(crate::errors::schema_error(
+                "astichi_insert pyimport= entries must be astichi_pyimport(...) calls",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn string_constant(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Constant(node) => match &node.value {
+            ast::Constant::Str(value) => Some(value.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_int_constant(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Constant(node) => matches!(node.value, ast::Constant::Int(_)),
+        _ => false,
     }
 }
 
@@ -690,8 +1008,13 @@ fn external_keyword_name(node: &ast::ExprCall) -> PyResult<Option<String>> {
     Ok(None)
 }
 
-fn external_record(path: &str, resource_name: &str, line_number: usize) -> ExtractedRecord {
-    record(
+fn external_record(
+    path: &str,
+    resource_name: &str,
+    line_number: usize,
+    owner: Vec<String>,
+) -> ExtractedRecord {
+    record_with_owner(
         path,
         &authored_summary(resource_name, line_number),
         "external.bind",
@@ -699,6 +1022,7 @@ fn external_record(path: &str, resource_name: &str, line_number: usize) -> Extra
         "external.bind",
         resource_name,
         "astichi.surface.external.demand",
+        owner,
     )
 }
 
@@ -720,10 +1044,10 @@ fn identifier_demand_record(
     )
 }
 
-fn block_production_record(line_number: u32) -> ExtractedRecord {
+fn block_production_record(line_number: usize) -> ExtractedRecord {
     record(
         ".",
-        &authored_summary("__block__", line_number as usize),
+        &authored_summary("__block__", line_number),
         "production.block",
         "copy-block",
         "production.block",
@@ -778,7 +1102,7 @@ fn record_with_owner(
     let owner_summary = if code_owner.is_empty() {
         ".".to_string()
     } else {
-        code_owner.join(".")
+        code_owner.join("/")
     };
     ExtractedRecord {
         ast_path: ast_path.to_string(),

@@ -45,6 +45,10 @@ names, definition spellings, function parameters, call keywords, and imports.
 N4d extends `extract_template_snapshot(...)` to payload production records for
 expression/block payloads, `astichi_params`, and `astichi_funcargs`.
 
+N4e extends `extract_template_snapshot(...)` to expression-form
+`astichi_insert(...)`, decorator-form insert metadata validation, and
+decorator-carried records when the insert target has a matching hole.
+
 Build explicitly from the Astichi repo root:
 
 ```bash
