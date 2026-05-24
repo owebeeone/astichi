@@ -595,8 +595,12 @@ metadata only: `astichi.compile(...)` and composable rebuild paths register the
 existing inventory as a lower template and store an internal `_lower_template`
 binding on `BasicComposable`. That binding carries the registered template
 handle, record specs, current surface-bundle signature, and dynamic surface
-handles. `AssemblyScope`, candidate lookup, and materialization still use the
-existing implementation until later route-through slices.
+handles. Lower template bindings can now be imported into a shared destination
+`LowerEngine` through `LowerTemplateCache`, rebinding dynamic surface handles
+from stable surface keys. The facade also exposes explicit artifact-copy
+helpers for template AST, executable AST, and rendered source. `AssemblyScope`,
+candidate lookup, and materialization still use the existing implementation
+until later route-through slices.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

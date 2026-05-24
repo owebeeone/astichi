@@ -8,8 +8,14 @@ from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.errors import LowerEngineError, StaleHandleError
 from astichi.lower_engine.facade import (
     LowerTemplateBinding,
+    LowerTemplateCache,
+    copy_composable_executable_ast,
+    copy_composable_template_ast,
     copy_template_ast,
+    ensure_current_surface_bundle,
+    register_lower_template_binding,
     register_inventory_template,
+    render_composable_source,
 )
 from astichi.lower_engine.handles import (
     EdgeId,
@@ -54,6 +60,7 @@ __all__ = [
     "LowerEngine",
     "LowerEngineError",
     "LowerTemplateBinding",
+    "LowerTemplateCache",
     "MaterializationOperation",
     "MaterializationPlan",
     "OccurrenceId",
@@ -75,8 +82,13 @@ __all__ = [
     "TemplateId",
     "TemplateRecordId",
     "TemplateRecordSpec",
+    "copy_composable_executable_ast",
+    "copy_composable_template_ast",
     "copy_template_ast",
     "current_plus_future_surface_bundle_spec",
     "current_surface_bundle_spec",
+    "ensure_current_surface_bundle",
+    "register_lower_template_binding",
     "register_inventory_template",
+    "render_composable_source",
 ]

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from astichi.asttools import clone_ast
+from astichi.lower_engine.errors import LowerEngineError
 from astichi.lower_engine.catalog import current_surface_bundle_spec
 from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.handles import TemplateId
+from astichi.lower_engine.registry import RegisteredSurfaceBundle
 from astichi.lower_engine.templates import TemplateRecordSpec
+from astichi.model.composable import Composable
 from astichi.model.inventory import (
     BlockProductionInventoryPayload,
     ClauseHoleInventoryPayload,
@@ -77,9 +80,87 @@ def register_inventory_template(
     )
 
 
+@dataclass(slots=True)
+class LowerTemplateCache:
+    """Register lower template bindings once in one destination engine."""
+
+    engine: LowerEngine
+    _template_ids_by_key: dict[str, TemplateId] = field(default_factory=dict)
+
+    def template_id_for(self, binding: LowerTemplateBinding) -> TemplateId:
+        """Return the destination-engine template id for ``binding``."""
+        cached = self._template_ids_by_key.get(binding.template_key)
+        if cached is not None:
+            return cached
+        template_id = register_lower_template_binding(
+            self.engine,
+            binding,
+        )
+        self._template_ids_by_key[binding.template_key] = template_id
+        return template_id
+
+
+def ensure_current_surface_bundle(engine: LowerEngine) -> RegisteredSurfaceBundle:
+    """Ensure ``engine`` has the current Astichi surface bundle registered."""
+    current = current_surface_bundle_spec()
+    existing = engine.surface_registry.bundle
+    if existing is None:
+        return engine.surface_registry.register_bundle(current)
+    if existing.bundle_key != current.bundle_key:
+        raise LowerEngineError(
+            f"lower engine has incompatible surface bundle: {existing.bundle_key}"
+        )
+    return existing
+
+
+def register_lower_template_binding(
+    engine: LowerEngine,
+    binding: LowerTemplateBinding,
+) -> TemplateId:
+    """Import one compiled template binding into ``engine``."""
+    ensure_current_surface_bundle(engine)
+    rebound_specs = tuple(
+        replace(
+            spec,
+            surface_id=engine.surface_registry.surface_handle(spec.surface_key),
+        )
+        for spec in binding.record_specs
+    )
+    return engine.register_template(
+        template_key=binding.template_key,
+        source_summary=binding.source_summary,
+        records=rebound_specs,
+    )
+
+
 def copy_template_ast(tree: ast.Module) -> ast.Module:
     """Return a caller-owned copy of a template's CPython AST artifact."""
     return clone_ast(tree)
+
+
+def copy_composable_template_ast(composable: Composable) -> ast.Module:
+    """Return a caller-owned copy of a composable's template AST artifact."""
+    tree = getattr(composable, "tree", None)
+    if not isinstance(tree, ast.Module):
+        raise TypeError("composable does not expose a CPython template AST")
+    return copy_template_ast(tree)
+
+
+def render_composable_source(
+    composable: Composable,
+    *,
+    provenance: bool = True,
+) -> str:
+    """Render source through the explicit facade artifact boundary."""
+    return composable.emit(provenance=provenance)
+
+
+def copy_composable_executable_ast(composable: Composable) -> ast.Module:
+    """Return a caller-owned executable AST through the facade boundary."""
+    executable = composable.to_executable_ast()
+    if not isinstance(executable, ast.Module):
+        raise TypeError("composable executable artifact is not an ast.Module")
+    return executable
 
 
 def _template_record_spec(
