@@ -145,6 +145,40 @@ def test_scope_lower_parameter_plan_matches_structural_golden() -> None:
     assert actual_text == expected_text
 
 
+def test_scope_lower_defaulted_block_plan_matches_structural_golden() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def run():
+    with astichi_hole(body) as astichi_fallback:
+        result = 1
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+
+    plan = scope.lower_materialization_plan()
+    assert tuple(operation.operation_key for operation in plan.operation_stream) == (
+        "astichi.operation.splice_body_at_marker",
+    )
+    assert plan.operation_stream[0].captures["fallback_selected"] is True
+    assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
+        "astichi.operation.gate_no_unresolved",
+    )
+
+    actual_text = write_structural_snapshot(
+        scope.lower_structural_snapshot(materialization_plan=plan)
+    )
+
+    _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_STRUCTURAL_DIR / "scope_defaulted_block_plan.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (
+        _STRUCTURAL_GOLDENS_DIR / "scope_defaulted_block_plan.json"
+    ).read_text(encoding="utf-8")
+    assert actual_text == expected_text
+
+
 def test_scope_lower_elif_plan_matches_structural_golden() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(

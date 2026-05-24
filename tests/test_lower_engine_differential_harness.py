@@ -73,6 +73,7 @@ def test_transient_lower_differential_harness_matches_golden() -> None:
 def _harness_snapshot() -> dict[str, object]:
     fixtures = (
         _Fixture("block_insert", _block_insert),
+        _Fixture("defaulted_block_fallback", _defaulted_block_fallback),
         _Fixture("expression_insert", _expression_insert),
         _Fixture("parameter_insert", _parameter_insert),
         _Fixture("elif_insert", _elif_insert),
@@ -112,6 +113,24 @@ def _block_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("block_insert", scope, (check,), lower_supported=True)
+
+
+def _defaulted_block_fallback() -> dict[str, Any]:
+    root = _piece(
+        """
+        def run():
+            with astichi_hole(body) as astichi_fallback:
+                result = 1
+        """
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    return _fixture_result(
+        "defaulted_block_fallback",
+        scope,
+        (),
+        lower_supported=True,
+    )
 
 
 def _expression_insert() -> dict[str, Any]:

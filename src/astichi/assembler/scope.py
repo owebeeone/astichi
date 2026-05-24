@@ -855,6 +855,16 @@ class AssemblyScope:
             local_names: set[str] = set()
             for operation in ordered:
                 source_id = operation.source_occurrence_id
+                if source_id is None and operation.captures.get("fallback_selected"):
+                    target_locator = self._lower_engine.locator_for_record(
+                        self._lower_state,
+                        target_record_id,
+                    )
+                    fallback_node = _ast_node_at_path(tree, target_locator.ast_path)
+                    if not isinstance(fallback_node, ast.With):
+                        return False
+                    statements.extend(clone_ast(fallback_node.body))
+                    continue
                 if source_id is None:
                     return False
                 source = self._lower_composable_by_occurrence.get(source_id)
@@ -879,7 +889,7 @@ class AssemblyScope:
             )
             _replace_ast_statement_at_path(
                 tree,
-                _statement_path_for_marker_locator(target_locator.ast_path),
+                _block_statement_path_for_locator(tree, target_locator.ast_path),
                 statements,
             )
         return True
@@ -1391,6 +1401,13 @@ def _statement_path_for_marker_locator(path: str) -> str:
     if not statement_path:
         raise ValueError(f"marker locator does not include a statement path: {path}")
     return statement_path
+
+
+def _block_statement_path_for_locator(root: ast.AST, path: str) -> str:
+    node = _ast_node_at_path(root, path)
+    if isinstance(node, ast.stmt):
+        return path
+    return _statement_path_for_marker_locator(path)
 
 
 def _if_statement_path_for_elif_locator(path: str) -> str | None:

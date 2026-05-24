@@ -22,6 +22,7 @@ from astichi.lower_engine.inventory import (
     Overlay,
 )
 from astichi.lower_engine.materialization import (
+    MaterializationOperation,
     MaterializationPlan,
     build_materialization_plan,
 )
@@ -299,10 +300,61 @@ class LowerEngine:
             if bundle is None
             else tuple(operation.operation_key for operation in bundle.operations)
         )
-        return build_materialization_plan(
+        plan = build_materialization_plan(
             state,
             root_occurrence_id=root_occurrence_id,
             registered_operation_keys=operation_keys,
+        )
+        fallback_operations = self._defaulted_block_fallback_operations(state)
+        if not fallback_operations:
+            return plan
+        return MaterializationPlan(
+            root_occurrence_id=plan.root_occurrence_id,
+            operation_stream=plan.operation_stream + fallback_operations,
+            hygiene_stream=plan.hygiene_stream,
+            debug_views={
+                **plan.debug_views,
+                "fallback_operation_count": len(fallback_operations),
+            },
+            artifact_requests=plan.artifact_requests,
+        )
+
+    def _defaulted_block_fallback_operations(
+        self,
+        state: AssemblyState,
+    ) -> tuple[MaterializationOperation, ...]:
+        edge_targets = {edge.target_record_id for edge in state.edges}
+        fallback_records: list[tuple[int, RecordId]] = []
+        for record_id in state.indexes.by_inventory_kind.get("hole.block", ()):
+            if record_id in edge_targets or record_id in state.dead_records:
+                continue
+            occurrence = self.occurrence(state, record_id.occurrence_id)
+            if not occurrence.live:
+                continue
+            record = self.template_record(state, record_id)
+            projection = record.projection_record
+            payload = getattr(projection, "payload", None)
+            if not bool(getattr(payload, "has_default", False)):
+                continue
+            locator = self.locator_for_record(state, record_id)
+            fallback_records.append((locator.ast_path.count("/"), record_id))
+        return tuple(
+            MaterializationOperation(
+                operation_key="astichi.operation.splice_body_at_marker",
+                target_record_id=record_id,
+                captures={
+                    "fallback_selected": True,
+                    "target_state": "live",
+                },
+            )
+            for _depth, record_id in sorted(
+                fallback_records,
+                key=lambda item: (
+                    -item[0],
+                    item[1].occurrence_id.index,
+                    item[1].template_record_id.index,
+                ),
+            )
         )
 
     def _template(self, template_id: TemplateId) -> Template:

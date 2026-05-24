@@ -56,6 +56,9 @@ Completed tags:
 - `perf-refactor/slice-12a3`: simple elif payloads materialize on the lower
   path with ordered right-folding; boundary/hygiene elif payloads still
   exercise the counted adapter fallback.
+- `perf-refactor/slice-12b1`: unfilled defaulted block holes materialize their
+  fallback suites on the lower path, with fallback selection visible in lower
+  structural snapshots.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

@@ -95,6 +95,29 @@ def test_lower_materializes_block_without_builder_merge() -> None:
     assert counts.get("materialize_composable", 0) == 0
 
 
+def test_lower_materializes_unfilled_defaulted_block_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def run():
+    with astichi_hole(body) as astichi_fallback:
+        return 1
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == "def run():\n    return 1\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
 def test_lower_block_materialization_preserves_edge_order() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("def run():\n    astichi_hole(body)\n")
