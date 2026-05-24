@@ -25,11 +25,14 @@ design artifacts for implementation planning:
 - `SnapshotGrammar.md`: Slice 2 mini-spec for canonical structural snapshot
   shape and round-trip behavior.
 - `EngineSelectionContract.md`: native-engine selection and compatibility gate
-  for the later native spike.
+  for the production native lower engine.
 - `NativeAstProbe.md`: parallel proof-of-concept plan for a native parser and
   final CPython AST emitter.
-- `NativeDecisionProfile.md`: Slice 14a profile gate and decision record for
-  whether to proceed past native skeleton work.
+- `NativeDecisionProfile.md`: Slice 14a profile record. It is historical
+  context, not a stop gate for the now-required native lower engine.
+- `NativeLowerEngineDetailedPlan.md`: required implementation plan for the
+  fully native lower engine, including data structures, facade integration,
+  verification, and roll-build slices.
 - `SlicedBuildPlan.md`: commit-sized implementation slices, including API
   pruning before lower-engine changes.
 
@@ -38,8 +41,12 @@ design artifacts for implementation planning:
 - Inventory is the authoritative assembly state after `AssemblyScope.add(...)`.
 - The Python facade adapts inputs and outputs; it does not own candidate
   lookup, inventory merge, materialization, or hygiene.
-- The first engine is Python, using the same lower-engine API intended for a
-  later native implementation.
+- The first engine is Python, using the same lower-engine API as the production
+  native implementation.
+- The production native engine is required. It is not considered complete until
+  native compile, template extraction, scope state, candidate lookup, overlays,
+  materialization, hygiene, and final artifact copy all pass the shared golden
+  harness.
 - `astichi.compile(...)` should register lower templates and return a
   lower-backed composable facade. CPython AST/source extraction is an explicit
   artifact-copy path for tests, output, and compatibility.
@@ -81,8 +88,9 @@ decisions are now assigned to named slice deliverables:
   `EngineSelectionContract.md`.
 - Slice 16 decides whether native materialization emits Python `_ast` objects
   directly or a validated artifact for the facade to consume.
-- `NativeAstProbe.md` can run in parallel with the main slices to decide whether
-  native parsing plus final CPython AST construction is a better backend shape
-  than wrapping CPython AST objects as the working graph.
+- `NativeLowerEngineDetailedPlan.md` supersedes the historical native stop
+  gates from Slice 14. The native probe result is accepted as sufficient
+  evidence to pursue native parsing plus final CPython AST construction as the
+  production backend shape.
 
 Those are slice gates, not reasons to keep expanding the proposal.

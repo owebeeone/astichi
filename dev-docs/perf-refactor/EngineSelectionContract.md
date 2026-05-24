@@ -1,20 +1,22 @@
 # Engine Selection Contract
 
-Status: Slice 14b boundary contract.
+Status: Slice 14b boundary contract, updated for the required native lower
+engine.
 
 The Python lower engine is the first implementation and is the correctness
-reference. A native engine is optional and may be Rust, C++, or a hybrid module.
-It must run behind the same facade and the same structural golden harness.
+reference. The production native lower engine is now required and may be Rust,
+C++, or a hybrid module. It must run behind the same facade and the same
+structural golden harness.
 
 ## Selection Rules
 
 The facade should select one lower engine at scope creation:
 
 ```text
-python: default implementation and correctness reference
-native: optional native implementation when available and compatible
-native-rust: optional explicit Rust-backed implementation, if shipped
-native-cpp: optional explicit C++-backed implementation, if shipped
+python: reference implementation and explicit fallback
+native: production native implementation when available and compatible
+native-rust: explicit Rust-backed implementation, if shipped
+native-cpp: explicit C++-backed implementation, if shipped
 auto: use native only when the active bundle and platform pass compatibility gates
 ```
 
@@ -31,10 +33,14 @@ Before `native` can be selected, the native engine must accept:
 - the snapshot schema version;
 - the materialization/hygiene ownership contract;
 - the external-slot ownership contract.
+- the `native.full_lower_engine.current_surfaces.v1` capability.
 
 If any engine-level gate fails, `auto` falls back before work starts. Explicit
 `native` should fail with a diagnostic rather than silently crossing back into
 Python per record.
+
+An importable native extension skeleton is not enough. Selection must be based
+on declared lower-engine capabilities, not extension import success.
 
 `auto` fallback should be quiet in normal operation but visible in diagnostic
 mode through a structured selection event:
@@ -95,7 +101,7 @@ policy can run all current Astichi `tests/data/gold_src/` fixtures.
 The same fixture should run against:
 
 - Python lower engine;
-- native lower engine, once implemented;
+- native lower engine;
 - `auto` selection when native support is installed.
 
 Structural snapshots compare by stable surface, pattern, and operation keys.
@@ -106,7 +112,8 @@ matches the Python lower engine through the shared verification path.
 ## Native Module Boundary
 
 The production native extension should expose a small engine-shaped API. Names
-below are contract names, not final Python symbol names:
+below are contract names, not final Python symbol names. The complete
+implementation plan is `NativeLowerEngineDetailedPlan.md`.
 
 ```text
 engine_capabilities() -> CapabilitySnapshot

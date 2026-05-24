@@ -1,7 +1,9 @@
-"""Optional production native lower-engine discovery.
+"""Production native lower-engine discovery.
 
-The native engine is disabled by default. This module only owns discovery and
+The default engine request is ``auto``. This module only owns discovery and
 selection metadata until a future slice routes lower-engine behavior natively.
+An importable skeleton is not selected as native unless it advertises the full
+lower-engine capability set.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ from typing import Any
 
 EXTENSION_NAME = "_astichi_native_engine"
 ENGINE_SELECTION_ENV = "ASTICHI_LOWER_ENGINE"
-DEFAULT_ENGINE = "python"
+DEFAULT_ENGINE = "auto"
+FULL_LOWER_ENGINE_FEATURE = "native.full_lower_engine.current_surfaces.v1"
 VALID_ENGINE_SELECTIONS = frozenset(
     {"python", "native", "native-rust", "native-cpp", "auto"}
 )
@@ -60,7 +63,7 @@ def requested_lower_engine(value: str | None = None) -> str:
 
 
 def load_native_extension(*, required: bool = False) -> ModuleType | None:
-    """Load the optional native extension if it is available."""
+    """Load the native extension if it is available."""
     global _native_cache
     if isinstance(_native_cache, ModuleType):
         return _native_cache
@@ -88,10 +91,7 @@ def native_capabilities() -> dict[str, Any] | None:
     module = load_native_extension(required=False)
     if module is None:
         return None
-    capabilities = module.capabilities()
-    if not isinstance(capabilities, dict):
-        raise TypeError("native capabilities must be a dict")
-    return dict(capabilities)
+    return _native_capability_snapshot(module)
 
 
 def native_self_test() -> bool | None:
@@ -113,14 +113,32 @@ def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
 
     module = load_native_extension(required=False)
     if module is not None:
-        selected = "native-rust"
-        if requested in {"native", "auto", "native-rust"}:
+        capabilities = _native_capability_snapshot(module)
+        selected = _native_backend_selection(capabilities)
+        if requested not in {"native", "auto", selected}:
+            raise NativeExtensionUnavailableError(
+                f"requested {requested!r}, but the available native backend "
+                f"is {selected!r}"
+            )
+        if _has_full_lower_engine_capability(capabilities):
             return EngineSelectionEvent(
                 requested_engine=requested,
                 selected_engine=selected,
             )
+        reason = (
+            f"native extension is available but does not advertise "
+            f"{FULL_LOWER_ENGINE_FEATURE}"
+        )
+        if requested == "auto":
+            return EngineSelectionEvent(
+                requested_engine=requested,
+                selected_engine="python",
+                fallback_scope="engine",
+                reason_key="native_full_lower_engine_unavailable",
+                reason_detail=reason,
+            )
         raise NativeExtensionUnavailableError(
-            f"requested {requested!r}, but the available native backend is {selected!r}"
+            f"requested {requested!r}, but {reason}"
         )
 
     if requested == "auto":
@@ -166,3 +184,22 @@ def _repo_native_engine_dir() -> Path | None:
     if native_dir.exists():
         return native_dir
     return None
+
+
+def _native_capability_snapshot(module: ModuleType) -> dict[str, Any]:
+    capabilities = module.capabilities()
+    if not isinstance(capabilities, dict):
+        raise TypeError("native capabilities must be a dict")
+    return dict(capabilities)
+
+
+def _has_full_lower_engine_capability(capabilities: dict[str, Any]) -> bool:
+    features = capabilities.get("engine_features", ())
+    return FULL_LOWER_ENGINE_FEATURE in set(features)
+
+
+def _native_backend_selection(capabilities: dict[str, Any]) -> str:
+    label = str(capabilities.get("backend_label", ""))
+    if "cpp" in label or "c++" in label:
+        return "native-cpp"
+    return "native-rust"

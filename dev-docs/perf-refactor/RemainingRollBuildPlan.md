@@ -724,16 +724,20 @@ Tag: `perf-refactor/slice-14b`.
 Goal: add a loadable native extension shell without routing behavior to it.
 
 Status: closed by the `native_engine/` skeleton and
-`astichi.lower_engine.native` discovery facade. Native selection is disabled by
-default, explicit build artifacts are ignored, and tests skip cleanly when the
-extension has not been built.
+`astichi.lower_engine.native` discovery facade. Default selection requests
+`auto`, explicit build artifacts are ignored, and tests skip cleanly when the
+extension has not been built. This is selection metadata only; production
+lower-engine behavior is not routed to native until the extension declares the
+full lower-engine capability set.
 
 Work:
 
 - Add the production native package skeleton and build metadata.
 - Expose version, capability, and self-test functions.
-- Add Python facade discovery and an opt-in engine selection flag.
-- Keep native selection disabled by default.
+- Add Python facade discovery and an engine selection override flag.
+- Keep lower-engine native routing disabled until routing exists; default
+  selection prefers native only when the extension is present and fully
+  lower-engine capable.
 - Add build artifacts to ignore rules.
 - Add focused tests that skip cleanly when the extension is unavailable.
 
@@ -741,7 +745,8 @@ Acceptance:
 
 - Source-only checkout remains clean after tests.
 - Extension can be built locally by an explicit command.
-- Python engine remains the default.
+- `auto` is the default selection policy, with Python fallback when the
+  extension is absent or present but not lower-engine capable.
 - Full Astichi suite passes without requiring the native extension.
 
 Stop if:
@@ -750,6 +755,27 @@ Stop if:
 - Importing Astichi starts requiring a compiler toolchain.
 
 Tag: `perf-refactor/slice-14c`.
+
+## Native Lower Engine Requirement Update
+
+The Slice 14a profile stop gate is superseded. A fully functional native lower
+engine is now required, not optional. The detailed source of truth for the
+remaining native implementation is `NativeLowerEngineDetailedPlan.md`.
+
+Checkpoints 15a through 16d below remain useful as the historical coarse slice
+map. The concrete native roll-build should use the finer N0 through N13 slices
+from `NativeLowerEngineDetailedPlan.md`.
+
+The important changes are:
+
+- native parser/IR-backed template extraction is the production target;
+- Python-extracted template metadata is allowed only as a parity harness input,
+  not as the native success path;
+- materialization and hygiene are native lower-layer responsibilities;
+- native selection is capability-gated and must not treat an importable
+  skeleton as a usable lower engine;
+- profile measurements guide prioritization, but no longer stop native
+  implementation of current Astichi/YIDL surfaces.
 
 ## Checkpoint 15a: Native Surface Registry
 
@@ -880,26 +906,25 @@ Stop if:
 
 Tag: `perf-refactor/slice-15e`.
 
-## Checkpoint 15f: Native Parser/IR Gate
+## Checkpoint 15f: Native Parser/IR Integration
 
-Goal: decide and, if accepted, integrate native parser/IR for template
-registration.
+Goal: integrate native parser/IR for template registration.
 
 Work:
 
-- Use the native probe results to choose one of two paths:
-  - native tables with Python-extracted template metadata only;
-  - native parser/IR-backed template registration.
-- If parser/IR is accepted, parse source text natively and attach native AST/IR
-  references to template records.
+- Use the native probe results as the production parser/IR starting point.
+- Parse source text natively and attach native AST/IR references to template
+  records.
+- Use Python-extracted template metadata only as a parity harness oracle.
 - Keep CPython AST/source as explicit artifact-copy outputs.
 - Validate grammar/version coverage against current fixture sources.
 
 Acceptance:
 
-- The chosen path is documented.
 - Native parser/IR registration matches Python template snapshots for selected
-  fixtures, or parser/IR is explicitly deferred.
+  fixtures.
+- Native-selected `astichi.compile(...)` does not use Python `ast.parse(...)`
+  or Python `Inventory` extraction on the success path.
 - Full Astichi suite passes.
 
 Stop if:
@@ -961,8 +986,8 @@ Tag: `perf-refactor/slice-16b`.
 
 ## Checkpoint 16c: Native Full Surface Expansion
 
-Goal: expand native materialization/hygiene only for profile-worthy remaining
-surfaces.
+Goal: expand native materialization/hygiene to every current Astichi/YIDL
+surface.
 
 Work:
 
@@ -981,13 +1006,14 @@ Acceptance:
 
 Stop if:
 
-- The profile no longer justifies moving the next surface family natively.
+- A current surface cannot be represented by registered pattern templates and
+  operation primitives without adding a per-surface native public API.
 
 Tag: `perf-refactor/slice-16c`.
 
 ## Checkpoint 16d: Native Profile And Engine Selection
 
-Goal: close native implementation with a measured engine-selection decision.
+Goal: close native implementation with measured engine-selection behavior.
 
 Work:
 
@@ -995,19 +1021,20 @@ Work:
 - Compare candidate lookup, overlays, materialization plan, hygiene, artifact
   copy, source rendering, CPython AST construction, and final compile/exec
   timings.
-- Make native opt-in or default according to measured benefit and stability.
+- Make `auto` select native by default only when native declares the full
+  lower-engine capability set and passes the workload gate.
 - Document fallback policy and unsupported-operation diagnostics.
 
 Acceptance:
 
-- Native engine either meets the performance target or is explicitly kept
-  experimental with the reason documented.
+- Native engine is a complete selectable implementation for current surfaces.
 - Engine selection is coarse and deterministic.
 - Full Astichi suite passes in the selected default configuration.
 
 Stop if:
 
-- Native improves microbenchmarks but not the YIDL lifecycle-shaped workload.
+- Native cannot pass the current structural, final, and YIDL verification
+  gates.
 
 Tag: `perf-refactor/slice-16d`.
 

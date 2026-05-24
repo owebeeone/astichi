@@ -1,23 +1,31 @@
 # Native Decision Profile
 
-Status: Slice 14a decision record.
+Status: Slice 14a decision record; superseded as a stop gate by
+`NativeLowerEngineDetailedPlan.md`.
 
 Date: 2026-05-25
 
 ## Decision
 
-Do not start the full native lower-engine implementation checkpoints
-`15a`-`16d` from the current profile.
+The original Slice 14a decision was to avoid starting the full native
+lower-engine implementation from the then-current profile alone. That profile
+remains useful context, but it is no longer the controlling implementation
+gate.
 
-The Python lower engine now covers the YIDL lifecycle hot path without the
-legacy builder adapter counters, but the remaining miss is mostly outside the
-Astichi lower tables. Native parser/IR work remains technically viable and the
-probe should be kept, but the next performance work should first reduce or
-restructure YIDL edge traversal/contribution application, then rerun this gate.
+The current requirement is to build a fully functional native lower engine.
+`NativeLowerEngineDetailedPlan.md` is the source of truth for that required
+roll-build.
 
-Proceeding directly to native table/materialization implementation would add a
-second engine before the profile identifies a lower-engine bottleneck large
-enough to recover the target.
+At the time of this profile, the Python lower engine covered the YIDL lifecycle
+hot path without the legacy builder adapter counters, but the remaining miss
+was mostly outside the Astichi lower tables. That made the profile a weak
+standalone reason to start native work, but it did not disprove the native
+architecture.
+
+The risk called out by this profile still matters: native parser speed alone is
+not enough. The native implementation must move the whole lower-engine success
+path, including template extraction, candidate lookup, overlays,
+materialization, hygiene, and artifact copy, behind the native boundary.
 
 ## Import Profile
 
@@ -124,21 +132,28 @@ fixtures, but not by the 5x threshold from `NativeAstProbe.md`. Artifact copy to
 CPython AST is also large enough that parser speed alone is not the deciding
 factor.
 
-## Native Backend Direction
+## Historical Native Backend Direction
 
-Keep the native backend direction as:
+The original direction from this profile was:
 
 - Rust/PyO3 remains the current evidence-backed probe choice;
-- parser/IR-backed template registration is viable but not yet
-  profile-justified for production routing;
+- parser/IR-backed template registration is viable;
 - public CPython `ast`/`_ast` plus `compile(...)` remains the artifact boundary;
 - no internal CPython compiler API is justified by this profile;
-- engine selection must remain coarse and opt-in until a native run proves a
-  workload-level win.
+- engine selection must remain coarse and capability-gated.
 
-## Follow-Up Gate
+The updated implementation direction is:
 
-Before starting `15a`, rerun this decision after one of these changes:
+- use the Rust/PyO3 native probe result as the production parser/IR starting
+  point;
+- build the full lower engine natively, not only parser/artifact construction;
+- select native only when the extension declares the full lower-engine
+  capability set.
+
+## Historical Follow-Up Gate
+
+The original stop-gate guidance was to rerun this decision before starting
+`15a` after one of these changes:
 
 - YIDL edge traversal/contribution application is collapsed, cached, or moved
   behind a bulk plan;
@@ -148,5 +163,6 @@ Before starting `15a`, rerun this decision after one of these changes:
 - a native prototype can execute a full lower table/materialization operation
   stream and show a workload-level win, not only a parser microbenchmark.
 
-Until then, `14b` and `14c` may proceed only as boundary/skeleton work. They
-must not route production behavior to native by default.
+That stop gate is superseded. The native roll-build may proceed, but the first
+native slice must ensure that a loadable skeleton is not selected as a usable
+native lower engine without the full capability gate.

@@ -4,7 +4,10 @@ This directory contains the production native-extension skeleton for the
 perf-refactor lower engine. It is intentionally separate from `native_probe/`.
 
 The skeleton exposes version, capability, and self-test functions only. It does
-not route Astichi compile/build/materialization behavior to native code.
+not route compile/build/materialization behavior to native code yet, and it
+must not be selected as a usable native lower engine until it advertises the
+full lower-engine capability set from
+`dev-docs/perf-refactor/NativeLowerEngineDetailedPlan.md`.
 
 Build explicitly from the Astichi repo root:
 
@@ -22,6 +25,8 @@ uv run --with pytest pytest tests/test_native_engine_skeleton.py -q
 ```
 
 Default Astichi imports and tests must pass without building this extension.
+Selection falls back to Python before work starts when the extension is absent
+or present but not lower-engine capable.
 
 Use the Python build and focused Python tests as the verification gate. Direct
 `cargo test` is not a useful gate for this PyO3 extension skeleton because the
