@@ -63,6 +63,9 @@ Completed tags:
   path with managed-import requests visible in lower hygiene snapshots;
   collision and dynamic-module cases still exercise the counted adapter
   fallback.
+- `perf-refactor/slice-12c1`: simple boundary import/pass/export markers in
+  block payloads materialize on the lower path, with marker-strip decisions
+  visible in lower hygiene snapshots.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

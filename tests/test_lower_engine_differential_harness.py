@@ -78,6 +78,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("parameter_insert", _parameter_insert),
         _Fixture("elif_insert", _elif_insert),
         _Fixture("pyimport_static", _pyimport_static),
+        _Fixture("boundary_markers", _boundary_markers),
         _Fixture("external_overlay", _external_overlay),
         _Fixture("identifier_overlay", _identifier_overlay),
         _Fixture("single_add_satisfaction", _single_add_satisfaction),
@@ -223,6 +224,38 @@ def _pyimport_static() -> dict[str, Any]:
         (),
         lower_supported=True,
     )
+
+
+def _boundary_markers() -> dict[str, Any]:
+    root = _piece(
+        """
+        def run():
+            items = []
+            exported = []
+            astichi_hole(body)
+            return items, exported
+        """
+    )
+    body = _piece(
+        "astichi_import(items)\n"
+        "items.append(1)\n"
+        "astichi_pass(exported).append(2)\n"
+        "value = 3\n"
+        "astichi_export(value)\n"
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "body",
+        scope,
+        as_composable(body, build_name="Body"),
+        name="body",
+        build_match=("Root",),
+        owner_match=("run",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result("boundary_markers", scope, (check,), lower_supported=True)
 
 
 def _external_overlay() -> dict[str, Any]:

@@ -262,6 +262,62 @@ def test_scope_build_uses_adapter_for_pyimport_name_collision() -> None:
     assert counts["build_merge"] == 1
 
 
+def test_lower_materializes_boundary_markers_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def run():
+    items = []
+    exported = []
+    astichi_hole(body)
+    return items, exported
+""".strip()
+        + "\n"
+    )
+    body = astichi.compile(
+        """
+astichi_import(items)
+items.append(1)
+astichi_pass(exported).append(2)
+value = 3
+astichi_export(value)
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(body, build_name="Body"),
+                name="body",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == (
+        "def run():\n"
+        "    items = []\n"
+        "    exported = []\n"
+        "    items.append(1)\n"
+        "    exported.append(2)\n"
+        "    value = 3\n"
+        "    return (items, exported)\n"
+    )
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    assert namespace["run"]() == ([1], [2])  # type: ignore[operator]
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
 def test_lower_materializes_elif_clauses_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(

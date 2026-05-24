@@ -331,6 +331,7 @@ class AssemblyScope:
     def lower_materialization_plan(self) -> MaterializationPlan:
         """Return the lower-owned materialization plan for diagnostics/tests."""
         plan = self._lower_engine.build_materialization_plan(self._lower_state)
+        plan = self._append_lower_boundary_hygiene(plan)
         return self._append_lower_pyimport_hygiene(plan)
 
     def lower_structural_snapshot(
@@ -760,6 +761,7 @@ class AssemblyScope:
             elif_operations,
         ):
             return None
+        _strip_lower_boundary_markers(tree)
         if not self._apply_lower_managed_pyimports(tree):
             return None
         ast.fix_missing_locations(tree)
@@ -817,6 +819,45 @@ class AssemblyScope:
             debug_views={
                 **plan.debug_views,
                 "managed_import_request_count": len(hygiene),
+            },
+            artifact_requests=plan.artifact_requests,
+        )
+
+    def _append_lower_boundary_hygiene(
+        self,
+        plan: MaterializationPlan,
+    ) -> MaterializationPlan:
+        hygiene: list[HygieneOperation] = []
+        for occurrence_id, composable in self._lower_composable_by_occurrence.items():
+            if not self._lower_engine.occurrence(self._lower_state, occurrence_id).live:
+                continue
+            for marker in composable.markers:
+                if marker.source_name not in {
+                    "astichi_export",
+                    "astichi_import",
+                    "astichi_pass",
+                }:
+                    continue
+                hygiene.append(
+                    HygieneOperation(
+                        operation_key="astichi.operation.strip_marker",
+                        target_scope_id=0,
+                        captures={
+                            "marker": marker.source_name,
+                            "name": marker.name_id,
+                            "occurrence_id": occurrence_id.index,
+                        },
+                    )
+                )
+        if not hygiene:
+            return plan
+        return MaterializationPlan(
+            root_occurrence_id=plan.root_occurrence_id,
+            operation_stream=plan.operation_stream,
+            hygiene_stream=tuple(hygiene) + plan.hygiene_stream,
+            debug_views={
+                **plan.debug_views,
+                "boundary_marker_count": len(hygiene),
             },
             artifact_requests=plan.artifact_requests,
         )
@@ -917,6 +958,18 @@ class AssemblyScope:
         operations: list[MaterializationOperation],
     ) -> bool:
         for target_record_id in _ordered_unique_operation_targets(operations):
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            target_statement_path = _block_statement_path_for_locator(
+                tree,
+                target_locator.ast_path,
+            )
+            boundary_names = _lower_boundary_available_names(
+                tree,
+                target_statement_path,
+            )
             ordered = sorted(
                 (
                     operation
@@ -933,10 +986,6 @@ class AssemblyScope:
             for operation in ordered:
                 source_id = operation.source_occurrence_id
                 if source_id is None and operation.captures.get("fallback_selected"):
-                    target_locator = self._lower_engine.locator_for_record(
-                        self._lower_state,
-                        target_record_id,
-                    )
                     fallback_node = _ast_node_at_path(tree, target_locator.ast_path)
                     if not isinstance(fallback_node, ast.With):
                         return False
@@ -949,7 +998,10 @@ class AssemblyScope:
                     return False
                 if not self._has_single_block_production(source_id):
                     return False
-                if source.markers:
+                if source.markers and not _lower_boundary_markers_supported(
+                    source,
+                    boundary_names,
+                ):
                     return False
                 source_locals = (
                     frozenset()
@@ -960,13 +1012,9 @@ class AssemblyScope:
                     return False
                 local_names.update(source_locals)
                 statements.extend(clone_ast(source.tree.body))
-            target_locator = self._lower_engine.locator_for_record(
-                self._lower_state,
-                target_record_id,
-            )
             _replace_ast_statement_at_path(
                 tree,
-                _block_statement_path_for_locator(tree, target_locator.ast_path),
+                target_statement_path,
                 statements,
             )
         return True
@@ -1518,6 +1566,180 @@ def _body_contains_return(body: Iterable[ast.stmt]) -> bool:
         for statement in body
         for node in ast.walk(statement)
     )
+
+
+def _lower_boundary_available_names(
+    root: ast.AST, statement_path: str
+) -> frozenset[str]:
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    if not isinstance(root, ast.Module):
+        return frozenset()
+    scope = root
+    node: ast.AST = root
+    if statement_path:
+        for part in statement_path.split("/"):
+            node = _ast_child(node, part)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                scope = node
+    return _lower_scope_binding_names(scope)
+
+
+def _lower_scope_binding_names(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> frozenset[str]:
+    names: set[str] = set()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for argument in (
+            list(scope.args.posonlyargs)
+            + list(scope.args.args)
+            + list(scope.args.kwonlyargs)
+        ):
+            names.add(argument.arg)
+        if scope.args.vararg is not None:
+            names.add(scope.args.vararg.arg)
+        if scope.args.kwarg is not None:
+            names.add(scope.args.kwarg.arg)
+
+    class _Collector(ast.NodeVisitor):
+        def visit_Name(self, node: ast.Name) -> None:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            names.add(node.name)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            names.add(node.name)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            names.add(node.name)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            names.update(import_statement_binding_names(node, include_star=True))
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            names.update(import_statement_binding_names(node, include_star=True))
+
+    collector = _Collector()
+    for statement in scope.body:
+        collector.visit(statement)
+    return frozenset(names)
+
+
+def _lower_boundary_markers_supported(
+    source: BasicComposable,
+    available_names: frozenset[str],
+) -> bool:
+    from astichi.lowering.markers import (
+        boundary_explicit_bind_enabled,
+        boundary_outer_bind_enabled,
+    )
+
+    for marker in source.markers:
+        if marker.source_name == "astichi_export":
+            continue
+        if marker.source_name not in {"astichi_import", "astichi_pass"}:
+            return False
+        node = marker.node
+        if not isinstance(node, ast.Call):
+            return False
+        name = _lower_boundary_call_name(node)
+        if name is None:
+            return False
+        if (
+            boundary_explicit_bind_enabled(node)
+            or boundary_outer_bind_enabled(node)
+            or name in available_names
+        ):
+            continue
+        return False
+    return True
+
+
+def _strip_lower_boundary_markers(tree: ast.Module) -> None:
+    class _Stripper(ast.NodeTransformer):
+        def generic_visit(self, node: ast.AST) -> ast.AST:
+            for field, value in ast.iter_fields(node):
+                if isinstance(value, list):
+                    original = tuple(value)
+                    new_values: list[object] = []
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            visited = self.visit(item)
+                            if visited is None:
+                                continue
+                            if isinstance(visited, list):
+                                new_values.extend(visited)
+                                continue
+                            new_values.append(visited)
+                            continue
+                        new_values.append(item)
+                    if (
+                        not new_values
+                        and any(isinstance(item, ast.stmt) for item in original)
+                        and _is_lower_suite_statement_list(node, field)
+                    ):
+                        new_values.append(ast.Pass())
+                    value[:] = new_values
+                    continue
+                if isinstance(value, ast.AST):
+                    visited = self.visit(value)
+                    if visited is None:
+                        setattr(node, field, None)
+                    else:
+                        setattr(node, field, visited)
+            return node
+
+        def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+            if _is_lower_boundary_call(node.value):
+                return None
+            return self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            replacement = _lower_boundary_replacement(node)
+            if replacement is not None:
+                return replacement
+            return self.generic_visit(node)
+
+    _Stripper().visit(tree)
+    ast.fix_missing_locations(tree)
+
+
+def _lower_boundary_replacement(node: ast.Call) -> ast.expr | None:
+    name = _lower_boundary_call_name(node)
+    if name is None:
+        return None
+    replacement = ast.Name(id=name, ctx=ast.Load())
+    ast.copy_location(replacement, node)
+    return replacement
+
+
+def _lower_boundary_call_name(node: ast.Call) -> str | None:
+    if not _is_lower_boundary_call(node):
+        return None
+    if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+        return None
+    return node.args[0].id
+
+
+def _is_lower_boundary_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"astichi_export", "astichi_import", "astichi_pass"}
+    )
+
+
+def _is_lower_suite_statement_list(node: ast.AST, field: str) -> bool:
+    if isinstance(node, ast.Module):
+        return False
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return field == "body"
+    if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        return field in {"body", "orelse"}
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return field == "body"
+    return False
 
 
 def _module_pyimport_call_ids(tree: ast.Module) -> frozenset[int]:

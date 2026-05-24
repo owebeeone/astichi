@@ -135,6 +135,35 @@
         {
           "candidate_lines": [
             [
+              "demand: build_path=Root owner=run@<astichi>:1 name=body kind=hole.block location=<astichi>:4 locator=body[0]/body[2]/value",
+              "resource: composable build_name=Body",
+              "  production: name=__block__ kind=production.block location=<astichi>:1 locator=."
+            ]
+          ],
+          "lower_count": 1,
+          "projection_count": 1,
+          "selector": {
+            "build_match": [
+              "Root"
+            ],
+            "name": "body",
+            "owner_match": [
+              "run"
+            ]
+          },
+          "step": "body"
+        }
+      ],
+      "final_source": "def run():\n    items = []\n    exported = []\n    items.append(1)\n    exported.append(2)\n    value = 3\n    return (items, exported)\n",
+      "lower_source": "def run():\n    items = []\n    exported = []\n    items.append(1)\n    exported.append(2)\n    value = 3\n    return (items, exported)\n",
+      "name": "boundary_markers",
+      "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=run name=body kind=hole.block locator=body[0]/body[2]/value\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Body/#1 build_path=Root/Body code_owner=. name=items kind=identifier.demand locator=body[0]/value\n  Root/Body/#2 build_path=Root/Body code_owner=. name=exported kind=identifier.demand locator=body[2]/value/func/value\n  Root/Body/#3 build_path=Root/Body code_owner=. name=value kind=identifier.supply locator=body[4]/value\n  Root/Body/#4 build_path=Root/Body code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Body/#4\n  body: Root/#1\n  exported: Root/Body/#2\n  items: Root/Body/#1\n  value: Root/Body/#3\n\nport_map:\n  __block__: Root/#2, Root/Body/#4\n  body: Root/#1\n  exported: Root/Body/#2\n  items: Root/Body/#1\n  value: Root/Body/#3\n\nhole_map:\n  body: Root/#1\n\nidentifier_map:\n  exported: Root/Body/#2\n  items: Root/Body/#1\n  value: Root/Body/#3\n\nproduction_map:\n  __block__: Root/#2, Root/Body/#4"
+    },
+    {
+      "candidate_checks": [
+        {
+          "candidate_lines": [
+            [
               "demand: build_path=Root owner=. name=value kind=external.bind location=<astichi>:1 locator=body[0]/value",
               "resource: external value"
             ]
