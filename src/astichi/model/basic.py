@@ -26,6 +26,7 @@ from astichi.model.ports import (
     extract_demand_ports,
     extract_supply_ports,
 )
+from astichi.perf_counters import counted_perf_call
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
@@ -350,6 +351,7 @@ def apply_source_overlay(
     return specialized
 
 
+@counted_perf_call("rebuild_composable")
 def _rebuild_composable(
     *,
     tree: ast.Module,

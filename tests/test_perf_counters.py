@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import astichi
+from astichi.assembler import (
+    AssemblyScope,
+    as_external_value,
+    find_candidates,
+    require_one,
+)
+from astichi.perf_counters import collect_perf_counters
+
+
+def test_perf_counters_collect_assembly_hot_path_counts() -> None:
+    root = astichi.compile("value = astichi_bind_external(value)\n")
+    scope = AssemblyScope(astichi.build())
+
+    with collect_perf_counters() as counters:
+        scope.add("Root", root)
+        candidate = require_one(
+            find_candidates(
+                scope.inventory,
+                as_external_value(1),
+                name="value",
+                build_match=("Root",),
+            )
+        )
+        scope.apply(candidate)
+        built = scope.build()
+        built.to_executable_ast()
+
+    snapshot = counters.snapshot()
+    counts = snapshot["counts"]
+
+    assert counts["inventory_projection"] == 2
+    assert counts["replace_occurrence_inventory"] == 2
+    assert counts["candidate_lookup"] == 1
+    assert counts["assembly_scope_apply"] == 1
+    assert counts["assembly_scope_apply_external_value"] == 1
+    assert counts["rebuild_composable"] == 1
+    assert counts["build_merge"] == 1
+    assert counts["to_executable_ast"] == 1
+    assert counts["materialize_composable"] == 1
+
+
+def test_perf_counters_are_inactive_by_default() -> None:
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile("value = 1\n"))
+
+    assert scope.build().materialize().emit(provenance=False) == "value = 1\n"

@@ -43,6 +43,7 @@ from astichi.model.descriptors import (
 )
 from astichi.model.ports import DemandPort, SupplyPort
 from astichi.pathmatch import matches_path
+from astichi.perf_counters import active_perf_counters, counted_perf_call
 
 ExternalValue: TypeAlias = (
     None
@@ -253,15 +254,23 @@ class AssemblyScope:
         self._replace_occurrence_inventory((name,), composable)
         return handle
 
+    @counted_perf_call("assembly_scope_apply")
     def apply(self, candidate: BindingCandidate) -> None:
         """Apply one candidate to the underlying builder graph."""
+        counters = active_perf_counters()
         if isinstance(candidate, ComposableCandidate):
+            if counters is not None:
+                counters.increment("assembly_scope_apply_composable")
             self._apply_composable(candidate)
             return
         if isinstance(candidate, ExternalValueCandidate):
+            if counters is not None:
+                counters.increment("assembly_scope_apply_external_value")
             self._apply_external_value(candidate)
             return
         if isinstance(candidate, IdentifierNameCandidate):
+            if counters is not None:
+                counters.increment("assembly_scope_apply_identifier_name")
             self._apply_identifier_name(candidate)
             return
         raise TypeError(f"unsupported binding candidate: {type(candidate).__name__}")
@@ -358,6 +367,7 @@ class AssemblyScope:
             if prefix_owner == owner:
                 self._replace_occurrence_inventory(prefix, composable)
 
+    @counted_perf_call("replace_occurrence_inventory")
     def _replace_occurrence_inventory(
         self,
         build_prefix: tuple[str, ...],
@@ -442,6 +452,7 @@ def _ref_path_from_build_parts(parts: tuple[str, ...]) -> tuple[str | int, ...]:
     return tuple(ref_path)
 
 
+@counted_perf_call("inventory_projection")
 def _prefixed_occurrence_inventory(
     build_prefix: tuple[str, ...],
     composable: BasicComposable,
@@ -470,6 +481,7 @@ def _without_record_ids(
     return mutable.freeze()
 
 
+@counted_perf_call("candidate_lookup")
 def find_candidates(
     inventory: Inventory,
     resource: BindingResource,

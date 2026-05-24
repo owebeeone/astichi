@@ -117,6 +117,7 @@ from astichi.path_resolution import (
     promote_wrapped_root_ref_path,
     synthetic_root_scope_shell as _synthetic_root_scope_shell,
 )
+from astichi.perf_counters import counted_perf_call
 from astichi.shell_refs import (
     RefPath,
     format_ref_path,
@@ -1058,6 +1059,7 @@ def _resolve_build_graph(graph: BuilderGraph) -> _ResolvedBuildGraph:
     )
 
 
+@counted_perf_call("build_merge")
 def build_merge(
     graph: BuilderGraph, *, unroll: bool | str = "auto"
 ) -> BasicComposable:
@@ -3291,6 +3293,7 @@ def _mark_defaulted_fallback_source(stmt: ast.stmt, hole_name: str) -> ast.stmt:
     return stmt
 
 
+@counted_perf_call("materialize_composable")
 def materialize_composable(
     composable: BasicComposable,
     *,
@@ -3616,6 +3619,7 @@ def emit_commented_composable(composable: BasicComposable) -> str:
     return _emit_commented_tree(materialized.tree)
 
 
+@counted_perf_call("to_executable_ast")
 def to_executable_ast(composable: BasicComposable) -> ast.Module:
     """Return a fresh executable AST owned by the caller."""
     materialized = materialize_composable(composable)

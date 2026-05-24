@@ -15,6 +15,13 @@ run it with:
 uv run --with lark python docs/validation/perf/yidl_split_dataclass_profile.py --skip-runtime
 ```
 
+The YIDL lifecycle import baseline records phase timings plus Astichi's
+opt-in counters for the 8-class decorator workload:
+
+```bash
+uv run --with frozendict python docs/validation/perf/yidl_lifecycle_import_baseline.py
+```
+
 The generated-AST cache probe exercises the opt-in builder cache and reports
 cold, warm in-process, warm disk, unparse, and compile timings:
 
