@@ -684,6 +684,11 @@ Tag: `perf-refactor/slice-14a`.
 
 Goal: define the native library boundary before implementation.
 
+Status: closed by `EngineSelectionContract.md`. The contract now defines the
+bulk native entry points, opaque handle model, request/result shapes, error
+categories, external-slot ownership, parser/IR references, and feature
+negotiation.
+
 Work:
 
 - Write or update `dev-docs/perf-refactor/EngineSelectionContract.md`.
