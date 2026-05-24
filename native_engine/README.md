@@ -3,11 +3,19 @@
 This directory contains the production native-extension skeleton for the
 perf-refactor lower engine. It is intentionally separate from `native_probe/`.
 
-The skeleton exposes version, capability, and self-test functions only. It does
-not route compile/build/materialization behavior to native code yet, and it
-must not be selected as a usable native lower engine until it advertises the
-full lower-engine capability set from
+The extension currently exposes version, capability, self-test, and native
+engine-handle lifecycle functions only. It does not route
+compile/build/materialization behavior to native code yet, and it must not be
+selected as a usable native lower engine until it advertises the full
+lower-engine capability set from
 `dev-docs/perf-refactor/NativeLowerEngineDetailedPlan.md`.
+
+N1 core functions:
+
+- `engine_create(request=None)`
+- `engine_close(handle)`
+- `engine_snapshot(handle)`
+- `engine_assert_same_owner(left, right)`
 
 Build explicitly from the Astichi repo root:
 
