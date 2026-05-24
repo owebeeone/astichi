@@ -17,6 +17,7 @@ from astichi.lower_engine import (
     LowerEngine,
     LowerTemplateBinding,
     LowerTemplateCache,
+    MaterializationPlan,
     TemplateRecordSpec,
 )
 from astichi.lower_engine.handles import OccurrenceId, RecordId
@@ -180,7 +181,9 @@ class IdentifierNameResource(BindingResource):
     ) -> tuple[BindingCandidate, ...]:
         return tuple(
             IdentifierNameCandidate(demand_record=record, resource=self)
-            for record in _records_for_map(inventory, inventory.identifier_map, selector)
+            for record in _records_for_map(
+                inventory, inventory.identifier_map, selector
+            )
             if record.kind == "identifier.demand"
         )
 
@@ -309,9 +312,20 @@ class AssemblyScope:
         self._append_lower_occurrence((name,), composable)
         return handle
 
-    def lower_structural_snapshot(self) -> dict[str, object]:
+    def lower_materialization_plan(self) -> MaterializationPlan:
+        """Return the lower-owned materialization plan for diagnostics/tests."""
+        return self._lower_engine.build_materialization_plan(self._lower_state)
+
+    def lower_structural_snapshot(
+        self,
+        *,
+        materialization_plan: MaterializationPlan | None = None,
+    ) -> dict[str, object]:
         """Return the lower-engine structural state for diagnostics/tests."""
-        return self._lower_engine.structural_snapshot(self._lower_state)
+        return self._lower_engine.structural_snapshot(
+            self._lower_state,
+            materialization_plan=materialization_plan,
+        )
 
     @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:
@@ -477,9 +491,7 @@ class AssemblyScope:
                 return owner, _ref_path_from_build_parts(path[len(prefix) :])
         raise ValueError(f"no registered owner for build path `{record.build_path}`")
 
-    def _refresh_owner_occurrences(
-        self, owner: str, composable: Composable
-    ) -> None:
+    def _refresh_owner_occurrences(self, owner: str, composable: Composable) -> None:
         for prefix, prefix_owner in tuple(self._owner_by_build_prefix.items()):
             if prefix_owner == owner:
                 self._append_lower_occurrence(prefix, composable)
@@ -507,9 +519,7 @@ class AssemblyScope:
                 continue
             mutable.add_existing_record(record)
             visible_record_ids.add(record.record_id)
-        self._record_ids_by_build_prefix[build_prefix] = frozenset(
-            visible_record_ids
-        )
+        self._record_ids_by_build_prefix[build_prefix] = frozenset(visible_record_ids)
         self._inventory = mutable.freeze()
         return prefixed
 
@@ -922,9 +932,7 @@ def _resolve_projection_record(
         build_path=record.build_path,
         code_owner=code_owner,
         name=(
-            record.name
-            if resolved_name == name
-            else StaticResourceName(resolved_name)
+            record.name if resolved_name == name else StaticResourceName(resolved_name)
         ),
         kind=record.kind,
         locator=record.locator,
@@ -1029,9 +1037,7 @@ def _records_for_map(
 ) -> tuple[InventoryRecord, ...]:
     if selector.name is None:
         record_ids = tuple(
-            record_id
-            for ids in record_map.values()
-            for record_id in ids
+            record_id for ids in record_map.values() for record_id in ids
         )
     else:
         record_ids = record_map.get(selector.name, ())
@@ -1057,9 +1063,7 @@ def _record_matches(record: InventoryRecord, selector: DemandSelector) -> bool:
 def _production_records(composable: Composable) -> tuple[InventoryRecord, ...]:
     inventory = _inventory_for(composable)
     record_ids = tuple(
-        record_id
-        for ids in inventory.production_map.values()
-        for record_id in ids
+        record_id for ids in inventory.production_map.values() for record_id in ids
     )
     return inventory.records_for_ids(record_ids)
 

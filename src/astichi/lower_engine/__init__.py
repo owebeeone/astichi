@@ -33,6 +33,7 @@ from astichi.lower_engine.materialization import (
     HygieneOperation,
     MaterializationOperation,
     MaterializationPlan,
+    build_materialization_plan,
 )
 from astichi.lower_engine.registry import (
     BundleSchemaMismatchError,
@@ -82,6 +83,7 @@ __all__ = [
     "TemplateId",
     "TemplateRecordId",
     "TemplateRecordSpec",
+    "build_materialization_plan",
     "copy_composable_executable_ast",
     "copy_composable_template_ast",
     "copy_template_ast",

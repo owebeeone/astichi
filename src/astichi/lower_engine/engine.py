@@ -21,7 +21,10 @@ from astichi.lower_engine.inventory import (
     Occurrence,
     Overlay,
 )
-from astichi.lower_engine.materialization import MaterializationPlan
+from astichi.lower_engine.materialization import (
+    MaterializationPlan,
+    build_materialization_plan,
+)
 from astichi.lower_engine.registry import SurfaceRegistry
 from astichi.lower_engine.snapshots import structural_snapshot
 from astichi.lower_engine.templates import (
@@ -231,6 +234,28 @@ class LowerEngine:
             state=state,
             materialization_plan=materialization_plan,
             surface_bundle=self.surface_registry.bundle,
+        )
+
+    def build_materialization_plan(
+        self,
+        state: AssemblyState,
+        *,
+        root_occurrence_id: OccurrenceId | None = None,
+    ) -> MaterializationPlan:
+        """Build a lower-owned materialization plan for one assembly state."""
+        self._check_state(state)
+        if root_occurrence_id is not None:
+            self._check_occurrence_id(root_occurrence_id)
+        bundle = self.surface_registry.bundle
+        operation_keys = (
+            None
+            if bundle is None
+            else tuple(operation.operation_key for operation in bundle.operations)
+        )
+        return build_materialization_plan(
+            state,
+            root_occurrence_id=root_occurrence_id,
+            registered_operation_keys=operation_keys,
         )
 
     def _template(self, template_id: TemplateId) -> Template:

@@ -627,7 +627,12 @@ candidate lookup and the slow inventory projection compare selectors against an
 overlay-resolved visible-name view, so later selectors can target resolved
 owners such as `GeneratedClass` and `run` without eager AST rewrites.
 Identifier bindings are flushed to the temporary builder adapter at
-`scope.build(...)`.
+`scope.build(...)`. The lower engine can now construct a deterministic
+materialization plan through `scope.lower_materialization_plan()`. That plan
+contains operation-stream entries for composable edges and external/identifier
+overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
+structural data. It does not change final output yet; `scope.build(...)` still
+uses the temporary builder adapter for final materialization.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after

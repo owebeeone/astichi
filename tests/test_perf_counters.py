@@ -50,6 +50,28 @@ def test_perf_counters_are_inactive_by_default() -> None:
     assert scope.build().materialize().emit(provenance=False) == "value = 1\n"
 
 
+def test_lower_materialization_plan_counter_is_separate() -> None:
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile("value = astichi_bind_external(value)\n"))
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_external_value(1),
+                name="value",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.lower_materialization_plan()
+
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_plan"] == 1
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
 def test_external_apply_queues_overlay_without_rebuild() -> None:
     root = astichi.compile("value = astichi_bind_external(value)\n")
     scope = AssemblyScope(astichi.build())
