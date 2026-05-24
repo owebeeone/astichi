@@ -261,6 +261,10 @@ class AssemblyScope:
     _lower_inventory_ids_by_build_prefix: dict[
         tuple[str, ...], frozenset[InventoryRecordId]
     ] = field(default_factory=dict, init=False)
+    _lower_projection_by_record_id: dict[RecordId, InventoryRecord] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
@@ -277,13 +281,28 @@ class AssemblyScope:
         """Register a root composable in this scope."""
         handle = self.builder.add(name, composable)
         self._owner_by_build_prefix[(name,)] = name
-        self._replace_occurrence_inventory((name,), composable)
-        self._append_lower_occurrence((name,), composable)
+        prefixed = self._replace_occurrence_inventory((name,), composable)
+        self._append_lower_occurrence(
+            (name,),
+            composable,
+            prefixed_inventory=prefixed,
+        )
         return handle
 
     def lower_structural_snapshot(self) -> dict[str, object]:
         """Return the lower-engine structural state for diagnostics/tests."""
         return self._lower_engine.structural_snapshot(self._lower_state)
+
+    def project_lower_inventory(self) -> Inventory:
+        """Project the visible lower state back to the slow debug inventory."""
+        mutable = MutableInventory()
+        for record_id, record in self._lower_projection_by_record_id.items():
+            if record_id in self._lower_state.dead_records:
+                continue
+            if record_id in self._lower_state.satisfied_records:
+                continue
+            mutable.add_existing_record(record)
+        return mutable.freeze()
 
     @counted_perf_call("assembly_scope_apply")
     def apply(self, candidate: BindingCandidate) -> None:
@@ -339,10 +358,15 @@ class AssemblyScope:
         target_lower_record = self._lower_record_by_inventory_id.get(
             candidate.target_record.record_id
         )
+        prefixed = self._replace_occurrence_inventory(
+            build_path + (resource.instance_name,),
+            resource.composable,
+        )
         source_occurrence = self._append_lower_occurrence(
             build_path + (resource.instance_name,),
             resource.composable,
             parent_occurrence_id=self._lower_occurrence_by_build_prefix.get(build_path),
+            prefixed_inventory=prefixed,
         )
         if target_lower_record is not None:
             self._lower_engine.append_edge(
@@ -352,10 +376,6 @@ class AssemblyScope:
                 operation_key=_operation_key_for_target(candidate.target_record),
                 order=resource.order,
             )
-        self._replace_occurrence_inventory(
-            build_path + (resource.instance_name,),
-            resource.composable,
-        )
 
     def _apply_external_value(self, candidate: ExternalValueCandidate) -> None:
         self._append_lower_overlay(
@@ -423,15 +443,19 @@ class AssemblyScope:
     ) -> None:
         for prefix, prefix_owner in tuple(self._owner_by_build_prefix.items()):
             if prefix_owner == owner:
-                self._replace_occurrence_inventory(prefix, composable)
-                self._append_lower_occurrence(prefix, composable)
+                prefixed = self._replace_occurrence_inventory(prefix, composable)
+                self._append_lower_occurrence(
+                    prefix,
+                    composable,
+                    prefixed_inventory=prefixed,
+                )
 
     @counted_perf_call("replace_occurrence_inventory")
     def _replace_occurrence_inventory(
         self,
         build_prefix: tuple[str, ...],
         composable: Composable,
-    ) -> None:
+    ) -> Inventory:
         if not isinstance(composable, BasicComposable):
             raise TypeError(
                 "assembler scope inventory requires BasicComposable instances; "
@@ -453,6 +477,7 @@ class AssemblyScope:
             visible_record_ids
         )
         self._inventory = mutable.freeze()
+        return prefixed
 
     def _mark_record_satisfied(self, record_id: InventoryRecordId) -> None:
         self._satisfied_record_ids.add(record_id)
@@ -469,6 +494,7 @@ class AssemblyScope:
         composable: Composable,
         *,
         parent_occurrence_id: OccurrenceId | None = None,
+        prefixed_inventory: Inventory | None = None,
     ) -> OccurrenceId:
         if not isinstance(composable, BasicComposable):
             raise TypeError(
@@ -505,6 +531,12 @@ class AssemblyScope:
             )
             inventory_record_ids.add(inventory_record_id)
             self._lower_record_by_inventory_id[inventory_record_id] = record_id
+            projection_record = _projection_record_for(
+                prefixed_inventory,
+                inventory_record_id,
+            )
+            if projection_record is not None:
+                self._lower_projection_by_record_id[record_id] = projection_record
         self._lower_record_ids_by_build_prefix[build_prefix] = frozenset(
             lower_record_ids
         )
@@ -520,6 +552,7 @@ class AssemblyScope:
         )
         for record_id in old_lower_records:
             self._lower_state.dead_records.add(record_id)
+            self._lower_projection_by_record_id.pop(record_id, None)
         for inventory_id in self._lower_inventory_ids_by_build_prefix.get(
             build_prefix,
             frozenset(),
@@ -621,6 +654,15 @@ def _operation_key_for_target(record: InventoryRecord) -> str:
     if record.kind.startswith("hole."):
         return "astichi.operation.splice_call_arguments"
     return "astichi.operation.append_body"
+
+
+def _projection_record_for(
+    inventory: Inventory | None,
+    record_id: InventoryRecordId,
+) -> InventoryRecord | None:
+    if inventory is None:
+        return None
+    return inventory.records.get(record_id)
 
 
 @counted_perf_call("inventory_projection")

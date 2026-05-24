@@ -306,9 +306,9 @@ Implementation split:
   appended or refreshed occurrences, updates basic lower indexes, and snapshots
   a real add/apply scope fixture. Candidate lookup still uses the legacy
   projected `Inventory`.
-- Slice 6b replaces the debug inventory projection path with a lower-state
-  projection and tightens the index coverage needed by Slice 7 candidate
-  lookup.
+- Slice 6b adds the lower-state debug inventory projection as an explicit slow
+  path and proves it matches the legacy scope inventory for the routed fixture.
+  Slice 7 owns the candidate-specific index and lookup tightening.
 
 Work:
 

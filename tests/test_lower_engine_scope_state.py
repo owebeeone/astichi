@@ -39,6 +39,8 @@ def test_scope_lower_occurrence_state_matches_structural_golden() -> None:
         )
     )
 
+    assert scope.project_lower_inventory() == scope.inventory
+
     actual_text = write_structural_snapshot(scope.lower_structural_snapshot())
 
     _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)

@@ -603,8 +603,10 @@ candidate lookup, and materialization still use the existing implementation
 until later route-through slices, but `AssemblyScope` now also maintains
 parallel lower occurrence state for `add(...)`, composable applies, and
 overlay-shaped external/identifier applies. That lower state is exposed through
-`scope.lower_structural_snapshot()` for structural goldens and diagnostics; it
-is not yet the source of candidate lookup or final materialization.
+`scope.lower_structural_snapshot()` for structural goldens and diagnostics, and
+`scope.project_lower_inventory()` provides the slow debug projection back to
+the existing `Inventory` shape. It is not yet the source of candidate lookup or
+final materialization.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,
