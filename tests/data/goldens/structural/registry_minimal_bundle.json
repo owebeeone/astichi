@@ -2,7 +2,7 @@
   "schema": "astichi.structural-inventory.v1",
   "surface_bundle": {
     "bundle_key": "astichi.core.minimal",
-    "bundle_signature": "6c84a6ba751db903",
+    "bundle_signature": "fc9c7876b1c4a7b8",
     "compatibility_rules": [
       {
         "predicate": {
@@ -36,6 +36,8 @@
     ],
     "patterns": [
       {
+        "diagnostic_only": false,
+        "enabled": true,
         "operation_key": "insert.expression",
         "pattern_key": "expression-hole-call",
         "summary": "Recognize astichi_hole(name) in expression position.",
@@ -44,6 +46,8 @@
         "version": 1
       },
       {
+        "diagnostic_only": false,
+        "enabled": true,
         "operation_key": "insert.expression",
         "pattern_key": "expression-production",
         "summary": "Recognize a scalar expression payload.",

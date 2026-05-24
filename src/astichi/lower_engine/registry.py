@@ -48,6 +48,8 @@ class PatternSpec:
     surface_key: str
     operation_key: str
     summary: str
+    enabled: bool = True
+    diagnostic_only: bool = False
     handle: PatternId | None = None
 
 
@@ -161,6 +163,8 @@ class RegisteredSurfaceBundle:
             ],
             "patterns": [
                 {
+                    "diagnostic_only": pattern.diagnostic_only,
+                    "enabled": pattern.enabled,
                     "operation_key": pattern.operation_key,
                     "pattern_key": pattern.pattern_key,
                     "summary": pattern.summary,
@@ -381,6 +385,8 @@ def _bundle_signature(spec: SurfaceBundleSpec) -> str:
         ],
         "patterns": [
             {
+                "diagnostic_only": pattern.diagnostic_only,
+                "enabled": pattern.enabled,
                 "operation_key": pattern.operation_key,
                 "pattern_key": pattern.pattern_key,
                 "summary": pattern.summary,

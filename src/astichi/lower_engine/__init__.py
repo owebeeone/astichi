@@ -1,5 +1,6 @@
 """Internal lower-engine reference implementation."""
 
+from astichi.lower_engine.catalog import current_surface_bundle_spec
 from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.errors import LowerEngineError, StaleHandleError
 from astichi.lower_engine.handles import (
@@ -65,4 +66,5 @@ __all__ = [
     "TemplateId",
     "TemplateRecordId",
     "TemplateRecordSpec",
+    "current_surface_bundle_spec",
 ]
