@@ -16,6 +16,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
         vec![
             "native.extension.v1",
             "native.engine_core.v1",
+            "native.parser_ir.v1",
             "native.surface_registry.v1",
             "native.pattern_registry.v1",
         ],
@@ -24,9 +25,9 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
     dict.set_item("supported_snapshot_schema_versions", vec![1_u32])?;
     dict.set_item("supported_operation_primitives", Vec::<&str>::new())?;
     dict.set_item("artifact_kinds", Vec::<&str>::new())?;
-    dict.set_item("parser_backend", py.None())?;
-    dict.set_item("parser_grammar_version", py.None())?;
-    dict.set_item("parsing_releases_gil", false)?;
+    dict.set_item("parser_backend", crate::parser_ir::PARSER_BACKEND)?;
+    dict.set_item("parser_grammar_version", "python-3-compatible")?;
+    dict.set_item("parsing_releases_gil", true)?;
     dict.set_item("materialization_releases_gil", false)?;
     Ok(dict.into_any().unbind())
 }

@@ -172,6 +172,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
     assert capabilities["engine_features"] == [
         "native.extension.v1",
         "native.engine_core.v1",
+        "native.parser_ir.v1",
         "native.surface_registry.v1",
         "native.pattern_registry.v1",
     ]

@@ -22,6 +22,15 @@ N2 registry functions:
 - `register_surface_bundle(engine, bundle_snapshot)`
 - `surface_bundle_snapshot(engine)`
 
+N3 parser/IR functions:
+
+- `parse_module(source, filename=None, location_policy="native")`
+- `compile_composable(source, filename=None)`
+- `copy_to_python_ast(native_module, location_policy="native")`
+- `to_source(native_module, location_policy="native")`
+- `bench_parse_convert(source, iterations, filename=None, location_policy="native")`
+- `parser_backend()`
+
 Build explicitly from the Astichi repo root:
 
 ```bash
