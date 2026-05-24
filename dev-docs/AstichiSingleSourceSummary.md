@@ -634,8 +634,10 @@ overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
 structural data. `scope.lower_materialize()` can explicitly materialize the
 current expression-insert, ordinary block-insert, and external/identifier
 overlay subset without calling builder merge; unsupported surfaces still use a
-counted adapter fallback. Default `scope.build(...)` selection is unchanged
-until the lower build-selection slice.
+counted adapter fallback. `scope.build(...)` now selects that lower path
+automatically when the lower result is closed, meaning no demand ports remain
+after materialization. Unsupported or not-yet-closed states stay on the counted
+builder-adapter path.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after

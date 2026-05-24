@@ -38,7 +38,10 @@ def test_perf_counters_collect_assembly_hot_path_counts() -> None:
     assert counts["assembly_scope_apply"] == 1
     assert counts["assembly_scope_apply_external_value"] == 1
     assert counts["rebuild_composable"] == 1
-    assert counts["build_merge"] == 1
+    assert counts["lower_materialization_plan"] == 1
+    assert counts["lower_build_selection"] == 1
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("build_merge", 0) == 0
     assert counts["to_executable_ast"] == 1
     assert counts["materialize_composable"] == 1
 

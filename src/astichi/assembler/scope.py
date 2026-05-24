@@ -398,6 +398,20 @@ class AssemblyScope:
 
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Build the current scope graph."""
+        materialized = None
+        if unroll in ("auto", False):
+            materialized = self._lower_materialize_if_supported()
+        counters = active_perf_counters()
+        if materialized is not None:
+            if counters is not None:
+                counters.increment("lower_build_selection")
+                counters.increment("lower_materialization_artifact")
+            return materialized
+        if counters is not None:
+            counters.increment("lower_materialization_adapter_fallback")
+        return self._build_with_adapter(unroll=unroll)
+
+    def _build_with_adapter(self, *, unroll: bool | str = "auto") -> BasicComposable:
         self._flush_pending_identifier_binds()
         self._flush_pending_external_binds()
         return self.builder.build(unroll=unroll)
@@ -405,13 +419,12 @@ class AssemblyScope:
     @counted_perf_call("lower_materialize")
     def lower_materialize(self) -> BasicComposable:
         """Materialize the currently supported lower-owned subset."""
-        plan = self.lower_materialization_plan()
-        materialized = self._try_lower_materialize_expression_overlay_subset(plan)
+        materialized = self._lower_materialize_if_supported()
         counters = active_perf_counters()
         if materialized is None:
             if counters is not None:
                 counters.increment("lower_materialization_adapter_fallback")
-            return self.build().materialize()
+            return self._build_with_adapter().materialize()
         if counters is not None:
             counters.increment("lower_materialization_artifact")
         return materialized
@@ -730,10 +743,18 @@ class AssemblyScope:
         ast.fix_missing_locations(tree)
         from astichi.model.basic import _rebuild_composable
 
-        return _rebuild_composable(
+        materialized = _rebuild_composable(
             tree=tree,
             origin=root.origin,
             bound_externals=frozenset(),
+        )
+        if materialized.demand_ports:
+            return None
+        return materialized
+
+    def _lower_materialize_if_supported(self) -> BasicComposable | None:
+        return self._try_lower_materialize_expression_overlay_subset(
+            self.lower_materialization_plan()
         )
 
     def _collect_identifier_operation(
@@ -813,6 +834,7 @@ class AssemblyScope:
                 ),
             )
             statements: list[ast.stmt] = []
+            local_names: set[str] = set()
             for operation in ordered:
                 source_id = operation.source_occurrence_id
                 if source_id is None:
@@ -822,6 +844,16 @@ class AssemblyScope:
                     return False
                 if not self._has_single_block_production(source_id):
                     return False
+                if source.markers:
+                    return False
+                source_locals = (
+                    frozenset()
+                    if source.classification is None
+                    else source.classification.locals
+                )
+                if local_names & source_locals:
+                    return False
+                local_names.update(source_locals)
                 statements.extend(clone_ast(source.tree.body))
             target_locator = self._lower_engine.locator_for_record(
                 self._lower_state,
