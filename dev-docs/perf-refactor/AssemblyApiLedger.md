@@ -1,6 +1,6 @@
 # Assembly API Ledger
 
-Status: draft ledger template.
+Status: Slice 0 audit checkpoint.
 
 This ledger is the Slice 0 deliverable. It names the assembly APIs that Astichi
 and YIDL actually use before the lower-engine refactor starts deleting or
@@ -31,41 +31,44 @@ API surface:
   bespoke diagnostic coverage:
 ```
 
-## Initial Surfaces To Audit
+## Audited Surfaces
 
-Tentative classifications:
+| API surface | Current callers | YIDL caller | Classification | Replacement | Removal slice | Coverage |
+| --- | --- | --- | --- | --- | --- | --- |
+| `AssemblyScope.add` | `src/astichi/assembler/runner.py`, `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append | keep; route in Slice 8 | assembler scope tests and YIDL final goldens |
+| `AssemblyScope.apply` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays | keep; route in Slices 9-10 | assembler scope tests and YIDL final goldens |
+| `AssemblyScope.build` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
+| `AssemblyScope.inventory` | `find_candidates(scope.inventory, ...)`, inventory tests | `yidl/src/yidl/generation/assembly_runtime.py` | `adapter-only` | direct lower candidate query plus debug projection | decide in Slice 8; remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
+| `find_candidates` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower index query returning candidate handles | route in Slice 7 | assembler diagnostics tests and structural goldens |
+| `require_one` | assembler runner/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `validation-only` | lower candidate batch diagnostic formatter | keep until diagnostics migrate | bespoke missing/ambiguous tests |
+| `as_composable` | assembler runner/production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | composable resource descriptor | keep facade; lower in Slice 7 | assembler scope/runner tests |
+| `as_external_value` | assembler production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | external-value resource descriptor with facade object slot | keep facade; lower in Slice 7 | external bind goldens and diagnostics tests |
+| `as_identifier` | assembler production/tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | identifier resource descriptor | keep facade; lower in Slice 7 | identifier bind goldens and diagnostics tests |
+| `BindingCandidate` and concrete candidate classes | `src/astichi/assembler/scope.py`, YIDL type hints | `yidl/src/yidl/generation/assembly_runtime.py` imports `BindingCandidate` from `astichi.assembler.scope` | `adapter-only` | opaque lower candidate handle plus diagnostic view | remove from YIDL-facing hot path by Slice 13 | bespoke unsupported/ambiguous candidate diagnostics |
+| `BindingResource`, `DemandSelector`, and concrete resource classes | assembler client/runner/production internals | no top-level YIDL import; resources created through helpers | `adapter-only` | registered resource descriptors and selector objects | remove or make private after Slice 7 | assembler runner tests |
+| top-level exports of candidate/resource implementation classes from `astichi.assembler` | docs snippet type annotation and one bespoke test | none | `removable` | import low-level test-only types from `astichi.assembler.scope`; keep public top-level helpers only | removed in Slice 0 | assembler scope test adjusted |
+| `code_owner_parts` top-level export | none outside `scope.py` | none | `removable` | private helper inside candidate matching | removed in Slice 0 | covered by owner-match tests |
+| `astichi.compile` | package users, tests, docs, YIDL generators | `yidl/src/yidl/generation/*.py` | `required-hot` | lower-backed composable facade | route in Slice 5 | compile/final-output goldens |
+| `astichi.compile(file_name=...)` | tests/data/gold_src, docs | YIDL generated source helpers may pass provenance | `required-final` | lower source locator metadata | keep | location/provenance goldens |
+| `astichi.compile(line_number=...)` | tests and diagnostics fixtures | no direct YIDL hot-path call found | `required-final` | lower source locator metadata | keep | location diagnostics tests |
+| `astichi.compile(offset=...)` | tests/docs | no direct YIDL hot-path call found | `required-final` | lower source locator metadata | keep | provenance/location tests |
+| `astichi.compile(arg_names=...)` | tests/data/gold_src and docs | YIDL uses identifier binding paths instead | `validation-only` | identifier demand registration metadata | keep while supported public keyword | identifier-bind diagnostics |
+| `astichi.compile(keep_names=...)` | tests/data/gold_src, docs, YIDL matcher/data schema via `.with_keep_names(...)` | YIDL uses `.with_keep_names(...)` | `required-final` | lower hygiene stream | keep; lower in Slice 12c | hygiene goldens |
+| `astichi.compile(source_kind=...)` | emitted-source round-trip tests | no YIDL hot-path call found | `validation-only` | source-kind semantic object at registration | keep | emitted-source diagnostics |
+| `BasicComposable.bind` | materialize tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` calls bind indirectly through scope external applies | `adapter-only` | lower external overlay | route in Slice 10 | external bind goldens |
+| `BasicComposable.bind_identifier` | tests/docs and YIDL generator helpers | `yidl/src/yidl/generation/matcher.py`, `data_schema.py`, `assembly_runtime.py` | `adapter-only` | lower identifier overlay | route in Slice 10 | identifier bind goldens |
+| `BasicComposable.with_keep_names` | tests/docs and YIDL helpers | `yidl/src/yidl/generation/matcher.py`, `data_schema.py` | `required-final` | lower hygiene keep-name operation | route in Slice 12c | hygiene goldens |
+| builder graph mutation helpers | builder, assembler scope, runner | through `AssemblyScope` only | `adapter-only` | lower state append/apply/materialize | remove hot-path use by Slice 13 | builder and assembler tests |
+| `Inventory.__str__` / debug inventory printing | tests/docs | none found | `adapter-only` | structural snapshots and debug views | keep as slow projection only | existing inventory string tests until replaced |
+| `Inventory.find_resource` and record-id map accessors | descriptor/inventory tests/docs | none found | `adapter-only` | lower indexes plus structural snapshots | migrate after Slice 7 | inventory tests, then structural goldens |
+| parameter-hole helpers | materialize/lowering/tests | YIDL lifecycle-shaped templates | `required-final` | lower materialization operation | route in Slice 12a | parameter goldens |
+| funcargs payload helpers | materialize/lowering/tests | YIDL call argument paths | `required-final` | lower materialization operation | route in Slice 12a/12b as needed | funcargs goldens |
+| pyimport helpers | materialize/lowering/tests | YIDL generation helpers | `required-final` | lower managed import/hygiene operation | route in Slice 12b | pyimport goldens |
+| boundary pass/import/export helpers | materialize/lowering/tests | YIDL generated templates | `required-final` | lower boundary/hygiene stream | route in Slice 12c | boundary goldens |
+| keep-name and hygiene helpers | materialize/hygiene/tests | YIDL generator helpers | `required-final` | lower `hygiene_stream` | route in Slice 12c | hygiene goldens |
 
-| API surface | Initial classification | Owner to verify | Notes |
-| --- | --- | --- | --- |
-| `AssemblyScope.add` | `required-hot` | Astichi/YIDL | Route to lower occurrence append. |
-| `AssemblyScope.apply` | `required-hot` | Astichi/YIDL | Route composable, identifier, and external applies to lower tables/overlays. |
-| `AssemblyScope.find_candidates` | `required-hot` | Astichi/YIDL | Replace projected-inventory lookup with lower candidate handles. |
-| `AssemblyScope.inventory` | `adapter-only` | Astichi/YIDL | Debug/compatibility projection only. |
-| `astichi.compile` | `required-hot` | Astichi | Should return lower-backed composable facade. |
-| `astichi.compile(file_name=...)` | `required-final` | Astichi tests/docs | Preserve source provenance for diagnostics/artifacts. |
-| `astichi.compile(line_number=...)` | `required-final` | Astichi tests/docs | Preserve source-location behavior. |
-| `astichi.compile(offset=...)` | `required-final` | Astichi tests/docs | Preserve source-location behavior. |
-| `astichi.compile(arg_names=...)` | `validation-only` | Astichi tests/docs | Verify whether still needed after lower registration. |
-| `astichi.compile(keep_names=...)` | `required-final` | Astichi tests/docs | Feeds hygiene stream. |
-| `astichi.compile(source_kind=...)` | `validation-only` | Astichi tests/docs | Verify parser/source-mode handling. |
-| lower-backed composable facade construction | `required-hot` | Astichi | New replacement for AST-owned composable payload. |
-| copied CPython AST artifact extraction | `required-final` | Astichi/YIDL | Explicit artifact/test path. |
-| rendered-source artifact extraction | `required-final` | Astichi tests/docs | Golden and debug output. |
-| executable-AST artifact extraction | `required-final` | YIDL/Astichi | Runtime decoration output. |
-| builder graph mutation helpers | `adapter-only` | Astichi | Remove after lower route-through unless YIDL still needs a shape. |
-| composable `bind` | `adapter-only` | Astichi/YIDL | Route to overlays; keep facade compatibility if required. |
-| composable `bind_identifier` | `adapter-only` | Astichi/YIDL | Route to overlays; hot path must not rebuild composables. |
-| parameter-hole helpers | `required-final` | Astichi | Lower materialization Slice 12a. |
-| funcargs payload helpers | `required-final` | Astichi/YIDL | Lower materialization and validation. |
-| pyimport helpers | `required-final` | Astichi/YIDL | Lower managed import placement. |
-| boundary pass/import/export helpers | `required-final` | Astichi/YIDL | Lower hygiene/boundary stream. |
-| keep-name and hygiene helpers | `required-final` | Astichi/YIDL | Lower `hygiene_stream`. |
-| debug inventory printing helpers | `adapter-only` | Astichi tests/docs | Slow projection path only. |
-
-The audit must include YIDL generated-output and import paths, Astichi tests,
-`tests/data/gold_src/` fixtures, and docs/contributor references. An API that is
-unused by YIDL but required by current goldens or documented examples must be
-migrated deliberately rather than removed silently.
+Audit scope included Astichi implementation/tests/docs, `tests/data/gold_src/`,
+and YIDL generation/runtime callers under `yidl/src/yidl/generation`.
 
 ## Exit Gate
 

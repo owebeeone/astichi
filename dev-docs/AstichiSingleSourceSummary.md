@@ -557,6 +557,13 @@ build/code-owner names or one of:
 builder and inventory APIs. It is implemented, but it is not the full future
 YIDL assembler contract.
 
+The top-level `astichi.assembler` export surface is intentionally limited to
+the documented helper APIs plus the generic runner/production client APIs.
+Low-level candidate/resource implementation classes remain in
+`astichi.assembler.scope` for the current runner and YIDL route-through, but
+they are adapter surfaces for the lower-engine refactor rather than stable
+top-level public exports.
+
 Current assembler helper surface:
 
 - `AssemblyScope(astichi.build())`: wraps a builder and refreshes a built

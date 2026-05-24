@@ -9,7 +9,6 @@ def run() -> str:
     from astichi import Composable
     from astichi.assembler import (
         AssemblyScope,
-        BindingResource,
         as_composable,
         as_external_value,
         as_identifier,
@@ -47,7 +46,7 @@ def run() -> str:
     scope.add("Root", root)
 
     def apply_one(
-        resource: BindingResource,
+        resource,
         *,
         name: str,
         build_match: tuple[str, ...],

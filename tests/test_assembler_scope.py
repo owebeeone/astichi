@@ -5,13 +5,13 @@ import pytest
 import astichi
 from astichi.assembler import (
     AssemblyScope,
-    BindingCandidate,
     as_composable,
     as_external_value,
     as_identifier,
     find_candidates,
     require_one,
 )
+from astichi.assembler.scope import BindingCandidate
 from astichi.model import empty_inventory
 
 
