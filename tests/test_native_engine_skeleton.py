@@ -175,6 +175,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.parser_ir.v1",
         "native.surface_registry.v1",
         "native.pattern_registry.v1",
+        "native.template_snapshot.empty.v1",
     ]
     assert capabilities["supported_bundle_schema_versions"] == [1]
     assert native_self_test() is True

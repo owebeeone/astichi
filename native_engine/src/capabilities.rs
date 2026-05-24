@@ -19,6 +19,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.parser_ir.v1",
             "native.surface_registry.v1",
             "native.pattern_registry.v1",
+            "native.template_snapshot.empty.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

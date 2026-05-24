@@ -119,6 +119,10 @@ fn parse_native(source: &str, filename: &str) -> Result<ast::ModModule, String> 
     ast::ModModule::parse(source, filename).map_err(|err| err.to_string())
 }
 
+pub(crate) fn parse_native_module(source: &str, filename: &str) -> PyResult<ast::ModModule> {
+    parse_native(source, filename).map_err(|message| syntax_err(message, filename))
+}
+
 fn parse_native_timed(source: String, filename: String) -> (Result<ast::ModModule, String>, u128) {
     let start = Instant::now();
     let parsed = parse_native(&source, &filename);
@@ -300,6 +304,21 @@ fn convert_module_artifact(
             .unbind();
         Ok((fixed, stats))
     }
+}
+
+pub(crate) fn ast_dump_without_attributes(
+    py: Python<'_>,
+    source: &str,
+    module: &ast::ModModule,
+) -> PyResult<String> {
+    let artifact = convert_module_artifact(py, source, module, "native")?.0;
+    let ast_mod = py.import("ast")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("include_attributes", false)?;
+    ast_mod
+        .getattr("dump")?
+        .call((artifact,), Some(&kwargs))?
+        .extract::<String>()
 }
 
 struct Emitter<'py> {

@@ -31,6 +31,10 @@ N3 parser/IR functions:
 - `bench_parse_convert(source, iterations, filename=None, location_policy="native")`
 - `parser_backend()`
 
+N4a template extraction functions:
+
+- `extract_template_snapshot(engine, source, filename=None, line_number=1)`
+
 Build explicitly from the Astichi repo root:
 
 ```bash
