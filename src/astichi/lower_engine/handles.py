@@ -49,6 +49,24 @@ class OverlayId:
 
 
 @dataclass(frozen=True, slots=True)
+class SurfaceId:
+    owner: EngineOwner
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class OperationId:
+    owner: EngineOwner
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class PatternId:
+    owner: EngineOwner
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
 class RecordId:
     occurrence_id: OccurrenceId
     template_record_id: TemplateRecordId

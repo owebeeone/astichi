@@ -595,6 +595,13 @@ success path is a structural golden fixture for a manually built tiny state;
 production `astichi.compile(...)`, `AssemblyScope`, and materialization still
 use the existing implementation until later route-through slices.
 
+The lower engine also has an internal surface registry shell. It registers a
+canonical surface bundle, assigns engine-owned dynamic handles for surfaces,
+operations, and patterns, snapshots stable keys rather than handle ids, and
+evaluates compatibility through callback-free shape descriptors. Current
+registry coverage is a minimal expression-hole bundle golden plus focused
+handle/diagnostic tests; current Astichi scanners are not migrated yet.
+
 ### 3.6 Emit, materialize, and provenance contract
 
 Current implementation reality:

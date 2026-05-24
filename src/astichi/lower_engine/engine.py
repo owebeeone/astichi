@@ -22,6 +22,7 @@ from astichi.lower_engine.inventory import (
     Overlay,
 )
 from astichi.lower_engine.materialization import MaterializationPlan
+from astichi.lower_engine.registry import SurfaceRegistry
 from astichi.lower_engine.snapshots import structural_snapshot
 from astichi.lower_engine.templates import (
     SourceLocator,
@@ -41,6 +42,7 @@ class LowerEngine:
         self._owner_label = owner_label
         self._templates: list[Template] = []
         self._next_locator_index = 0
+        self.surface_registry = SurfaceRegistry(self._owner)
 
     def register_template(
         self,

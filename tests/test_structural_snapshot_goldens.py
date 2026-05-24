@@ -23,6 +23,7 @@ _EXPECTED_INITIAL_GOLDENS = {
     "external_bind_overlay.json",
     "identifier_bind_overlay.json",
     "lower_engine_tiny_state.json",
+    "registry_minimal_bundle.json",
     "scalar_expression_insert.json",
 }
 _STRUCTURAL_GOLDENS = tuple(sorted(_STRUCTURAL_GOLDENS_DIR.glob("*.json")))

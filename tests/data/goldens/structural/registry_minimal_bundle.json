@@ -1,0 +1,83 @@
+{
+  "schema": "astichi.structural-inventory.v1",
+  "surface_bundle": {
+    "bundle_key": "astichi.core.minimal",
+    "bundle_signature": "6c84a6ba751db903",
+    "compatibility_rules": [
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "scalar",
+              "field_name": "shape"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "expression",
+              "field_name": "placement"
+            }
+          ]
+        },
+        "production_surface_key": "expression.production",
+        "result_policy": {
+          "policy_key": "single-expression-insert",
+          "summary": "Use one source expression for one expression hole."
+        },
+        "target_surface_key": "expression.hole"
+      }
+    ],
+    "operations": [
+      {
+        "operation_key": "insert.expression",
+        "summary": "Replace one expression target with one expression source.",
+        "version": 1
+      }
+    ],
+    "patterns": [
+      {
+        "operation_key": "insert.expression",
+        "pattern_key": "expression-hole-call",
+        "summary": "Recognize astichi_hole(name) in expression position.",
+        "surface_key": "expression.hole",
+        "template_key": "direct-call",
+        "version": 1
+      },
+      {
+        "operation_key": "insert.expression",
+        "pattern_key": "expression-production",
+        "summary": "Recognize a scalar expression payload.",
+        "surface_key": "expression.production",
+        "template_key": "expression-payload",
+        "version": 1
+      }
+    ],
+    "schema_version": 1,
+    "surfaces": [
+      {
+        "summary": "Target expression replacement point.",
+        "surface_key": "expression.hole",
+        "version": 1
+      },
+      {
+        "summary": "Scalar expression production.",
+        "surface_key": "expression.production",
+        "version": 1
+      }
+    ]
+  },
+  "templates": [],
+  "locators": [],
+  "occurrences": [],
+  "records": [],
+  "edges": [],
+  "overlays": [],
+  "materialization": {
+    "artifact_requests": [],
+    "debug_views": {},
+    "hygiene_stream": [],
+    "operation_stream": [],
+    "root_occurrence_id": null
+  },
+  "diagnostics": []
+}
