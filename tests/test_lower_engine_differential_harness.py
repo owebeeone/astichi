@@ -80,6 +80,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("elif_insert", _elif_insert),
         _Fixture("boundary_elif_insert", _boundary_elif_insert),
         _Fixture("pyimport_static", _pyimport_static),
+        _Fixture("pyimport_collision", _pyimport_collision),
         _Fixture("boundary_markers", _boundary_markers),
         _Fixture("keep_collision", _keep_collision),
         _Fixture("external_overlay", _external_overlay),
@@ -275,6 +276,18 @@ def _pyimport_static() -> dict[str, Any]:
     scope.add("Root", root)
     return _fixture_result(
         "pyimport_static",
+        scope,
+        (),
+        lower_supported=True,
+    )
+
+
+def _pyimport_collision() -> dict[str, Any]:
+    root = _piece("astichi_pyimport(module=foo, names=(a,))\na = 1")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    return _fixture_result(
+        "pyimport_collision",
         scope,
         (),
         lower_supported=True,

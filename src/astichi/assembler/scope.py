@@ -809,7 +809,22 @@ class AssemblyScope:
             return plan
         if not records:
             return plan
-        hygiene = tuple(
+        collisions = _lower_pyimport_colliding_existing_bindings(root.tree, records)
+        rename_hygiene = (
+            (
+                HygieneOperation(
+                    operation_key="astichi.operation.rename_if_collides",
+                    target_scope_id=0,
+                    captures={
+                        "colliding_names": list(collisions),
+                        "root_occurrence_id": root_id.index,
+                    },
+                ),
+            )
+            if collisions
+            else ()
+        )
+        import_hygiene = tuple(
             HygieneOperation(
                 operation_key="astichi.operation.managed_import_request",
                 target_scope_id=0,
@@ -822,13 +837,14 @@ class AssemblyScope:
             )
             for record in records
         )
+        hygiene = rename_hygiene + import_hygiene
         return MaterializationPlan(
             root_occurrence_id=plan.root_occurrence_id,
             operation_stream=plan.operation_stream,
             hygiene_stream=hygiene + plan.hygiene_stream,
             debug_views={
                 **plan.debug_views,
-                "managed_import_request_count": len(hygiene),
+                "managed_import_request_count": len(import_hygiene),
             },
             artifact_requests=plan.artifact_requests,
         )
@@ -977,8 +993,24 @@ class AssemblyScope:
             return False
         if not records:
             return False
-        if _lower_pyimport_collides_with_existing_bindings(tree, records):
+        final_names = _lower_pyimport_final_names(records)
+        if len(final_names) != len(set(final_names)):
             return False
+        collisions = _lower_pyimport_colliding_existing_bindings(tree, records)
+        if collisions:
+            unavailable = _lower_pyimport_existing_binding_names(tree) | set(
+                final_names
+            )
+            rename_counter = 1
+            rename_map: dict[str, str] = {}
+            for name in collisions:
+                next_name, rename_counter = _fresh_lower_scoped_name(
+                    name,
+                    unavailable | set(rename_map.values()),
+                    rename_counter,
+                )
+                rename_map[name] = next_name
+            _rename_lower_module_scope_names(tree, rename_map)
         insert_managed_imports(tree, records)
         _strip_lower_pyimport_declarations(tree)
         return not has_pyimport_marker(recognize_markers(tree))
@@ -2148,17 +2180,24 @@ def _module_pyimport_call_ids(tree: ast.Module) -> frozenset[int]:
     return frozenset(call_ids)
 
 
-def _lower_pyimport_collides_with_existing_bindings(
-    tree: ast.Module,
-    records: Iterable[object],
-) -> bool:
-    final_names = tuple(
+def _lower_pyimport_final_names(records: Iterable[object]) -> tuple[str, ...]:
+    return tuple(
         name
         for record in records
         if isinstance((name := getattr(record, "final_local_name", None)), str)
     )
-    if len(final_names) != len(set(final_names)):
-        return True
+
+
+def _lower_pyimport_colliding_existing_bindings(
+    tree: ast.Module,
+    records: Iterable[object],
+) -> tuple[str, ...]:
+    final_names = _lower_pyimport_final_names(records)
+    bindings = _lower_pyimport_existing_binding_names(tree)
+    return tuple(sorted(set(final_names) & bindings))
+
+
+def _lower_pyimport_existing_binding_names(tree: ast.Module) -> set[str]:
     bindings: set[str] = set()
 
     class _BindingCollector(ast.NodeVisitor):
@@ -2187,7 +2226,46 @@ def _lower_pyimport_collides_with_existing_bindings(
             bindings.update(import_statement_binding_names(node, include_star=True))
 
     _BindingCollector().visit(tree)
-    return bool(set(final_names) & bindings)
+    return bindings
+
+
+def _rename_lower_module_scope_names(
+    tree: ast.Module,
+    rename_map: dict[str, str],
+) -> None:
+    class _Renamer(ast.NodeTransformer):
+        def visit_Expr(self, node: ast.Expr) -> ast.AST:
+            if _is_lower_pyimport_call(node.value):
+                return node
+            return self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            replacement = rename_map.get(node.id)
+            if replacement is not None:
+                node.id = replacement
+            return node
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return node
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return node
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+            replacement = rename_map.get(node.name)
+            if replacement is not None:
+                node.name = replacement
+            return node
+
+    renamer = _Renamer()
+    for statement in tree.body:
+        renamer.visit(statement)
 
 
 def _strip_lower_pyimport_declarations(tree: ast.Module) -> None:

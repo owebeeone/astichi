@@ -689,11 +689,12 @@ defaulted block holes use the same lower block-splice operation as ordinary
 block holes; unfilled defaulted holes now materialize their fallback suites on
 the lower path.
 
-Managed pyimports are represented in lower hygiene streams and have a
-structural plan golden. Final lower materialization supports static module
-imports without local-name collisions; dynamic module refs, collision renaming,
-and source-payload boundary interactions still use the adapter path until the
-boundary/hygiene slices.
+Managed pyimports are represented in lower hygiene streams and have structural
+plan goldens. Final lower materialization supports static module imports and
+simple module-scope collision renaming, with the import spelling pinned and the
+colliding local binding renamed deterministically. Dynamic module refs and
+source-payload boundary interactions still use the adapter path until the full
+lower materialization gate owns that surface.
 
 Boundary import/pass/export markers are represented as lower hygiene strip
 operations and have a structural plan golden. Final lower materialization

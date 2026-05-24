@@ -75,6 +75,9 @@ Completed tags:
 - `perf-refactor/slice-12c3b`: simple boundary imports in elif payloads
   materialize on the lower path, with marker-strip decisions visible in lower
   hygiene snapshots.
+- `perf-refactor/slice-12c3c`: static pyimport name collisions materialize on
+  the lower path, with managed-import and rename decisions visible in lower
+  hygiene snapshots.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

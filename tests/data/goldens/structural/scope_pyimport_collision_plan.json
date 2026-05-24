@@ -1,0 +1,759 @@
+{
+  "schema": "astichi.structural-inventory.v1",
+  "surface_bundle": {
+    "bundle_key": "astichi.current.v1",
+    "bundle_signature": "8613982adeb0aafc",
+    "compatibility_rules": [
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ]
+        },
+        "production_surface_key": "astichi.surface.block.production",
+        "result_policy": {
+          "policy_key": "body-region-compatible",
+          "summary": "Accept when target and production are live and shape-compatible."
+        },
+        "target_surface_key": "astichi.surface.block.hole"
+      },
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ]
+        },
+        "production_surface_key": "astichi.surface.expression.production",
+        "result_policy": {
+          "policy_key": "expression-shape-compatible",
+          "summary": "Accept when target and production are live and shape-compatible."
+        },
+        "target_surface_key": "astichi.surface.expression.hole"
+      },
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ]
+        },
+        "production_surface_key": "astichi.surface.funcargs.production",
+        "result_policy": {
+          "policy_key": "call-arguments-compatible",
+          "summary": "Accept when target and production are live and shape-compatible."
+        },
+        "target_surface_key": "astichi.surface.funcargs.hole"
+      },
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ]
+        },
+        "production_surface_key": "astichi.surface.parameter.production",
+        "result_policy": {
+          "policy_key": "parameter-region-compatible",
+          "summary": "Accept when target and production are live and shape-compatible."
+        },
+        "target_surface_key": "astichi.surface.parameter.hole"
+      },
+      {
+        "predicate": {
+          "production_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ],
+          "target_expectations": [
+            {
+              "expected_value": "live",
+              "field_name": "state"
+            }
+          ]
+        },
+        "production_surface_key": "astichi.surface.elif.production",
+        "result_policy": {
+          "policy_key": "clause-compatible",
+          "summary": "Accept when target and production are live and shape-compatible."
+        },
+        "target_surface_key": "astichi.surface.elif.target"
+      }
+    ],
+    "operations": [
+      {
+        "operation_key": "astichi.operation.append_body",
+        "summary": "Append source statements to a body region.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.splice_body_at_marker",
+        "summary": "Replace a body marker with ordered source statements.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.replace_expression",
+        "summary": "Replace one expression marker with one source expression.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.splice_expression_list",
+        "summary": "Splice expressions into an expression-list field.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.splice_parameters",
+        "summary": "Splice parameter payloads into a function signature.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "summary": "Splice positional, keyword, starred, and double-starred call arguments.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.append_clause",
+        "summary": "Append a clause-like payload such as elif.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.managed_import_request",
+        "summary": "Request lower-owned managed import placement.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "summary": "Rewrite an identifier according to overlay or hygiene decisions.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.lower_external_ref",
+        "summary": "Lower an external slot reference into the final artifact.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.keep_name",
+        "summary": "Reserve a name from hygiene renaming.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.rename_if_collides",
+        "summary": "Choose a deterministic replacement when a name collides.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.reject_collision",
+        "summary": "Emit a diagnostic for an unrepairable collision.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.strip_marker",
+        "summary": "Remove marker-only syntax from the final artifact.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.gate_no_unresolved",
+        "summary": "Validate that unresolved marker state is empty.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.unroll_loop",
+        "summary": "Expand a compile-time loop-unroll marker.",
+        "version": 1
+      },
+      {
+        "operation_key": "astichi.operation.diagnostic_reserved",
+        "summary": "Reject a reserved or retired marker shape.",
+        "version": 1
+      }
+    ],
+    "patterns": [
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.replace_expression",
+        "pattern_key": "astichi.pattern.call.hole",
+        "summary": "Demand target with shape inferred from AST position.",
+        "surface_key": "astichi.surface.expression.hole",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_body_at_marker",
+        "pattern_key": "astichi.pattern.with.defaulted_block_hole",
+        "summary": "Defaulted block target with fallback suite.",
+        "surface_key": "astichi.surface.block.hole",
+        "template_key": "DefaultedWithPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.append_clause",
+        "pattern_key": "astichi.pattern.call.elif_target",
+        "summary": "Elif clause target.",
+        "surface_key": "astichi.surface.elif.target",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.append_clause",
+        "pattern_key": "astichi.pattern.def.elif_payload",
+        "summary": "Elif clause production.",
+        "surface_key": "astichi.surface.elif.production",
+        "template_key": "DefinitionNamePattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.replace_expression",
+        "pattern_key": "astichi.pattern.call.insert_expr",
+        "summary": "Expression production and placement metadata.",
+        "surface_key": "astichi.surface.insert.metadata",
+        "template_key": "InternalMetadataPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_body_at_marker",
+        "pattern_key": "astichi.pattern.decorator.insert_block",
+        "summary": "Block insert shell metadata.",
+        "surface_key": "astichi.surface.insert.metadata",
+        "template_key": "DecoratorCallPattern+InternalMetadataPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_parameters",
+        "pattern_key": "astichi.pattern.decorator.insert_params",
+        "summary": "Parameter insert shell metadata.",
+        "surface_key": "astichi.surface.insert.metadata",
+        "template_key": "DecoratorCallPattern+InternalMetadataPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.append_clause",
+        "pattern_key": "astichi.pattern.decorator.insert_elif",
+        "summary": "Elif insert shell metadata.",
+        "surface_key": "astichi.surface.insert.metadata",
+        "template_key": "DecoratorCallPattern+InternalMetadataPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.call.funcargs_payload",
+        "summary": "Call-argument production.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.funcargs.positional_item",
+        "summary": "Plain call-argument payload item.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern.item",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.funcargs.starred_item",
+        "summary": "Starred call-argument payload item.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern.item",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.funcargs.keyword_item",
+        "summary": "Keyword call-argument payload item.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern.item",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.funcargs.doublestar_item",
+        "summary": "Double-star call-argument payload item.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern.item",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_call_arguments",
+        "pattern_key": "astichi.pattern.funcargs.directive_item",
+        "summary": "Payload-local boundary directive.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "template_key": "PayloadExpressionPattern.item",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_parameters",
+        "pattern_key": "astichi.pattern.def.params_payload",
+        "summary": "Parameter production.",
+        "surface_key": "astichi.surface.parameter.production",
+        "template_key": "PayloadFunctionPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.splice_parameters",
+        "pattern_key": "astichi.pattern.arg.param_hole_suffix",
+        "summary": "Parameter insertion target.",
+        "surface_key": "astichi.surface.parameter.hole",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.suffix.arg_identifier.name",
+        "summary": "Identifier demand occurrence.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.suffix.arg_identifier.keyword",
+        "summary": "Identifier demand occurrence in a call keyword.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.suffix.arg_identifier.definition",
+        "summary": "Identifier demand on definition spelling.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.suffix.arg_identifier.import",
+        "summary": "Identifier demand in import syntax.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.keep_name",
+        "pattern_key": "astichi.pattern.suffix.keep_identifier",
+        "summary": "Keep-name hygiene directive.",
+        "surface_key": "astichi.surface.keep.name",
+        "template_key": "IdentifierSuffixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.lower_external_ref",
+        "pattern_key": "astichi.pattern.call.bind_external",
+        "summary": "External value demand.",
+        "surface_key": "astichi.surface.external.demand",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.keep_name",
+        "pattern_key": "astichi.pattern.call.keep",
+        "summary": "Keep-name hygiene directive.",
+        "surface_key": "astichi.surface.keep.name",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.call.export",
+        "summary": "Identifier supply/export.",
+        "surface_key": "astichi.surface.identifier.supply",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.call.import",
+        "summary": "Identifier demand/import.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.rewrite_identifier",
+        "pattern_key": "astichi.pattern.call.pass",
+        "summary": "Identifier demand/value form.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.managed_import_request",
+        "pattern_key": "astichi.pattern.call.pyimport",
+        "summary": "Managed import request.",
+        "surface_key": "astichi.surface.pyimport.request",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.strip_marker",
+        "pattern_key": "astichi.pattern.call.comment",
+        "summary": "Comment preservation/rendering marker.",
+        "surface_key": "astichi.surface.comment.marker",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.lower_external_ref",
+        "pattern_key": "astichi.pattern.call.ref_value",
+        "summary": "Dotted reference lowering.",
+        "surface_key": "astichi.surface.ref.value",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.lower_external_ref",
+        "pattern_key": "astichi.pattern.attr.ref_sentinel",
+        "summary": "Store/delete-compatible reference lowering.",
+        "surface_key": "astichi.surface.ref.value",
+        "template_key": "SentinelAttributePattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.unroll_loop",
+        "pattern_key": "astichi.pattern.call.for_iter",
+        "summary": "Compile-time unroll domain.",
+        "surface_key": "astichi.surface.unroll.for_iter",
+        "template_key": "LoopUnrollPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.managed_import_request",
+        "pattern_key": "astichi.pattern.prefix.pyimport_scope",
+        "summary": "Managed import placement validation.",
+        "surface_key": "astichi.surface.pyimport.request",
+        "template_key": "StatementPrefixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": false,
+        "enabled": true,
+        "operation_key": "astichi.operation.replace_expression",
+        "pattern_key": "astichi.pattern.prefix.expression_payload",
+        "summary": "Implicit expression production extraction.",
+        "surface_key": "astichi.surface.expression.production",
+        "template_key": "StatementPrefixPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": true,
+        "enabled": true,
+        "operation_key": "astichi.operation.diagnostic_reserved",
+        "pattern_key": "astichi.pattern.reserved.bind_once",
+        "summary": "Reserved diagnostic.",
+        "surface_key": "astichi.surface.diagnostic.reserved",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      },
+      {
+        "diagnostic_only": true,
+        "enabled": true,
+        "operation_key": "astichi.operation.diagnostic_reserved",
+        "pattern_key": "astichi.pattern.reserved.bind_shared",
+        "summary": "Reserved diagnostic.",
+        "surface_key": "astichi.surface.diagnostic.reserved",
+        "template_key": "DirectCallPattern",
+        "version": 1
+      }
+    ],
+    "schema_version": 1,
+    "surfaces": [
+      {
+        "summary": "Block insertion target.",
+        "surface_key": "astichi.surface.block.hole",
+        "version": 1
+      },
+      {
+        "summary": "Block body production.",
+        "surface_key": "astichi.surface.block.production",
+        "version": 1
+      },
+      {
+        "summary": "Expression insertion target.",
+        "surface_key": "astichi.surface.expression.hole",
+        "version": 1
+      },
+      {
+        "summary": "Expression production.",
+        "surface_key": "astichi.surface.expression.production",
+        "version": 1
+      },
+      {
+        "summary": "Call-argument insertion target.",
+        "surface_key": "astichi.surface.funcargs.hole",
+        "version": 1
+      },
+      {
+        "summary": "Call-argument production.",
+        "surface_key": "astichi.surface.funcargs.production",
+        "version": 1
+      },
+      {
+        "summary": "Function-parameter insertion target.",
+        "surface_key": "astichi.surface.parameter.hole",
+        "version": 1
+      },
+      {
+        "summary": "Function-parameter production.",
+        "surface_key": "astichi.surface.parameter.production",
+        "version": 1
+      },
+      {
+        "summary": "Elif clause insertion target.",
+        "surface_key": "astichi.surface.elif.target",
+        "version": 1
+      },
+      {
+        "summary": "Elif clause production.",
+        "surface_key": "astichi.surface.elif.production",
+        "version": 1
+      },
+      {
+        "summary": "External value demand.",
+        "surface_key": "astichi.surface.external.demand",
+        "version": 1
+      },
+      {
+        "summary": "Identifier name demand.",
+        "surface_key": "astichi.surface.identifier.demand",
+        "version": 1
+      },
+      {
+        "summary": "Identifier name supply or export.",
+        "surface_key": "astichi.surface.identifier.supply",
+        "version": 1
+      },
+      {
+        "summary": "Keep-name hygiene directive.",
+        "surface_key": "astichi.surface.keep.name",
+        "version": 1
+      },
+      {
+        "summary": "Managed Python import request.",
+        "surface_key": "astichi.surface.pyimport.request",
+        "version": 1
+      },
+      {
+        "summary": "Comment preservation marker.",
+        "surface_key": "astichi.surface.comment.marker",
+        "version": 1
+      },
+      {
+        "summary": "Dotted reference/external-ref marker.",
+        "surface_key": "astichi.surface.ref.value",
+        "version": 1
+      },
+      {
+        "summary": "Compile-time loop-unroll marker.",
+        "surface_key": "astichi.surface.unroll.for_iter",
+        "version": 1
+      },
+      {
+        "summary": "Internal emitted insert metadata.",
+        "surface_key": "astichi.surface.insert.metadata",
+        "version": 1
+      },
+      {
+        "summary": "Reserved diagnostic-only marker.",
+        "surface_key": "astichi.surface.diagnostic.reserved",
+        "version": 1
+      }
+    ]
+  },
+  "templates": [
+    {
+      "record_count": 1,
+      "source_summary": "compile line=1 records=1",
+      "template_id": 0,
+      "template_key": "template:b3f53f0b460f7979"
+    }
+  ],
+  "locators": [
+    {
+      "ast_path": ".",
+      "authored_summary": "__block__ at line 1",
+      "locator_id": 0,
+      "materialization_anchor": "copy-block",
+      "parent_locator_id": null,
+      "role_key": "production.block",
+      "template_id": 0
+    }
+  ],
+  "occurrences": [
+    {
+      "build_path": [
+        "Root"
+      ],
+      "occurrence_id": 0,
+      "parent_occurrence_id": null,
+      "template_id": 0
+    }
+  ],
+  "records": [
+    {
+      "code_owner": [],
+      "inventory_kind": "production.block",
+      "locator_id": 0,
+      "occurrence_id": 0,
+      "record_id": [
+        0,
+        0
+      ],
+      "resource_name": "__block__",
+      "semantic_summary": "production.block name=__block__ owner=. build_path=.",
+      "state": {
+        "satisfied": false,
+        "visible": true
+      },
+      "surface_key": "astichi.surface.block.production",
+      "template_record_id": 0
+    }
+  ],
+  "edges": [],
+  "overlays": [],
+  "materialization": {
+    "artifact_requests": [
+      "python_ast"
+    ],
+    "debug_views": {
+      "edge_count": 0,
+      "managed_import_request_count": 1,
+      "overlay_count": 0
+    },
+    "hygiene_stream": [
+      {
+        "captures": {
+          "colliding_names": [
+            "a"
+          ],
+          "root_occurrence_id": 0
+        },
+        "operation_key": "astichi.operation.rename_if_collides",
+        "record_id": null,
+        "target_scope_id": 0
+      },
+      {
+        "captures": {
+          "final_local_name": "a",
+          "module_path": "foo",
+          "original_symbol": "a",
+          "root_occurrence_id": 0
+        },
+        "operation_key": "astichi.operation.managed_import_request",
+        "record_id": null,
+        "target_scope_id": 0
+      },
+      {
+        "captures": {
+          "live_record_count": 1,
+          "root_occurrence_id": 0,
+          "satisfied_record_count": 0
+        },
+        "operation_key": "astichi.operation.gate_no_unresolved",
+        "record_id": null,
+        "target_scope_id": 0
+      }
+    ],
+    "operation_stream": [],
+    "root_occurrence_id": 0
+  },
+  "diagnostics": []
+}
