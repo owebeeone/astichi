@@ -698,6 +698,7 @@ class AssemblyScope:
         block_operations: list[MaterializationOperation] = []
         parameter_operations: list[MaterializationOperation] = []
         elif_operations: list[MaterializationOperation] = []
+        call_argument_operations: list[MaterializationOperation] = []
         for operation in plan.operation_stream:
             if operation.target_record_id.occurrence_id != root_id:
                 return None
@@ -726,6 +727,9 @@ class AssemblyScope:
                 continue
             if operation.operation_key == "astichi.operation.append_clause":
                 elif_operations.append(operation)
+                continue
+            if operation.operation_key == "astichi.operation.splice_call_arguments":
+                call_argument_operations.append(operation)
                 continue
             return None
 
@@ -761,6 +765,11 @@ class AssemblyScope:
             elif_operations,
         ):
             return None
+        if call_argument_operations and not self._apply_lower_call_argument_operations(
+            tree,
+            call_argument_operations,
+        ):
+            return None
         _strip_lower_boundary_markers(tree)
         _strip_lower_keep_markers(tree)
         if not self._apply_lower_managed_pyimports(tree):
@@ -773,7 +782,7 @@ class AssemblyScope:
             origin=root.origin,
             bound_externals=frozenset(),
         )
-        if materialized.demand_ports:
+        if _has_unresolved_lower_astichi_demands(materialized):
             return None
         return materialized
 
@@ -1206,6 +1215,101 @@ class AssemblyScope:
             _replace_ast_statement_at_path(tree, marker_if_path, chain)
         return True
 
+    def _apply_lower_call_argument_operations(
+        self,
+        tree: ast.Module,
+        operations: list[MaterializationOperation],
+    ) -> bool:
+        from astichi.lowering.call_argument_payloads import (
+            DOUBLE_STAR_FUNC_ARG_REGION,
+            STARRED_FUNC_ARG_REGION,
+            extract_funcargs_payload,
+            lower_payload_for_region,
+            payload_explicit_keyword_names,
+            register_explicit_keyword,
+            validate_payload_for_region,
+        )
+
+        for target_record_id in _ordered_unique_operation_targets(operations):
+            target_record = self._lower_engine.template_record(
+                self._lower_state,
+                target_record_id,
+            )
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            placement = _call_argument_placement_for_locator(
+                target_locator.ast_path,
+                target_record.inventory_kind,
+            )
+            if placement is None:
+                return False
+            call_node = _ast_node_at_path(tree, placement.call_path)
+            if not isinstance(call_node, ast.Call):
+                return False
+            ordered = sorted(
+                (
+                    operation
+                    for operation in operations
+                    if operation.target_record_id == target_record_id
+                ),
+                key=lambda operation: (
+                    operation.order,
+                    int(operation.captures.get("edge_id", 0)),
+                ),
+            )
+            lowered_args: list[ast.expr] = []
+            lowered_keywords: list[ast.keyword] = []
+            seen_explicit_keywords: set[str] = set()
+            for operation in ordered:
+                source_id = operation.source_occurrence_id
+                if source_id is None:
+                    return False
+                source = self._lower_composable_by_occurrence.get(source_id)
+                if source is None:
+                    return False
+                payload_path = self._source_funcargs_path(source_id)
+                if payload_path is None:
+                    return False
+                payload_call = _ast_node_at_path(source.tree, payload_path)
+                if not isinstance(payload_call, ast.Call):
+                    return False
+                payload = extract_funcargs_payload(payload_call)
+                if placement.region_name == "starred":
+                    validate_payload_for_region(
+                        payload,
+                        region=STARRED_FUNC_ARG_REGION,
+                        hole_name=target_record.resource_name,
+                    )
+                    args, _ = lower_payload_for_region(
+                        payload,
+                        region=STARRED_FUNC_ARG_REGION,
+                        hole_name=target_record.resource_name,
+                        transform_expr=clone_ast,
+                    )
+                    lowered_args.extend(args)
+                    continue
+                for name in payload_explicit_keyword_names(payload):
+                    register_explicit_keyword(name, seen_explicit_keywords)
+                validate_payload_for_region(
+                    payload,
+                    region=DOUBLE_STAR_FUNC_ARG_REGION,
+                    hole_name=target_record.resource_name,
+                )
+                _, keywords = lower_payload_for_region(
+                    payload,
+                    region=DOUBLE_STAR_FUNC_ARG_REGION,
+                    hole_name=target_record.resource_name,
+                    transform_expr=clone_ast,
+                )
+                lowered_keywords.extend(keywords)
+            if placement.region_name == "starred":
+                call_node.args[placement.index : placement.index + 1] = lowered_args
+                continue
+            call_node.keywords[placement.index : placement.index + 1] = lowered_keywords
+        return True
+
     def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
         records = self._lower_engine.template_records_for_occurrence(
             self._lower_state,
@@ -1257,6 +1361,27 @@ class AssemblyScope:
             record
             for record in records
             if record.surface_key == "astichi.surface.elif.production"
+        )
+        if len(matches) != 1:
+            return None
+        record_id = RecordId(
+            occurrence_id=occurrence_id,
+            template_record_id=matches[0].template_record_id,
+        )
+        return self._lower_engine.locator_for_record(
+            self._lower_state,
+            record_id,
+        ).ast_path
+
+    def _source_funcargs_path(self, occurrence_id: OccurrenceId) -> str | None:
+        records = self._lower_engine.template_records_for_occurrence(
+            self._lower_state,
+            occurrence_id,
+        )
+        matches = tuple(
+            record
+            for record in records
+            if record.surface_key == "astichi.surface.funcargs.production"
         )
         if len(matches) != 1:
             return None
@@ -1607,6 +1732,44 @@ def _function_path_for_parameter_locator(path: str) -> str | None:
     if not separator or not function_path:
         return None
     return function_path
+
+
+@dataclass(frozen=True, slots=True)
+class _CallArgumentPlacement:
+    call_path: str
+    index: int
+    region_name: str
+
+
+def _call_argument_placement_for_locator(
+    path: str,
+    inventory_kind: str,
+) -> _CallArgumentPlacement | None:
+    if inventory_kind == "hole.positional_variadic":
+        call_path, separator, suffix = path.partition("/args[")
+        if not separator or not suffix.endswith("]/value"):
+            return None
+        index_text = suffix.removesuffix("]/value")
+        if not index_text.isdigit():
+            return None
+        return _CallArgumentPlacement(
+            call_path=call_path,
+            index=int(index_text),
+            region_name="starred",
+        )
+    if inventory_kind == "hole.named_variadic":
+        call_path, separator, suffix = path.partition("/keywords[")
+        if not separator or not suffix.endswith("]/value"):
+            return None
+        index_text = suffix.removesuffix("]/value")
+        if not index_text.isdigit():
+            return None
+        return _CallArgumentPlacement(
+            call_path=call_path,
+            index=int(index_text),
+            region_name="dstar",
+        )
+    return None
 
 
 def _single_lower_elif_payload_if(node: ast.FunctionDef) -> ast.If | None:
@@ -2017,6 +2180,16 @@ def _is_lower_pyimport_call(node: ast.AST) -> bool:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "astichi_pyimport"
+    )
+
+
+def _has_unresolved_lower_astichi_demands(composable: BasicComposable) -> bool:
+    return any(
+        port.is_additive_hole_demand()
+        or port.is_external_bind_demand()
+        or port.is_identifier_demand()
+        or port.is_parameter_hole_demand()
+        for port in composable.demand_ports
     )
 
 

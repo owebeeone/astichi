@@ -166,7 +166,7 @@ def test_scope_build_selects_lower_materialization_for_supported_subset() -> Non
     )
 
     with collect_perf_counters() as counters:
-        source = scope.build().emit(provenance=False)
+        source = scope.build().materialize().emit(provenance=False)
 
     assert source == "result = 42\n"
     counts = counters.snapshot()["counts"]
@@ -486,7 +486,7 @@ def astichi_elif():
     assert counts["build_merge"] == 1
 
 
-def test_scope_build_uses_adapter_for_unsupported_funcargs() -> None:
+def test_lower_materializes_starred_funcargs_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("result = func(*astichi_hole(args))\n")
     args = astichi.compile("astichi_funcargs(1)\n")
@@ -502,9 +502,37 @@ def test_scope_build_uses_adapter_for_unsupported_funcargs() -> None:
     )
 
     with collect_perf_counters() as counters:
-        source = scope.build().materialize().emit(provenance=False)
+        source = scope.build().emit(provenance=False)
 
     assert source == "result = func(1)\n"
     counts = counters.snapshot()["counts"]
-    assert counts["lower_materialization_adapter_fallback"] == 1
-    assert counts["build_merge"] == 1
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_lower_materializes_dstar_funcargs_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("result = func(**astichi_hole(kwargs))\n")
+    kwargs = astichi.compile("astichi_funcargs(named=value, **extra)\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(kwargs, build_name="Kwargs"),
+                name="kwargs",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().emit(provenance=False)
+
+    assert source == "result = func(named=value, **extra)\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0

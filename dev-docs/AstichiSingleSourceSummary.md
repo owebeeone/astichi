@@ -633,17 +633,19 @@ contains operation-stream entries for composable edges and external/identifier
 overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
 structural data. `scope.lower_materialize()` can explicitly materialize the
 current expression-insert, ordinary block-insert, unfilled defaulted-block
-fallback, simple parameter-insert, simple elif-clause insert, and
-static managed-pyimport plus simple boundary import/pass/export and
+fallback, simple parameter-insert, simple variadic call-argument insert,
+simple elif-clause insert, and static managed-pyimport plus simple boundary
+import/pass/export and
 external/identifier overlay subset without calling builder merge. The lower
 path also owns the simple keep-name/collision subset: marker-only
 `astichi_keep(...)` calls are stripped after materialization, and direct block
 payload locals that collide with names already bound in the target scope are
 renamed deterministically unless the source explicitly keeps them. Unsupported
 surfaces still use a counted adapter fallback. `scope.build(...)` now selects
-that lower path automatically when the lower result is closed, meaning no
-demand ports remain after materialization. Unsupported or not-yet-closed states
-stay on the counted builder-adapter path.
+that lower path automatically when the lower result has no unresolved Astichi
+demand ports after materialization. Ordinary implied Python free-name demands
+may remain. Unsupported or not-yet-closed states stay on the counted
+builder-adapter path.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
@@ -653,9 +655,10 @@ post-Python profile gate. A transient lower differential harness now lives in
 `tests/test_lower_engine_differential_harness.py`; it compares lower candidate
 lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
-It covers block, defaulted-block fallback, expression, parameter, elif, static
-pyimport, boundary import/pass/export, external overlay, identifier overlay,
-keep/collision hygiene, and single-add satisfaction fixtures. For
+It covers block, defaulted-block fallback, expression, parameter, variadic
+call-argument insertion, elif, static pyimport, boundary import/pass/export,
+external overlay, identifier overlay, keep/collision hygiene, and
+single-add satisfaction fixtures. For
 lower-supported fixtures it also records lower-source output. Delete it once
 lower materialization is
 authoritative enough that the adapter comparison is no longer useful.
@@ -664,6 +667,13 @@ Parameter-hole materialization is represented in lower operation and hygiene
 streams, has a structural plan golden, and final lower materialization supports
 the simple parameter-payload subset. Parameter payloads that still need marker
 resolution remain on the adapter path until the lower materializer owns that
+surface.
+
+Variadic call-argument materialization is represented in lower operation and
+hygiene streams, has a structural plan golden, and final lower materialization
+supports simple starred and double-starred argument holes. Payloads that need
+payload-local boundary directives or broader duplicate-key diagnostics remain
+on the adapter path until the full lower materialization gate owns that
 surface.
 
 Elif-clause materialization is represented in lower operation and hygiene

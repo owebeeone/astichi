@@ -76,6 +76,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("defaulted_block_fallback", _defaulted_block_fallback),
         _Fixture("expression_insert", _expression_insert),
         _Fixture("parameter_insert", _parameter_insert),
+        _Fixture("funcargs_insert", _funcargs_insert),
         _Fixture("elif_insert", _elif_insert),
         _Fixture("pyimport_static", _pyimport_static),
         _Fixture("boundary_markers", _boundary_markers),
@@ -179,6 +180,23 @@ def _parameter_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("parameter_insert", scope, (check,), lower_supported=True)
+
+
+def _funcargs_insert() -> dict[str, Any]:
+    root = _piece("result = func(*astichi_hole(args))")
+    args = _piece("astichi_funcargs(1)")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "args",
+        scope,
+        as_composable(args, build_name="Args"),
+        name="args",
+        build_match=("Root",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result("funcargs_insert", scope, (check,), lower_supported=True)
 
 
 def _elif_insert() -> dict[str, Any]:
