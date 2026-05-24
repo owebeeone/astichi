@@ -584,25 +584,132 @@ Acceptance:
 - CPython AST constructor warnings are treated as failures;
 - no CPython internal compiler APIs are used.
 
-### N4: Native Pattern Extraction
+### N4a: Template Snapshot Schema And Empty Extraction
 
-Goal: extract Astichi template records from native IR.
+Goal: define native template snapshot output and prove extraction for ordinary
+sources with no Astichi markers.
 
 Work:
 
-- implement matcher kernels for the current pattern kinds;
+- add native template snapshot request/result shapes;
+- compute deterministic template keys and source summaries from native IR;
+- emit locators, template records, and diagnostics sections even when empty;
+- reject unsupported partial extraction instead of returning mixed state;
+- add focused tests for marker-free modules and syntax diagnostics.
+
+Acceptance:
+
+- native marker-free template snapshots are deterministic;
+- snapshot shape is ready for record-bearing extraction slices;
+- no Python `Inventory` objects are used for native extraction.
+
+### N4b: Direct Call Marker Extraction
+
+Goal: extract direct call marker records from native IR.
+
+Work:
+
+- implement matcher kernels for direct call marker patterns;
+- cover `astichi_hole`, `astichi_bind_external`, `astichi_keep`,
+  `astichi_export`, `astichi_import`, `astichi_pass`, `astichi_pyimport`,
+  `astichi_comment`, and `astichi_ref`;
 - produce native template records, locators, materialization roles, and
-  compatibility shapes;
-- compute deterministic template keys and source summaries;
-- emit template structural snapshots.
+  compatibility shapes for direct call markers;
+- emit template structural snapshots for representative direct-call fixtures.
+
+Acceptance:
+
+- direct call marker snapshots match the Python reference for covered fixtures;
+- unsupported direct-call shapes fail before returning partial native state.
+
+### N4c: Identifier Suffix Marker Extraction
+
+Goal: extract identifier suffix marker records from native IR.
+
+Work:
+
+- implement `__astichi_arg__` extraction for names, definition spellings,
+  call keyword names, import strings/symbols/aliases, and function parameters;
+- implement `__astichi_keep__` extraction for supported spelling positions;
+- produce resolved logical names and code-owner summaries compatible with the
+  Python reference;
+- add parity snapshots for representative identifier fixtures.
+
+Acceptance:
+
+- suffix marker snapshots match the Python reference for covered fixtures;
+- extraction records every occurrence needed by candidate lookup and hygiene.
+
+### N4d: Payload Marker Extraction
+
+Goal: extract production records for payload-style markers.
+
+Work:
+
+- implement parameter payload extraction from `astichi_params`;
+- implement function-call argument payload extraction from `astichi_funcargs`;
+- implement expression and block production extraction;
+- cover payload-local boundary directives where they affect template records;
+- add parity snapshots for representative payload fixtures.
+
+Acceptance:
+
+- payload snapshots match the Python reference for covered fixtures;
+- payload extraction preserves enough locator data for later materialization.
+
+### N4e: Decorator And Internal Metadata Extraction
+
+Goal: extract internal insert metadata and decorator-carried records.
+
+Work:
+
+- implement `@astichi_insert(...)` decorator extraction;
+- implement expression-form `astichi_insert(...)` metadata extraction;
+- preserve `ref`, `kind`, `order`, and pyimport metadata required by later
+  materialization;
+- add parity snapshots for staged build and emitted-source fixtures.
+
+Acceptance:
+
+- internal metadata snapshots match the Python reference for covered fixtures;
+- malformed metadata fails with native diagnostics before partial state.
+
+### N4f: Special Surface Extraction
+
+Goal: extract the remaining current special surfaces.
+
+Work:
+
+- implement defaulted block-hole extraction;
+- implement elif target and elif production extraction;
+- implement compile-time unroll marker extraction;
+- implement pyimport top-of-scope prefix validation metadata;
+- add parity snapshots for representative special-surface fixtures.
+
+Acceptance:
+
+- special-surface snapshots match the Python reference for covered fixtures;
+- dormant future patterns remain registered but disabled.
+
+### N4g: Current Gold-Source Extraction Closure
+
+Goal: close native pattern extraction for all current gold-source fixtures.
+
+Work:
+
+- run native extraction against every `tests/data/gold_src/*.py` fixture;
+- compare native template snapshots against the Python reference;
+- add/update structural goldens only where the new native snapshot grammar
+  requires it;
+- keep Python-extracted inventory only as the parity oracle.
 
 Acceptance:
 
 - native template snapshots match Python reference snapshots for all current
   gold-source fixtures;
-- Python-extracted inventory is used only by the parity harness;
-- unsupported syntax produces a template-level diagnostic, not partial native
-  state.
+- unsupported current syntax is treated as a native implementation bug;
+- the next slice can route a native composable facade on top of extracted
+  native template records.
 
 ### N5: Native Composable Facade
 
