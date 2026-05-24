@@ -155,7 +155,7 @@ def _parameter_insert() -> dict[str, Any]:
         owner_match=("run",),
     )
     scope.apply(require_one(check["lower_candidates"]))
-    return _fixture_result("parameter_insert", scope, (check,))
+    return _fixture_result("parameter_insert", scope, (check,), lower_supported=True)
 
 
 def _external_overlay() -> dict[str, Any]:

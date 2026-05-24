@@ -693,6 +693,7 @@ class AssemblyScope:
         external_bindings: dict[str, object] = {}
         expression_operations: list[MaterializationOperation] = []
         block_operations: list[MaterializationOperation] = []
+        parameter_operations: list[MaterializationOperation] = []
         for operation in plan.operation_stream:
             if operation.target_record_id.occurrence_id != root_id:
                 return None
@@ -716,6 +717,9 @@ class AssemblyScope:
             if operation.operation_key == "astichi.operation.splice_body_at_marker":
                 block_operations.append(operation)
                 continue
+            if operation.operation_key == "astichi.operation.splice_parameters":
+                parameter_operations.append(operation)
+                continue
             return None
 
         if identifier_bindings:
@@ -738,6 +742,11 @@ class AssemblyScope:
         if block_operations and not self._apply_lower_block_operations(
             tree,
             block_operations,
+        ):
+            return None
+        if parameter_operations and not self._apply_lower_parameter_operations(
+            tree,
+            parameter_operations,
         ):
             return None
         ast.fix_missing_locations(tree)
@@ -866,6 +875,65 @@ class AssemblyScope:
             )
         return True
 
+    def _apply_lower_parameter_operations(
+        self,
+        tree: ast.Module,
+        operations: list[MaterializationOperation],
+    ) -> bool:
+        from astichi.materialize.api import _merge_params_into_arguments
+
+        for target_record_id in _ordered_unique_operation_targets(operations):
+            target_record = self._lower_engine.template_record(
+                self._lower_state,
+                target_record_id,
+            )
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            function_path = _function_path_for_parameter_locator(
+                target_locator.ast_path,
+            )
+            if function_path is None:
+                return False
+            function_node = _ast_node_at_path(tree, function_path)
+            if not isinstance(function_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+            payloads: list[ast.arguments] = []
+            ordered = sorted(
+                (
+                    operation
+                    for operation in operations
+                    if operation.target_record_id == target_record_id
+                ),
+                key=lambda operation: (
+                    operation.order,
+                    int(operation.captures.get("edge_id", 0)),
+                ),
+            )
+            for operation in ordered:
+                source_id = operation.source_occurrence_id
+                if source_id is None:
+                    return False
+                source = self._lower_composable_by_occurrence.get(source_id)
+                if source is None:
+                    return False
+                payload_path = self._source_parameter_path(source_id)
+                if payload_path is None:
+                    return False
+                payload_node = _ast_node_at_path(source.tree, payload_path)
+                if not isinstance(
+                    payload_node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef),
+                ):
+                    return False
+                payloads.append(clone_ast(payload_node.args))
+            function_node.args = _merge_params_into_arguments(
+                function_node.args,
+                {target_record.resource_name: payloads},
+            )
+        return True
+
     def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
         records = self._lower_engine.template_records_for_occurrence(
             self._lower_state,
@@ -875,6 +943,27 @@ class AssemblyScope:
             record
             for record in records
             if record.surface_key == "astichi.surface.expression.production"
+        )
+        if len(matches) != 1:
+            return None
+        record_id = RecordId(
+            occurrence_id=occurrence_id,
+            template_record_id=matches[0].template_record_id,
+        )
+        return self._lower_engine.locator_for_record(
+            self._lower_state,
+            record_id,
+        ).ast_path
+
+    def _source_parameter_path(self, occurrence_id: OccurrenceId) -> str | None:
+        records = self._lower_engine.template_records_for_occurrence(
+            self._lower_state,
+            occurrence_id,
+        )
+        matches = tuple(
+            record
+            for record in records
+            if record.surface_key == "astichi.surface.parameter.production"
         )
         if len(matches) != 1:
             return None
@@ -1204,6 +1293,13 @@ def _statement_path_for_marker_locator(path: str) -> str:
     if not statement_path:
         raise ValueError(f"marker locator does not include a statement path: {path}")
     return statement_path
+
+
+def _function_path_for_parameter_locator(path: str) -> str | None:
+    function_path, separator, _ = path.partition("/args/")
+    if not separator or not function_path:
+        return None
+    return function_path
 
 
 def _ordered_unique_operation_targets(

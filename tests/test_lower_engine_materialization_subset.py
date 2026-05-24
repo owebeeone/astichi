@@ -153,7 +153,7 @@ def test_scope_build_selects_lower_materialization_for_supported_subset() -> Non
     assert counts.get("build_merge", 0) == 0
 
 
-def test_lower_materialization_fallback_is_counted_for_unsupported_params() -> None:
+def test_lower_materializes_parameters_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("def run(value__astichi_param_hole__):\n    pass\n")
     params = astichi.compile("def astichi_params(item):\n    pass\n")
@@ -174,12 +174,13 @@ def test_lower_materialization_fallback_is_counted_for_unsupported_params() -> N
 
     assert source == "def run(item):\n    pass\n"
     counts = counters.snapshot()["counts"]
-    assert counts["lower_materialization_adapter_fallback"] == 1
-    assert counts["build_merge"] == 1
-    assert counts["materialize_composable"] == 1
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
 
 
-def test_scope_build_uses_adapter_for_unsupported_params() -> None:
+def test_scope_build_selects_lower_materialization_for_parameters() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("def run(value__astichi_param_hole__):\n    pass\n")
     params = astichi.compile("def astichi_params(item):\n    pass\n")
@@ -199,6 +200,32 @@ def test_scope_build_uses_adapter_for_unsupported_params() -> None:
         source = scope.build().materialize().emit(provenance=False)
 
     assert source == "def run(item):\n    pass\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_build_selection"] == 1
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+
+
+def test_scope_build_uses_adapter_for_unsupported_funcargs() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("result = func(*astichi_hole(args))\n")
+    args = astichi.compile("astichi_funcargs(1)\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(args, build_name="Args"),
+                name="args",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().materialize().emit(provenance=False)
+
+    assert source == "result = func(1)\n"
     counts = counters.snapshot()["counts"]
     assert counts["lower_materialization_adapter_fallback"] == 1
     assert counts["build_merge"] == 1
