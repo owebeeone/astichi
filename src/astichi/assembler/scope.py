@@ -26,6 +26,7 @@ from astichi.lower_engine import (
 from astichi.lower_engine.handles import OccurrenceId, OverlayId, RecordId
 from astichi.lower_engine.inventory import AssemblyState
 from astichi.lower_engine.materialization import MaterializationOperation
+from astichi.lowering.parameters import param_hole_name
 from astichi.model import (
     BasicComposable,
     BlockProductionInventoryPayload,
@@ -714,7 +715,93 @@ class AssemblyScope:
         root = self._lower_composable_by_occurrence.get(root_id)
         if root is None:
             return None
+        operations_by_occurrence = _operations_by_target_occurrence(plan)
+        tree = self._materialize_lower_occurrence_tree(
+            root_id,
+            operations_by_occurrence,
+            cache={},
+            visiting=set(),
+        )
+        if tree is None:
+            return None
+        ast.fix_missing_locations(tree)
+        from astichi.model.basic import _rebuild_composable
+
+        materialized = _rebuild_composable(
+            tree=tree,
+            origin=root.origin,
+            bound_externals=frozenset(),
+            already_materialized=True,
+        )
+        if _has_unresolved_lower_astichi_demands(materialized):
+            return None
+        return materialized
+
+    def _materialize_lower_occurrence_tree(
+        self,
+        occurrence_id: OccurrenceId,
+        operations_by_occurrence: dict[
+            OccurrenceId, tuple[MaterializationOperation, ...]
+        ],
+        *,
+        cache: dict[OccurrenceId, ast.Module],
+        visiting: set[OccurrenceId],
+    ) -> ast.Module | None:
+        cached = cache.get(occurrence_id)
+        if cached is not None:
+            return cached
+        if occurrence_id in visiting:
+            return None
+        occurrence = self._lower_engine.occurrence(self._lower_state, occurrence_id)
+        if not occurrence.live:
+            return None
+        root = self._lower_composable_by_occurrence.get(occurrence_id)
+        if root is None:
+            return None
+        visiting.add(occurrence_id)
         tree = clone_ast(root.tree)
+        operations = operations_by_occurrence.get(occurrence_id, ())
+        source_trees: dict[OccurrenceId, ast.Module] = {}
+        for operation in operations:
+            source_id = operation.source_occurrence_id
+            if source_id is None or source_id in source_trees:
+                continue
+            source_tree = self._materialize_lower_occurrence_tree(
+                source_id,
+                operations_by_occurrence,
+                cache=cache,
+                visiting=visiting,
+            )
+            if source_tree is None:
+                visiting.remove(occurrence_id)
+                return None
+            source_trees[source_id] = source_tree
+        if not self._apply_lower_operations_to_tree(
+            tree,
+            occurrence_id,
+            operations,
+            source_trees=source_trees,
+        ):
+            visiting.remove(occurrence_id)
+            return None
+        _strip_lower_boundary_markers(tree)
+        _strip_lower_keep_markers(tree)
+        if not self._apply_lower_managed_pyimports(tree):
+            visiting.remove(occurrence_id)
+            return None
+        ast.fix_missing_locations(tree)
+        cache[occurrence_id] = tree
+        visiting.remove(occurrence_id)
+        return tree
+
+    def _apply_lower_operations_to_tree(
+        self,
+        tree: ast.Module,
+        occurrence_id: OccurrenceId,
+        operations: tuple[MaterializationOperation, ...],
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
+    ) -> bool:
         identifier_bindings: dict[str, str] = {}
         external_bindings: dict[str, object] = {}
         expression_operations: list[MaterializationOperation] = []
@@ -722,22 +809,22 @@ class AssemblyScope:
         parameter_operations: list[MaterializationOperation] = []
         elif_operations: list[MaterializationOperation] = []
         call_argument_operations: list[MaterializationOperation] = []
-        for operation in plan.operation_stream:
-            if operation.target_record_id.occurrence_id != root_id:
-                return None
+        for operation in operations:
+            if operation.target_record_id.occurrence_id != occurrence_id:
+                return False
             if operation.operation_key == "astichi.operation.rewrite_identifier":
                 if not self._collect_identifier_operation(
                     operation,
                     identifier_bindings,
                 ):
-                    return None
+                    return False
                 continue
             if operation.operation_key == "astichi.operation.lower_external_ref":
                 if not self._collect_external_operation(
                     operation,
                     external_bindings,
                 ):
-                    return None
+                    return False
                 continue
             if operation.operation_key == "astichi.operation.replace_expression":
                 expression_operations.append(operation)
@@ -754,7 +841,7 @@ class AssemblyScope:
             if operation.operation_key == "astichi.operation.splice_call_arguments":
                 call_argument_operations.append(operation)
                 continue
-            return None
+            return False
 
         if identifier_bindings:
             from astichi.materialize.api import (
@@ -771,43 +858,37 @@ class AssemblyScope:
 
             apply_external_bindings(tree, external_bindings)
         for operation in expression_operations:
-            if not self._apply_lower_expression_operation(tree, operation):
-                return None
+            if not self._apply_lower_expression_operation(
+                tree,
+                operation,
+                source_trees=source_trees,
+            ):
+                return False
         if block_operations and not self._apply_lower_block_operations(
             tree,
             block_operations,
+            source_trees=source_trees,
         ):
-            return None
+            return False
         if parameter_operations and not self._apply_lower_parameter_operations(
             tree,
             parameter_operations,
+            source_trees=source_trees,
         ):
-            return None
+            return False
         if elif_operations and not self._apply_lower_elif_operations(
             tree,
             elif_operations,
+            source_trees=source_trees,
         ):
-            return None
+            return False
         if call_argument_operations and not self._apply_lower_call_argument_operations(
             tree,
             call_argument_operations,
+            source_trees=source_trees,
         ):
-            return None
-        _strip_lower_boundary_markers(tree)
-        _strip_lower_keep_markers(tree)
-        if not self._apply_lower_managed_pyimports(tree):
-            return None
-        ast.fix_missing_locations(tree)
-        from astichi.model.basic import _rebuild_composable
-
-        materialized = _rebuild_composable(
-            tree=tree,
-            origin=root.origin,
-            bound_externals=frozenset(),
-        )
-        if _has_unresolved_lower_astichi_demands(materialized):
-            return None
-        return materialized
+            return False
+        return True
 
     def _lower_materialize_if_supported(self) -> BasicComposable | None:
         return self._try_lower_materialize_expression_overlay_subset(
@@ -1042,6 +1123,8 @@ class AssemblyScope:
         self,
         tree: ast.Module,
         operation: MaterializationOperation,
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
     ) -> bool:
         source_id = operation.source_occurrence_id
         if source_id is None:
@@ -1049,10 +1132,11 @@ class AssemblyScope:
         source = self._lower_composable_by_occurrence.get(source_id)
         if source is None:
             return False
+        source_tree = source_trees.get(source_id, source.tree)
         source_path = self._source_expression_path(source_id)
         if source_path is None:
             return False
-        replacement = clone_ast(_ast_node_at_path(source.tree, source_path))
+        replacement = clone_ast(_ast_node_at_path(source_tree, source_path))
         if not isinstance(replacement, ast.expr):
             return False
         target_locator = self._lower_engine.locator_for_record(
@@ -1066,16 +1150,34 @@ class AssemblyScope:
         self,
         tree: ast.Module,
         operations: list[MaterializationOperation],
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
     ) -> bool:
+        target_statement_paths: dict[RecordId, str] = {}
         for target_record_id in _ordered_unique_operation_targets(operations):
             target_locator = self._lower_engine.locator_for_record(
                 self._lower_state,
                 target_record_id,
             )
-            target_statement_path = _block_statement_path_for_locator(
-                tree,
-                target_locator.ast_path,
+            target_statement_paths[target_record_id] = (
+                _block_statement_path_for_locator(
+                    tree,
+                    target_locator.ast_path,
+                )
             )
+        ordered_targets = sorted(
+            target_statement_paths,
+            key=lambda record_id: _ast_path_sort_key(
+                target_statement_paths[record_id]
+            ),
+            reverse=True,
+        )
+        for target_record_id in ordered_targets:
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            target_statement_path = target_statement_paths[target_record_id]
             boundary_names = _lower_boundary_available_names(
                 tree,
                 target_statement_path,
@@ -1107,33 +1209,30 @@ class AssemblyScope:
                 source = self._lower_composable_by_occurrence.get(source_id)
                 if source is None:
                     return False
+                source_tree = source_trees.get(source_id, source.tree)
                 if not self._has_single_block_production(source_id):
                     return False
-                if source.markers and not _lower_boundary_markers_supported(
-                    source,
+                if not _lower_boundary_markers_supported_in_tree(
+                    source_tree,
                     boundary_names,
                 ):
                     return False
-                source_locals = (
-                    frozenset()
-                    if source.classification is None
-                    else source.classification.locals
-                )
-                collisions = emitted_names & source_locals
-                if collisions and source.keep_names:
+                source_bindings = _lower_scope_binding_names(source_tree)
+                collisions = emitted_names & source_bindings
+                if collisions & source.keep_names:
                     return False
                 rename_map: dict[str, str] = {}
                 for name in sorted(collisions):
                     next_name, rename_counter = _fresh_lower_scoped_name(
                         name,
-                        emitted_names | set(source_locals) | set(rename_map.values()),
+                        emitted_names | set(source_bindings) | set(rename_map.values()),
                         rename_counter,
                     )
                     rename_map[name] = next_name
-                source_statements = clone_ast(source.tree.body)
+                source_statements = clone_ast(source_tree.body)
                 if rename_map:
                     _rename_lower_names(source_statements, rename_map)
-                emitted_names.update(source_locals - collisions)
+                emitted_names.update(source_bindings - collisions)
                 emitted_names.update(rename_map.values())
                 statements.extend(source_statements)
             _replace_ast_statement_at_path(
@@ -1147,6 +1246,8 @@ class AssemblyScope:
         self,
         tree: ast.Module,
         operations: list[MaterializationOperation],
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
     ) -> bool:
         from astichi.materialize.api import _merge_params_into_arguments
 
@@ -1166,6 +1267,18 @@ class AssemblyScope:
                 return False
             function_node = _ast_node_at_path(tree, function_path)
             if not isinstance(function_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                function_node = None
+            if function_node is not None and not _function_has_parameter_hole(
+                function_node,
+                target_record.resource_name,
+            ):
+                function_node = None
+            if function_node is None:
+                function_node = _find_function_with_parameter_hole(
+                    tree,
+                    target_record.resource_name,
+                )
+            if function_node is None:
                 return False
             payloads: list[ast.arguments] = []
             ordered = sorted(
@@ -1186,10 +1299,11 @@ class AssemblyScope:
                 source = self._lower_composable_by_occurrence.get(source_id)
                 if source is None:
                     return False
+                source_tree = source_trees.get(source_id, source.tree)
                 payload_path = self._source_parameter_path(source_id)
                 if payload_path is None:
                     return False
-                payload_node = _ast_node_at_path(source.tree, payload_path)
+                payload_node = _ast_node_at_path(source_tree, payload_path)
                 if not isinstance(
                     payload_node,
                     (ast.FunctionDef, ast.AsyncFunctionDef),
@@ -1206,6 +1320,8 @@ class AssemblyScope:
         self,
         tree: ast.Module,
         operations: list[MaterializationOperation],
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
     ) -> bool:
         for target_record_id in _ordered_unique_operation_targets(operations):
             target_record = self._lower_engine.template_record(
@@ -1245,14 +1361,15 @@ class AssemblyScope:
                 source = self._lower_composable_by_occurrence.get(source_id)
                 if source is None:
                     return False
+                source_tree = source_trees.get(source_id, source.tree)
                 payload_path = self._source_elif_path(source_id)
                 if payload_path is None:
                     return False
-                payload_node = _ast_node_at_path(source.tree, payload_path)
+                payload_node = _ast_node_at_path(source_tree, payload_path)
                 if not isinstance(payload_node, ast.FunctionDef):
                     return False
-                if source.markers and not _lower_boundary_markers_supported(
-                    source,
+                if not _lower_boundary_markers_supported_in_tree(
+                    source_tree,
                     boundary_names,
                 ):
                     return False
@@ -1280,6 +1397,8 @@ class AssemblyScope:
         self,
         tree: ast.Module,
         operations: list[MaterializationOperation],
+        *,
+        source_trees: dict[OccurrenceId, ast.Module],
     ) -> bool:
         from astichi.lowering.call_argument_payloads import (
             DOUBLE_STAR_FUNC_ARG_REGION,
@@ -1306,8 +1425,14 @@ class AssemblyScope:
             )
             if placement is None:
                 return False
-            call_node = _ast_node_at_path(tree, placement.call_path)
-            if not isinstance(call_node, ast.Call):
+            target_node = _ast_node_at_path(tree, placement.call_path)
+            if placement.region_name in {"starred", "dstar"}:
+                if not isinstance(target_node, ast.Call):
+                    return False
+            elif placement.region_name == "sequence_starred":
+                if not isinstance(target_node, (ast.Tuple, ast.List)):
+                    return False
+            else:
                 return False
             ordered = sorted(
                 (
@@ -1330,14 +1455,25 @@ class AssemblyScope:
                 source = self._lower_composable_by_occurrence.get(source_id)
                 if source is None:
                     return False
+                source_tree = source_trees.get(source_id, source.tree)
                 payload_path = self._source_funcargs_path(source_id)
                 if payload_path is None:
-                    return False
-                payload_call = _ast_node_at_path(source.tree, payload_path)
+                    expression_path = self._source_expression_path(source_id)
+                    if expression_path is None or placement.region_name not in {
+                        "starred",
+                        "sequence_starred",
+                    }:
+                        return False
+                    expression = _ast_node_at_path(source_tree, expression_path)
+                    if not isinstance(expression, ast.expr):
+                        return False
+                    lowered_args.append(clone_ast(expression))
+                    continue
+                payload_call = _ast_node_at_path(source_tree, payload_path)
                 if not isinstance(payload_call, ast.Call):
                     return False
                 payload = extract_funcargs_payload(payload_call)
-                if placement.region_name == "starred":
+                if placement.region_name in {"starred", "sequence_starred"}:
                     validate_payload_for_region(
                         payload,
                         region=STARRED_FUNC_ARG_REGION,
@@ -1366,9 +1502,17 @@ class AssemblyScope:
                 )
                 lowered_keywords.extend(keywords)
             if placement.region_name == "starred":
-                call_node.args[placement.index : placement.index + 1] = lowered_args
+                assert isinstance(target_node, ast.Call)
+                target_node.args[placement.index : placement.index + 1] = lowered_args
                 continue
-            call_node.keywords[placement.index : placement.index + 1] = lowered_keywords
+            if placement.region_name == "sequence_starred":
+                assert isinstance(target_node, (ast.Tuple, ast.List))
+                target_node.elts[placement.index : placement.index + 1] = lowered_args
+                continue
+            assert isinstance(target_node, ast.Call)
+            target_node.keywords[placement.index : placement.index + 1] = (
+                lowered_keywords
+            )
         return True
 
     def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
@@ -1767,6 +1911,17 @@ def _ast_path_part(part: str) -> tuple[str, int | None]:
     return field_name, int(raw_index)
 
 
+def _ast_path_sort_key(path: str) -> tuple[int, tuple[tuple[str, int], ...]]:
+    parts = path.split("/") if path else ()
+    return (
+        len(parts),
+        tuple(
+            (field_name, -1 if index is None else index)
+            for field_name, index in (_ast_path_part(part) for part in parts)
+        ),
+    )
+
+
 def _statement_path_for_marker_locator(path: str) -> str:
     statement_path, _, _ = path.rpartition("/")
     if not statement_path:
@@ -1795,6 +1950,35 @@ def _function_path_for_parameter_locator(path: str) -> str | None:
     return function_path
 
 
+def _function_has_parameter_hole(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    name: str,
+) -> bool:
+    return any(
+        param_hole_name(argument) == name
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        )
+    )
+
+
+def _find_function_with_parameter_hole(
+    tree: ast.Module,
+    name: str,
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    matches = tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _function_has_parameter_hole(node, name)
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 @dataclass(frozen=True, slots=True)
 class _CallArgumentPlacement:
     call_path: str
@@ -1808,16 +1992,26 @@ def _call_argument_placement_for_locator(
 ) -> _CallArgumentPlacement | None:
     if inventory_kind == "hole.positional_variadic":
         call_path, separator, suffix = path.partition("/args[")
-        if not separator or not suffix.endswith("]/value"):
-            return None
-        index_text = suffix.removesuffix("]/value")
-        if not index_text.isdigit():
-            return None
-        return _CallArgumentPlacement(
-            call_path=call_path,
-            index=int(index_text),
-            region_name="starred",
-        )
+        if separator and suffix.endswith("]/value"):
+            index_text = suffix.removesuffix("]/value")
+            if not index_text.isdigit():
+                return None
+            return _CallArgumentPlacement(
+                call_path=call_path,
+                index=int(index_text),
+                region_name="starred",
+            )
+        sequence_path, separator, suffix = path.partition("/elts[")
+        if separator and suffix.endswith("]/value"):
+            index_text = suffix.removesuffix("]/value")
+            if not index_text.isdigit():
+                return None
+            return _CallArgumentPlacement(
+                call_path=sequence_path,
+                index=int(index_text),
+                region_name="sequence_starred",
+            )
+        return None
     if inventory_kind == "hole.named_variadic":
         call_path, separator, suffix = path.partition("/keywords[")
         if not separator or not suffix.endswith("]/value"):
@@ -1932,19 +2126,39 @@ def _lower_boundary_markers_supported(
     source: BasicComposable,
     available_names: frozenset[str],
 ) -> bool:
+    return _lower_boundary_marker_tuple_supported(source.markers, available_names)
+
+
+def _lower_boundary_markers_supported_in_tree(
+    tree: ast.Module,
+    available_names: frozenset[str],
+) -> bool:
+    from astichi.lowering import recognize_markers
+
+    return _lower_boundary_marker_tuple_supported(
+        recognize_markers(tree),
+        available_names,
+    )
+
+
+def _lower_boundary_marker_tuple_supported(
+    markers: Iterable[object],
+    available_names: frozenset[str],
+) -> bool:
     from astichi.lowering.markers import (
         boundary_explicit_bind_enabled,
         boundary_outer_bind_enabled,
     )
 
-    for marker in source.markers:
-        if marker.source_name == "astichi_elif":
+    for marker in markers:
+        source_name = getattr(marker, "source_name", None)
+        if source_name == "astichi_elif":
             continue
-        if marker.source_name == "astichi_export":
+        if source_name == "astichi_export":
             continue
-        if marker.source_name not in {"astichi_import", "astichi_pass"}:
+        if source_name not in {"astichi_import", "astichi_pass"}:
             return False
-        node = marker.node
+        node = getattr(marker, "node", None)
         if not isinstance(node, ast.Call):
             return False
         name = _lower_boundary_call_name(node)
@@ -2318,6 +2532,21 @@ def _has_unresolved_lower_astichi_demands(composable: BasicComposable) -> bool:
         or port.is_parameter_hole_demand()
         for port in composable.demand_ports
     )
+
+
+def _operations_by_target_occurrence(
+    plan: MaterializationPlan,
+) -> dict[OccurrenceId, tuple[MaterializationOperation, ...]]:
+    grouped: dict[OccurrenceId, list[MaterializationOperation]] = {}
+    for operation in plan.operation_stream:
+        grouped.setdefault(
+            operation.target_record_id.occurrence_id,
+            [],
+        ).append(operation)
+    return {
+        occurrence_id: tuple(operations)
+        for occurrence_id, operations in grouped.items()
+    }
 
 
 def _ordered_unique_operation_targets(

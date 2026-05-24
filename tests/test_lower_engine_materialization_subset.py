@@ -516,6 +516,141 @@ def test_lower_materializes_starred_funcargs_without_builder_merge() -> None:
     assert counts.get("materialize_composable", 0) == 0
 
 
+def test_lower_materializes_starred_expression_arg_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("result = func(*astichi_hole(args))\n")
+    arg = astichi.compile("value\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(arg, build_name="Arg"),
+                name="args",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().emit(provenance=False)
+
+    assert source == "result = func(value)\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_lower_materializes_starred_tuple_expression_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("values = (*astichi_hole(items),)\n")
+    item = astichi.compile('"slot_name"\n')
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(item, build_name="Item"),
+                name="items",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().emit(provenance=False)
+
+    assert source == "values = ('slot_name',)\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_lower_materializes_nested_occurrences_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("def build():\n    astichi_hole(body)\n")
+    class_body = astichi.compile(
+        """
+class class_name__astichi_arg__:
+    values = (*astichi_hole(items),)
+
+    def __init__(self, params__astichi_param_hole__):
+        astichi_hole(init_body)
+""".strip()
+        + "\n"
+    )
+    item = astichi.compile('"slot_name"\n')
+    params = astichi.compile('def astichi_params(*, name="default"):\n    pass\n')
+    init_body = astichi.compile("self.name = name\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(class_body, build_name="Class"),
+                name="body",
+                build_match=("Root",),
+                owner_match=("build",),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_identifier("Generated"),
+                name="class_name",
+                build_match=("Root", "Class"),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(item, build_name="Item"),
+                name="items",
+                build_match=("Root", "Class"),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(params, build_name="Params"),
+                name="params",
+                build_match=("Root", "Class"),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(init_body, build_name="InitBody"),
+                name="init_body",
+                build_match=("Root", "Class"),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().emit(provenance=False)
+
+    assert source == (
+        "def build():\n"
+        "\n"
+        "    class Generated:\n"
+        "        values = ('slot_name',)\n\n"
+        "        def __init__(self, *, name='default'):\n"
+        "            self.name = name\n"
+    )
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("builder_adapter_mutation", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
 def test_lower_materializes_dstar_funcargs_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("result = func(**astichi_hole(kwargs))\n")

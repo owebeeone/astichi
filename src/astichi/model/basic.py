@@ -60,6 +60,11 @@ class BasicComposable(Composable):
         repr=False,
         compare=False,
     )
+    _already_materialized: bool = field(
+        default=False,
+        repr=False,
+        compare=False,
+    )
 
     def arg_bindings_map(self) -> dict[str, str]:
         """Return the identifier-arg resolutions as a plain dict."""
@@ -365,6 +370,7 @@ def _rebuild_composable(
     bound_externals: frozenset[str],
     arg_bindings: tuple[tuple[str, str], ...] = (),
     keep_names: frozenset[str] = frozenset(),
+    already_materialized: bool = False,
 ) -> BasicComposable:
     from astichi.hygiene import analyze_names
 
@@ -400,6 +406,7 @@ def _rebuild_composable(
         arg_bindings=arg_bindings,
         keep_names=keep_names,
         _lower_template=lower_template,
+        _already_materialized=already_materialized,
     )
 
 

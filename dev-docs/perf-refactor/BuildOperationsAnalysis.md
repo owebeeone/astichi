@@ -386,9 +386,16 @@ Every implementation slice should keep these counters visible:
 - unsupported native operation count;
 - materialization-plan count/time;
 - final materialization count/time;
-- legacy builder adapter count/time, if any;
+- legacy builder adapter count/time, quarantined to unsupported states only;
 - `_rebuild_composable` calls during scope apply;
 - `_replace_occurrence_inventory` calls during scope apply.
 
 The hard Phase 2 gate is zero per-apply composable rebuild and zero hot-path
 inventory replacement for the YIDL assembly path.
+
+The Slice 13c profile gate adds a stricter YIDL workload check: the
+`pyrolyze.runtime.context_lcm` lifecycle import profile must show zero
+`build_merge`, zero `builder_adapter_mutation`, and zero
+`lower_materialization_adapter_fallback` on the Astichi side. YIDL runtime edge
+traversal and no-match contribution selection are reported under
+`yidl_runtime_counters`, not inferred from Astichi lower counters.

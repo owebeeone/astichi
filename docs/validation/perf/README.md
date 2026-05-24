@@ -15,8 +15,11 @@ run it with:
 uv run --with lark python docs/validation/perf/yidl_split_dataclass_profile.py --skip-runtime
 ```
 
-The YIDL lifecycle import baseline records phase timings plus Astichi's
-opt-in counters for the 8-class decorator workload:
+The YIDL lifecycle import baseline records phase timings, Astichi's opt-in
+counters, and YIDL assembly-runtime counters for the 8-class decorator
+workload. The YIDL counters separate edge traversal, contribution selection,
+no-match contribution checks, and contribution application from Astichi lower
+candidate lookup/materialization:
 
 ```bash
 uv run --with frozendict python docs/validation/perf/yidl_lifecycle_import_baseline.py

@@ -3316,6 +3316,9 @@ def materialize_composable(
     6. strip residual metadata markers;
     7. re-recognize markers and re-extract ports.
     """
+    if composable._already_materialized:
+        return composable
+
     arg_bindings = dict(composable.arg_bindings)
     tree = clone_ast(composable.tree)
     _normalize_defaulted_block_holes(tree)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections import defaultdict
 import json
 from pathlib import Path
@@ -24,11 +25,70 @@ def main(argv: list[str] | None = None) -> int:
     _install_black_stub_if_needed()
 
     from astichi.perf_counters import collect_perf_counters
+    import yidl.generation.assembly_runtime as assembly_runtime
     import yidl_lifecycle.lifecycle as lifecycle_module
 
     rows: list[dict[str, float | str]] = []
     totals: defaultdict[str, float] = defaultdict(float)
+    yidl_counts: Counter[str] = Counter()
+    yidl_counts.update(
+        {
+            "contribution_apply_calls": 0,
+            "contribution_no_match": 0,
+            "contribution_select_calls": 0,
+            "edge_calls": 0,
+            "empty_resource_noops": 0,
+        }
+    )
+    yidl_seconds: defaultdict[str, float] = defaultdict(float)
     original_lifecycle = lifecycle_module.lifecycle
+    original_run_edge = assembly_runtime._run_edge
+    original_select_contribution = assembly_runtime._select_contribution
+    original_apply_contribution = assembly_runtime._apply_contribution
+
+    def time_yidl(name: str, func, *args, **kwargs):  # type: ignore[no-untyped-def]
+        start = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            yidl_seconds[name] += time.perf_counter() - start
+
+    def counted_run_edge(*args, **kwargs):  # type: ignore[no-untyped-def]
+        yidl_counts["edge_calls"] += 1
+        return time_yidl("edge_seconds", original_run_edge, *args, **kwargs)
+
+    def counted_select_contribution(*args, **kwargs):  # type: ignore[no-untyped-def]
+        yidl_counts["contribution_select_calls"] += 1
+        result = time_yidl(
+            "contribution_select_seconds",
+            original_select_contribution,
+            *args,
+            **kwargs,
+        )
+        if result is None:
+            yidl_counts["contribution_no_match"] += 1
+        return result
+
+    def counted_apply_contribution(
+        concept,  # type: ignore[no-untyped-def]
+        contribution,
+        *args,
+        **kwargs,
+    ):
+        yidl_counts["contribution_apply_calls"] += 1
+        if (
+            not contribution.diagnostic
+            and assembly_runtime._is_empty_resource_contribution(concept, contribution)
+        ):
+            yidl_counts["empty_resource_noops"] += 1
+        return time_yidl(
+            "contribution_apply_seconds",
+            original_apply_contribution,
+            concept,
+            contribution,
+            *args,
+            **kwargs,
+        )
 
     def timed_lifecycle(cls: type[object]) -> type[object]:
         row: dict[str, float | str] = {"class": f"{cls.__module__}.{cls.__qualname__}"}
@@ -73,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
         return generated
 
     lifecycle_module.lifecycle = timed_lifecycle
+    assembly_runtime._run_edge = counted_run_edge
+    assembly_runtime._select_contribution = counted_select_contribution
+    assembly_runtime._apply_contribution = counted_apply_contribution
     try:
         with collect_perf_counters() as counters:
             started = time.perf_counter()
@@ -80,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
             elapsed = time.perf_counter() - started
     finally:
         lifecycle_module.lifecycle = original_lifecycle
+        assembly_runtime._run_edge = original_run_edge
+        assembly_runtime._select_contribution = original_select_contribution
+        assembly_runtime._apply_contribution = original_apply_contribution
 
     summary = {
         "case": args.module,
@@ -90,6 +156,10 @@ def main(argv: list[str] | None = None) -> int:
         },
         "rows": rows,
         "astichi_counters": counters.snapshot(),
+        "yidl_runtime_counters": {
+            "counts": dict(sorted(yidl_counts.items())),
+            "seconds": dict(sorted(yidl_seconds.items())),
+        },
     }
     json.dump(summary, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

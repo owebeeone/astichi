@@ -85,6 +85,10 @@ Completed tags:
 - `perf-refactor/slice-13b`: standalone inventory candidate lookup is removed
   from the public assembler facade and retained only as the private
   `find_candidates_in_inventory(...)` debug helper.
+- `perf-refactor/slice-13c`: the Python lower refactor closes with the YIDL
+  lifecycle import workload using lower materialization for all 8 decorated
+  classes and with YIDL edge/no-op counters reported separately from Astichi
+  lower counters.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone
@@ -555,6 +559,20 @@ Acceptance:
 - The remaining profile clearly separates YIDL no-op edge evaluation from
   Astichi lower-engine work.
 - Full Astichi suite passes.
+
+Profile result:
+
+- `docs/validation/perf/yidl_lifecycle_import_baseline.py` reports zero
+  `build_merge`, zero `builder_adapter_mutation`, and zero
+  `lower_materialization_adapter_fallback` for the
+  `pyrolyze.runtime.context_lcm` 8-class lifecycle import workload.
+- The same run reports YIDL edge traversal separately under
+  `yidl_runtime_counters`: 904 edge calls, 628 contribution selections, 68
+  no-match selections, 560 contribution applications, and zero
+  empty-resource no-ops.
+- Representative wall time is about 0.8 seconds, with about 0.67 seconds in
+  YIDL assembly, 0.04 seconds in final AST export/materialization, and about
+  0.08 seconds combined in Astichi lower candidate lookup plus scope apply.
 
 Stop if:
 

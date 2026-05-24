@@ -640,12 +640,18 @@ external/identifier overlay subset without calling builder merge. The lower
 path also owns the simple keep-name/collision subset: marker-only
 `astichi_keep(...)` calls are stripped after materialization, and direct block
 payload locals that collide with names already bound in the target scope are
-renamed deterministically unless the source explicitly keeps them. Unsupported
-surfaces still use a counted adapter fallback. `scope.build(...)` now selects
-that lower path automatically when the lower result has no unresolved Astichi
-demand ports after materialization. Ordinary implied Python free-name demands
-may remain. Unsupported or not-yet-closed states stay on the counted
-builder-adapter path.
+renamed deterministically unless the source explicitly keeps them. The lower
+materializer now walks occurrence trees bottom-up, so nested YIDL production
+roots materialize before their parent splice. It also supports sequence-star
+holes such as tuple/list `*astichi_hole(...)` splices and falls back from stale
+parameter locators to the unique live parameter-hole function when prior lower
+rewrites have shifted template paths. Lower-built final artifacts are marked as
+already materialized so `to_executable_ast()` clones the lower result instead
+of re-running the legacy hygiene/materialization pass. Unsupported surfaces
+outside the migrated subset still use a counted adapter fallback.
+`scope.build(...)` now selects that lower path automatically when the lower
+result has no unresolved Astichi demand ports after materialization. Ordinary
+implied Python free-name demands may remain.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
@@ -662,6 +668,17 @@ single-add satisfaction fixtures. For
 lower-supported fixtures it also records lower-source output. Delete it once
 lower materialization is
 authoritative enough that the adapter comparison is no longer useful.
+
+The Slice 13c YIDL lifecycle import profile uses
+`docs/validation/perf/yidl_lifecycle_import_baseline.py`. The current 8-class
+`pyrolyze.runtime.context_lcm` workload has zero `build_merge`,
+`builder_adapter_mutation`, and `lower_materialization_adapter_fallback` counts
+on the Astichi side. The same profile records YIDL runtime counters separately:
+904 edge calls, 628 contribution selections, 68 no-match selections, 560
+contribution applications, and zero empty-resource no-ops in the measured run.
+Representative wall time is about 0.8 seconds, with about 0.67 seconds in YIDL
+assembly, 0.04 seconds in final AST materialization/export, and about 0.08
+seconds combined in Astichi lower candidate lookup plus scope apply.
 
 Parameter-hole materialization is represented in lower operation and hygiene
 streams, has a structural plan golden, and final lower materialization supports
