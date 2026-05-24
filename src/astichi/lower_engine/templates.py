@@ -23,6 +23,7 @@ class TemplateRecordSpec:
     inventory_kind: str = ""
     code_owner_parts: tuple[str, ...] = ()
     legacy_record_id: str = ""
+    projection_record: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class TemplateRecord:
     inventory_kind: str = ""
     code_owner_parts: tuple[str, ...] = ()
     legacy_record_id: str = ""
+    projection_record: object | None = None
 
 
 @dataclass(frozen=True, slots=True)

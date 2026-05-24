@@ -500,6 +500,16 @@ Acceptance:
 Goal: remove per-apply composable rebuild and inventory replacement for
 composable insertion.
 
+Implementation split:
+
+- Slice 9a removes legacy `_replace_occurrence_inventory` calls from the scope
+  add/apply path. Debug inventory projection is built from lower template
+  projection payloads, and counters assert zero legacy occurrence-inventory
+  replacement.
+- Slice 9b removes remaining builder-graph mutation from the composable insert
+  hot path once lower materialization has enough coverage to replace the build
+  adapter.
+
 Work:
 
 - append source occurrences and edges;

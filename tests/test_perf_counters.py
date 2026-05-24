@@ -31,8 +31,9 @@ def test_perf_counters_collect_assembly_hot_path_counts() -> None:
     snapshot = counters.snapshot()
     counts = snapshot["counts"]
 
-    assert counts["inventory_projection"] == 2
-    assert counts["replace_occurrence_inventory"] == 2
+    assert counts.get("inventory_projection", 0) == 0
+    assert counts.get("replace_occurrence_inventory", 0) == 0
+    assert counts["debug_inventory_projection"] == 1
     assert counts["candidate_lookup"] == 1
     assert counts["assembly_scope_apply"] == 1
     assert counts["assembly_scope_apply_external_value"] == 1

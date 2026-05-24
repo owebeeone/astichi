@@ -17,6 +17,7 @@ from astichi.lower_engine import (
     LowerEngine,
     LowerTemplateBinding,
     LowerTemplateCache,
+    TemplateRecordSpec,
 )
 from astichi.lower_engine.handles import OccurrenceId, RecordId
 from astichi.lower_engine.inventory import AssemblyState
@@ -281,18 +282,14 @@ class AssemblyScope:
         """Register a root composable in this scope."""
         handle = self.builder.add(name, composable)
         self._owner_by_build_prefix[(name,)] = name
-        prefixed = self._replace_occurrence_inventory((name,), composable)
-        self._append_lower_occurrence(
-            (name,),
-            composable,
-            prefixed_inventory=prefixed,
-        )
+        self._append_lower_occurrence((name,), composable)
         return handle
 
     def lower_structural_snapshot(self) -> dict[str, object]:
         """Return the lower-engine structural state for diagnostics/tests."""
         return self._lower_engine.structural_snapshot(self._lower_state)
 
+    @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:
         """Project the visible lower state back to the slow debug inventory."""
         mutable = MutableInventory()
@@ -381,15 +378,10 @@ class AssemblyScope:
         target_lower_record = self._lower_record_by_inventory_id.get(
             candidate.target_record.record_id
         )
-        prefixed = self._replace_occurrence_inventory(
-            build_path + (resource.instance_name,),
-            resource.composable,
-        )
         source_occurrence = self._append_lower_occurrence(
             build_path + (resource.instance_name,),
             resource.composable,
             parent_occurrence_id=self._lower_occurrence_by_build_prefix.get(build_path),
-            prefixed_inventory=prefixed,
         )
         if target_lower_record is not None:
             self._lower_engine.append_edge(
@@ -466,12 +458,7 @@ class AssemblyScope:
     ) -> None:
         for prefix, prefix_owner in tuple(self._owner_by_build_prefix.items()):
             if prefix_owner == owner:
-                prefixed = self._replace_occurrence_inventory(prefix, composable)
-                self._append_lower_occurrence(
-                    prefix,
-                    composable,
-                    prefixed_inventory=prefixed,
-                )
+                self._append_lower_occurrence(prefix, composable)
 
     @counted_perf_call("replace_occurrence_inventory")
     def _replace_occurrence_inventory(
@@ -517,7 +504,6 @@ class AssemblyScope:
         composable: Composable,
         *,
         parent_occurrence_id: OccurrenceId | None = None,
-        prefixed_inventory: Inventory | None = None,
     ) -> OccurrenceId:
         if not isinstance(composable, BasicComposable):
             raise TypeError(
@@ -554,10 +540,7 @@ class AssemblyScope:
             )
             inventory_record_ids.add(inventory_record_id)
             self._lower_record_by_inventory_id[inventory_record_id] = record_id
-            projection_record = _projection_record_for(
-                prefixed_inventory,
-                inventory_record_id,
-            )
+            projection_record = _projection_record_for(build_prefix, spec)
             if projection_record is not None:
                 self._lower_projection_by_record_id[record_id] = projection_record
         self._lower_record_ids_by_build_prefix[build_prefix] = frozenset(
@@ -798,12 +781,22 @@ def _lower_hole_inventory_kinds() -> tuple[str, ...]:
 
 
 def _projection_record_for(
-    inventory: Inventory | None,
-    record_id: InventoryRecordId,
+    build_prefix: tuple[str, ...],
+    spec: TemplateRecordSpec,
 ) -> InventoryRecord | None:
-    if inventory is None:
+    record = spec.projection_record
+    if not isinstance(record, InventoryRecord):
         return None
-    return inventory.records.get(record_id)
+    return InventoryRecord(
+        record_id=_prefix_inventory_record_id(build_prefix, record.record_id),
+        build_path=record.build_path.prefixed(ResourcePath(build_prefix)),
+        code_owner=record.code_owner,
+        name=record.name,
+        kind=record.kind,
+        locator=record.locator,
+        payload=record.payload,
+        source_location=record.source_location,
+    )
 
 
 @counted_perf_call("inventory_projection")

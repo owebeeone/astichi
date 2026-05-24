@@ -182,6 +182,7 @@ def _template_record_spec(
         inventory_kind=record.kind,
         code_owner_parts=_code_owner_parts(record),
         legacy_record_id=record.record_id,
+        projection_record=record,
     )
 
 

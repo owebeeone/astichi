@@ -87,6 +87,7 @@ class LowerEngine:
                     inventory_kind=spec.inventory_kind,
                     code_owner_parts=spec.code_owner_parts,
                     legacy_record_id=spec.legacy_record_id,
+                    projection_record=spec.projection_record,
                 )
             )
         self._templates.append(
