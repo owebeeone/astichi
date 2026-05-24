@@ -26,6 +26,19 @@ def current_surface_bundle_spec() -> SurfaceBundleSpec:
     )
 
 
+def current_plus_future_surface_bundle_spec() -> SurfaceBundleSpec:
+    """Return current surfaces plus dormant future syntax templates."""
+    current = current_surface_bundle_spec()
+    return SurfaceBundleSpec(
+        bundle_key="astichi.current-plus-future.v1",
+        schema_version=current.schema_version,
+        surfaces=(*current.surfaces, *_future_surface_specs()),
+        operations=current.operations,
+        patterns=(*current.patterns, *_future_pattern_specs()),
+        compatibility_rules=(*current.compatibility_rules, *_future_compatibility_rules()),
+    )
+
+
 def _current_surface_specs() -> tuple[SurfaceSpec, ...]:
     return (
         SurfaceSpec("astichi.surface.block.hole", 1, "Block insertion target."),
@@ -48,6 +61,19 @@ def _current_surface_specs() -> tuple[SurfaceSpec, ...]:
         SurfaceSpec("astichi.surface.unroll.for_iter", 1, "Compile-time loop-unroll marker."),
         SurfaceSpec("astichi.surface.insert.metadata", 1, "Internal emitted insert metadata."),
         SurfaceSpec("astichi.surface.diagnostic.reserved", 1, "Reserved diagnostic-only marker."),
+    )
+
+
+def _future_surface_specs() -> tuple[SurfaceSpec, ...]:
+    return (
+        SurfaceSpec("astichi.surface.future.match.case.target", 1, "Dormant match/case insertion target."),
+        SurfaceSpec("astichi.surface.future.match.case.production", 1, "Dormant match/case production."),
+        SurfaceSpec("astichi.surface.future.except.handler.target", 1, "Dormant exception-handler insertion target."),
+        SurfaceSpec("astichi.surface.future.except.handler.production", 1, "Dormant exception-handler production."),
+        SurfaceSpec("astichi.surface.future.loop.else.target", 1, "Dormant loop-else body target."),
+        SurfaceSpec("astichi.surface.future.try.else.target", 1, "Dormant try-else body target."),
+        SurfaceSpec("astichi.surface.future.try.finally.target", 1, "Dormant try-finally body target."),
+        SurfaceSpec("astichi.surface.future.with.item.target", 1, "Dormant with-item insertion target."),
     )
 
 
@@ -113,6 +139,19 @@ def _current_pattern_specs() -> tuple[PatternSpec, ...]:
     )
 
 
+def _future_pattern_specs() -> tuple[PatternSpec, ...]:
+    return (
+        _pattern("astichi.pattern.future.match_case_target", "DirectCallPattern+ClauseListLocator", "astichi.surface.future.match.case.target", "astichi.operation.append_clause", "Dormant marker anchored in ast.Match.cases.", enabled=False),
+        _pattern("astichi.pattern.future.match_case_payload", "DefinitionNamePattern", "astichi.surface.future.match.case.production", "astichi.operation.append_clause", "Dormant generated match-case contribution.", enabled=False),
+        _pattern("astichi.pattern.future.except_handler_target", "DirectCallPattern+HandlerListLocator", "astichi.surface.future.except.handler.target", "astichi.operation.append_clause", "Dormant marker anchored in ast.Try.handlers.", enabled=False),
+        _pattern("astichi.pattern.future.except_handler_payload", "DefinitionNamePattern", "astichi.surface.future.except.handler.production", "astichi.operation.append_clause", "Dormant generated exception-handler contribution.", enabled=False),
+        _pattern("astichi.pattern.future.loop_else_target", "DirectCallPattern+BodyLocator", "astichi.surface.future.loop.else.target", "astichi.operation.append_body", "Dormant marker anchored in For/AsyncFor/While.orelse.", enabled=False),
+        _pattern("astichi.pattern.future.try_else_target", "DirectCallPattern+BodyLocator", "astichi.surface.future.try.else.target", "astichi.operation.append_body", "Dormant marker anchored in ast.Try.orelse.", enabled=False),
+        _pattern("astichi.pattern.future.try_finally_target", "DirectCallPattern+BodyLocator", "astichi.surface.future.try.finally.target", "astichi.operation.append_body", "Dormant marker anchored in ast.Try.finalbody.", enabled=False),
+        _pattern("astichi.pattern.future.with_item_target", "DirectCallPattern+WithItemListLocator", "astichi.surface.future.with.item.target", "astichi.operation.splice_expression_list", "Dormant marker anchored in ast.With.items.", enabled=False),
+    )
+
+
 def _current_compatibility_rules() -> tuple[CompatibilityRuleSpec, ...]:
     return (
         _compatibility("astichi.surface.block.hole", "astichi.surface.block.production", "body-region-compatible"),
@@ -123,6 +162,17 @@ def _current_compatibility_rules() -> tuple[CompatibilityRuleSpec, ...]:
     )
 
 
+def _future_compatibility_rules() -> tuple[CompatibilityRuleSpec, ...]:
+    return (
+        _compatibility("astichi.surface.future.match.case.target", "astichi.surface.future.match.case.production", "future-match-case-compatible"),
+        _compatibility("astichi.surface.future.except.handler.target", "astichi.surface.future.except.handler.production", "future-except-handler-compatible"),
+        _compatibility("astichi.surface.future.loop.else.target", "astichi.surface.block.production", "future-loop-else-body-compatible"),
+        _compatibility("astichi.surface.future.try.else.target", "astichi.surface.block.production", "future-try-else-body-compatible"),
+        _compatibility("astichi.surface.future.try.finally.target", "astichi.surface.block.production", "future-try-finally-body-compatible"),
+        _compatibility("astichi.surface.future.with.item.target", "astichi.surface.expression.production", "future-with-item-compatible"),
+    )
+
+
 def _pattern(
     pattern_key: str,
     template_key: str,
@@ -130,6 +180,7 @@ def _pattern(
     operation_key: str,
     summary: str,
     *,
+    enabled: bool = True,
     diagnostic_only: bool = False,
 ) -> PatternSpec:
     return PatternSpec(
@@ -139,6 +190,7 @@ def _pattern(
         surface_key=surface_key,
         operation_key=operation_key,
         summary=summary,
+        enabled=enabled,
         diagnostic_only=diagnostic_only,
     )
 

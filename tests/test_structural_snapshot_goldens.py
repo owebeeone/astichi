@@ -24,6 +24,7 @@ _EXPECTED_INITIAL_GOLDENS = {
     "identifier_bind_overlay.json",
     "lower_engine_tiny_state.json",
     "registry_current_patterns.json",
+    "registry_future_templates.json",
     "registry_minimal_bundle.json",
     "scalar_expression_insert.json",
 }

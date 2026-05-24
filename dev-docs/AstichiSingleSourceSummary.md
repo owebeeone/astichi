@@ -602,6 +602,10 @@ evaluates compatibility through callback-free shape descriptors. Current
 registry coverage includes a minimal expression-hole bundle golden, a current
 Astichi pattern catalog golden, and focused handle/diagnostic tests. Current
 Astichi scanners are enumerated in the catalog but are not migrated yet.
+Dormant future templates for match/case, exception handlers, loop/try
+else/finally, and with-item insertion are registered disabled in a separate
+catalog golden to prove those surfaces can receive handles without changing the
+core lower-engine API.
 
 ### 3.6 Emit, materialize, and provenance contract
 
