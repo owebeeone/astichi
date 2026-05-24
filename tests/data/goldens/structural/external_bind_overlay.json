@@ -1,0 +1,111 @@
+{
+  "schema": "astichi.structural-inventory.v1",
+  "surface_bundle": {
+    "bundle_key": "astichi.core.external-bind-overlay",
+    "operations": [
+      {
+        "operation_key": "bind.external_value",
+        "version": 1
+      }
+    ],
+    "patterns": [
+      {
+        "pattern_key": "external-bind-call",
+        "template_key": "root_with_external_bind",
+        "version": 1
+      }
+    ],
+    "schema_version": 1,
+    "surfaces": [
+      {
+        "surface_key": "external.value.demand",
+        "version": 1
+      }
+    ]
+  },
+  "templates": [
+    {
+      "record_count": 1,
+      "source_summary": "threshold = astichi_bind_external(threshold)",
+      "template_id": 0,
+      "template_key": "root_with_external_bind"
+    }
+  ],
+  "locators": [
+    {
+      "ast_path": "body[0].value",
+      "authored_summary": "astichi_bind_external(threshold)",
+      "locator_id": 0,
+      "materialization_anchor": "replace-expression",
+      "parent_locator_id": null,
+      "role_key": "external.value.demand",
+      "template_id": 0
+    }
+  ],
+  "occurrences": [
+    {
+      "build_path": [
+        "Root"
+      ],
+      "occurrence_id": 0,
+      "parent_occurrence_id": null,
+      "template_id": 0
+    }
+  ],
+  "records": [
+    {
+      "locator_id": 0,
+      "occurrence_id": 0,
+      "record_id": [
+        0,
+        0
+      ],
+      "semantic_summary": "external demand threshold",
+      "state": {
+        "satisfied": true,
+        "visible": true
+      },
+      "surface_key": "external.value.demand",
+      "template_record_id": 0
+    }
+  ],
+  "edges": [],
+  "overlays": [
+    {
+      "kind": "external_value",
+      "overlay_id": 0,
+      "source_label": "external:threshold:int",
+      "target_record_id": [
+        0,
+        0
+      ]
+    }
+  ],
+  "materialization": {
+    "artifact_requests": [
+      "python_ast"
+    ],
+    "debug_views": {
+      "final_source": "threshold = 10"
+    },
+    "hygiene_stream": [],
+    "operation_stream": [
+      {
+        "captures": {
+          "external_slot": "threshold",
+          "value_kind": "int"
+        },
+        "operation_key": "bind.external_value",
+        "order": 0,
+        "overlay_id": 0,
+        "source_occurrence_id": null,
+        "target_record_id": [
+          0,
+          0
+        ]
+      }
+    ],
+    "root_occurrence_id": 0
+  },
+  "diagnostics": []
+}

@@ -1,0 +1,158 @@
+{
+  "schema": "astichi.structural-inventory.v1",
+  "surface_bundle": {
+    "bundle_key": "astichi.core.scalar-expression-insert",
+    "operations": [
+      {
+        "operation_key": "insert.expression",
+        "version": 1
+      }
+    ],
+    "patterns": [
+      {
+        "pattern_key": "expression-hole-call",
+        "template_key": "root_with_expression_hole",
+        "version": 1
+      },
+      {
+        "pattern_key": "expression-production",
+        "template_key": "value_expression",
+        "version": 1
+      }
+    ],
+    "schema_version": 1,
+    "surfaces": [
+      {
+        "surface_key": "expression.hole",
+        "version": 1
+      },
+      {
+        "surface_key": "expression.production",
+        "version": 1
+      }
+    ]
+  },
+  "templates": [
+    {
+      "record_count": 1,
+      "source_summary": "result = astichi_hole(value)",
+      "template_id": 0,
+      "template_key": "root_with_expression_hole"
+    },
+    {
+      "record_count": 1,
+      "source_summary": "value",
+      "template_id": 1,
+      "template_key": "value_expression"
+    }
+  ],
+  "locators": [
+    {
+      "ast_path": "body[0].value",
+      "authored_summary": "astichi_hole(value)",
+      "locator_id": 0,
+      "materialization_anchor": "replace-expression",
+      "parent_locator_id": null,
+      "role_key": "expression.hole",
+      "template_id": 0
+    },
+    {
+      "ast_path": "body[0].value",
+      "authored_summary": "value",
+      "locator_id": 1,
+      "materialization_anchor": "copy-expression",
+      "parent_locator_id": null,
+      "role_key": "expression.production",
+      "template_id": 1
+    }
+  ],
+  "occurrences": [
+    {
+      "build_path": [
+        "Root"
+      ],
+      "occurrence_id": 0,
+      "parent_occurrence_id": null,
+      "template_id": 0
+    },
+    {
+      "build_path": [
+        "Value"
+      ],
+      "occurrence_id": 1,
+      "parent_occurrence_id": null,
+      "template_id": 1
+    }
+  ],
+  "records": [
+    {
+      "locator_id": 0,
+      "occurrence_id": 0,
+      "record_id": [
+        0,
+        0
+      ],
+      "semantic_summary": "expression hole value",
+      "state": {
+        "satisfied": true,
+        "visible": true
+      },
+      "surface_key": "expression.hole",
+      "template_record_id": 0
+    },
+    {
+      "locator_id": 1,
+      "occurrence_id": 1,
+      "record_id": [
+        1,
+        0
+      ],
+      "semantic_summary": "expression production value",
+      "state": {
+        "satisfied": true,
+        "visible": true
+      },
+      "surface_key": "expression.production",
+      "template_record_id": 0
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": 0,
+      "operation_key": "insert.expression",
+      "order": 0,
+      "source_occurrence_id": 1,
+      "target_record_id": [
+        0,
+        0
+      ]
+    }
+  ],
+  "overlays": [],
+  "materialization": {
+    "artifact_requests": [
+      "python_ast"
+    ],
+    "debug_views": {
+      "final_source": "result = value"
+    },
+    "hygiene_stream": [],
+    "operation_stream": [
+      {
+        "captures": {
+          "surface_key": "expression.hole"
+        },
+        "operation_key": "insert.expression",
+        "order": 0,
+        "overlay_id": null,
+        "source_occurrence_id": 1,
+        "target_record_id": [
+          0,
+          0
+        ]
+      }
+    ],
+    "root_occurrence_id": 0
+  },
+  "diagnostics": []
+}

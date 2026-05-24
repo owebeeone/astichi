@@ -55,6 +55,11 @@ The structural phase contains canonical snapshots emitted from the lower engine.
 Recommended file extension is `.json` if the snapshot is canonical JSON, or
 `.snap` if the writer uses line-oriented records.
 
+Slice 2 uses canonical JSON and adds the phase to the versioned harness without
+making source-fixture regeneration produce structural files yet. Until lower
+engine routing exists, structural goldens are hand-built contract fixtures and
+round-trip through `astichi.structural_snapshot`.
+
 The existing fixture helper can be extended so each fixture may write:
 
 ```text

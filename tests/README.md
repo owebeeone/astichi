@@ -13,9 +13,12 @@ under `tests/actual_test_results/`.
   - `tests/data/goldens/pre_materialized/`
 - Canonical materialized outputs:
   - `tests/data/goldens/materialized/`
+- Canonical structural snapshots:
+  - `tests/data/goldens/structural/`
 - Local actual outputs:
   - `tests/actual_test_results/<runtime>/goldens/pre_materialized/`
   - `tests/actual_test_results/<runtime>/goldens/materialized/`
+  - `tests/actual_test_results/<runtime>/goldens/structural/`
 
 Every `tests/data/gold_src/*.py` file is tested. Each script accepts two output
 paths:
@@ -35,6 +38,10 @@ source can be round-tripped. Materialized outputs omit provenance and are plain
 Python source. The provenance payload is currently an opaque
 pickle-based encoding, so cross-version golden comparison normalizes the payload
 bytes after verifying both expected and actual trailers round-trip.
+
+Structural snapshots are canonical JSON fixtures for intermediate lower-engine
+state. During migration they are managed by dedicated structural golden tests
+instead of the source fixture regeneration command.
 
 ## Commands
 

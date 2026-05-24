@@ -1,0 +1,110 @@
+{
+  "schema": "astichi.structural-inventory.v1",
+  "surface_bundle": {
+    "bundle_key": "astichi.core.identifier-bind-overlay",
+    "operations": [
+      {
+        "operation_key": "bind.identifier_name",
+        "version": 1
+      }
+    ],
+    "patterns": [
+      {
+        "pattern_key": "identifier-demand-call",
+        "template_key": "root_with_identifier_demand",
+        "version": 1
+      }
+    ],
+    "schema_version": 1,
+    "surfaces": [
+      {
+        "surface_key": "identifier.demand",
+        "version": 1
+      }
+    ]
+  },
+  "templates": [
+    {
+      "record_count": 1,
+      "source_summary": "result = target__astichi_arg__",
+      "template_id": 0,
+      "template_key": "root_with_identifier_demand"
+    }
+  ],
+  "locators": [
+    {
+      "ast_path": "body[0].value",
+      "authored_summary": "target__astichi_arg__",
+      "locator_id": 0,
+      "materialization_anchor": "rename-identifier",
+      "parent_locator_id": null,
+      "role_key": "identifier.demand",
+      "template_id": 0
+    }
+  ],
+  "occurrences": [
+    {
+      "build_path": [
+        "Root"
+      ],
+      "occurrence_id": 0,
+      "parent_occurrence_id": null,
+      "template_id": 0
+    }
+  ],
+  "records": [
+    {
+      "locator_id": 0,
+      "occurrence_id": 0,
+      "record_id": [
+        0,
+        0
+      ],
+      "semantic_summary": "identifier demand target",
+      "state": {
+        "satisfied": true,
+        "visible": true
+      },
+      "surface_key": "identifier.demand",
+      "template_record_id": 0
+    }
+  ],
+  "edges": [],
+  "overlays": [
+    {
+      "kind": "identifier_name",
+      "overlay_id": 0,
+      "source_label": "actual",
+      "target_record_id": [
+        0,
+        0
+      ]
+    }
+  ],
+  "materialization": {
+    "artifact_requests": [
+      "python_ast"
+    ],
+    "debug_views": {
+      "final_source": "result = actual"
+    },
+    "hygiene_stream": [],
+    "operation_stream": [
+      {
+        "captures": {
+          "identifier": "actual"
+        },
+        "operation_key": "bind.identifier_name",
+        "order": 0,
+        "overlay_id": 0,
+        "source_occurrence_id": null,
+        "target_record_id": [
+          0,
+          0
+        ]
+      }
+    ],
+    "root_occurrence_id": 0
+  },
+  "diagnostics": []
+}

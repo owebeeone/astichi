@@ -11,7 +11,8 @@ from typing import Sequence, TextIO
 import tomllib
 
 
-_PHASES = ("pre_materialized", "materialized")
+_SOURCE_OUTPUT_PHASES = ("pre_materialized", "materialized")
+_GOLDEN_PHASES = (*_SOURCE_OUTPUT_PHASES, "structural")
 
 
 def runtime_tag(runtime_version: tuple[int, int]) -> str:
@@ -31,7 +32,7 @@ def data_gold_src_dir(project_root: Path) -> Path:
 
 
 def data_golden_dir(project_root: Path, *, phase: str) -> Path:
-    if phase not in _PHASES:
+    if phase not in _GOLDEN_PHASES:
         raise ValueError(f"Unsupported golden phase: {phase!r}")
     return project_root / "tests" / "data" / "goldens" / phase
 
@@ -86,7 +87,7 @@ def write_golden_outputs(project_root: Path) -> None:
     if not source_dir.exists():
         raise FileNotFoundError(f"Golden source directory does not exist: {source_dir}")
 
-    for phase in _PHASES:
+    for phase in _SOURCE_OUTPUT_PHASES:
         phase_dir = data_golden_dir(project_root, phase=phase)
         phase_dir.mkdir(parents=True, exist_ok=True)
         for stale in phase_dir.glob("*.py"):

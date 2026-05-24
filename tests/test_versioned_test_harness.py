@@ -170,6 +170,9 @@ def test_runtime_and_golden_paths_are_versioned_by_runtime() -> None:
     assert data_golden_dir(project_root, phase="materialized") == (
         project_root / "tests" / "data" / "goldens" / "materialized"
     )
+    assert data_golden_dir(project_root, phase="structural") == (
+        project_root / "tests" / "data" / "goldens" / "structural"
+    )
     assert actual_results_dir(project_root, runtime_version=(3, 14)) == (
         project_root / "tests" / "actual_test_results" / "py3_14"
     )

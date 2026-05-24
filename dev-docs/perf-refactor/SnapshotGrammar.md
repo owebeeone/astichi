@@ -1,10 +1,12 @@
 # Structural Snapshot Grammar
 
-Status: draft mini-spec.
+Status: Slice 2 implemented mini-spec.
 
 This is the Slice 2 snapshot grammar target. It is intentionally small, but it
 must be concrete enough that the writer and reader can round-trip hand-built
 lower-engine state before production code routes through the lower engine.
+Slice 2 implements this as canonical JSON through
+`src/astichi/structural_snapshot.py`.
 
 ## Canonical Sections
 
@@ -25,6 +27,11 @@ All maps are written in sorted key order. Lists are written in deterministic
 engine event order unless a section defines a more specific order. Snapshots
 must not contain absolute paths, Python object reprs, process ids, memory
 addresses, or hash-order-dependent output.
+
+The top-level JSON object is written in the canonical section order above.
+Nested JSON object keys are sorted lexicographically. The reader rejects
+unknown or missing top-level sections, unsupported schema values, absolute path
+strings, object reprs with memory addresses, and non-finite floats.
 
 ## Identity Rules
 
@@ -122,3 +129,15 @@ state -> snapshot -> text -> snapshot -> text
 
 with identical final text. Later slices add structural goldens from real
 assembly fixtures.
+
+Slice 2 also adds the structural golden phase:
+
+```text
+tests/data/goldens/structural/
+tests/actual_test_results/<runtime>/goldens/structural/
+```
+
+The initial checked-in snapshots are hand-built contract fixtures for scalar
+expression insertion, external value overlays, and identifier-name overlays.
+They are not produced by the lower engine yet; future routing slices must make
+the engine emit the same canonical text.
