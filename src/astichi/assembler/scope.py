@@ -37,6 +37,7 @@ from astichi.model import (
 from astichi.model.composable import Composable
 from astichi.model.descriptors import (
     block_production,
+    elif_production,
     expression_ast_production,
     funcargs_production,
 )
@@ -578,6 +579,7 @@ def _record_is_single_additive_hole_demand(record: InventoryRecord) -> bool:
         port.shape.is_block()
         or port.shape.is_positional_variadic()
         or port.shape.is_named_variadic()
+        or port.shape.is_elif_clause()
     )
 
 
@@ -603,6 +605,8 @@ def _production_descriptor(record: InventoryRecord) -> ProductionDescriptor | No
             name=name,
             port=PortDescriptor.from_supply(port),
         )
+    if record.kind == "production.elif":
+        return elif_production(name)
     if isinstance(payload, FuncargsProductionInventoryPayload):
         return funcargs_production(payload.payload, name=name)
     if isinstance(payload, ExpressionProductionInventoryPayload):

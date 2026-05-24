@@ -158,6 +158,68 @@ astichi_pass(service).append(astichi_bind_external(delta))
     assert generated.run("ignored") == [1]
 
 
+def test_scope_applies_elif_clause_resource_candidates() -> None:
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "fallback"
+"""
+    )
+    branch = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "created"
+"""
+    )
+    second_branch = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "delete":
+        return "deleted"
+"""
+    )
+
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            find_candidates(
+                scope.inventory,
+                as_composable(branch, build_name="Create"),
+                name="branches",
+                build_match=("Root",),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            find_candidates(
+                scope.inventory,
+                as_composable(second_branch, build_name="Delete"),
+                name="branches",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    source = scope.build().materialize().emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+
+    dispatch = namespace["dispatch"]
+    assert dispatch("create") == "created"  # type: ignore[operator]
+    assert dispatch("delete") == "deleted"  # type: ignore[operator]
+    assert dispatch("other") == "fallback"  # type: ignore[operator]
+
+
 def test_require_one_reports_ambiguous_targets_with_locations() -> None:
     root = astichi.compile(
         "def left():\n"
