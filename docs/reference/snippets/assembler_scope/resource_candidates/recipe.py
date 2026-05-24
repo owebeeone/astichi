@@ -12,7 +12,6 @@ def run() -> str:
         as_composable,
         as_external_value,
         as_identifier,
-        find_candidates,
         require_one,
     )
 
@@ -54,8 +53,7 @@ def run() -> str:
     ) -> None:
         scope.apply(
             require_one(
-                find_candidates(
-                    scope.inventory,
+                scope.find_candidates(
                     resource,
                     name=name,
                     build_match=build_match,

@@ -71,8 +71,10 @@ decisions are now assigned to named slice deliverables:
   `StructuralInventoryDesign.md`.
 - Slice 4a owns the exact surface bundle grammar, handle-binding policy, and
   signature/version policy for serialized or cached representations.
-- Slice 8 decides whether `find_candidates(scope.inventory, ...)` remains as a
-  temporary adapter or whether YIDL moves immediately to candidate handles.
+- Slice 7b moved YIDL and Astichi success-path lookup to
+  `AssemblyScope.find_candidates(...)`; standalone
+  `find_candidates(inventory, ...)` is now a temporary debug/compatibility
+  adapter.
 - Slice 14 owns the test-visible native engine selection spelling through
   `EngineSelectionContract.md`.
 - Slice 16 decides whether native materialization emits Python `_ast` objects

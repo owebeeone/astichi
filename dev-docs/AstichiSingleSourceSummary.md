@@ -569,8 +569,8 @@ public exports.
 
 Current assembler helper surface:
 
-- `AssemblyScope(astichi.build())`: wraps a builder and refreshes a built
-  inventory view after each applied candidate
+- `AssemblyScope(astichi.build())`: wraps a builder and refreshes
+  lower-backed assembly state after each applied candidate
 - `as_composable(composable, build_name=..., build_index=None, order=0)`:
   wraps a composable resource for compatible hole insertion; `build_index=1`
   creates the concrete builder instance name `Name[1]`, and tuple indexes
@@ -578,9 +578,12 @@ Current assembler helper surface:
 - `as_external_value(value)`: wraps a value for `astichi_bind_external(...)`
 - `as_identifier(identifier)`: wraps a Python identifier spelling for
   identifier-demand resolution
-- `find_candidates(scope.inventory, resource, name=None, build_match=None,
-  owner_match=None)`: returns compatible candidate applications using literal
-  names plus `pathmatch` selectors
+- `scope.find_candidates(resource, name=None, build_match=None,
+  owner_match=None)`: returns compatible candidate applications from lower
+  indexes using literal names plus `pathmatch` selectors
+- `find_candidates(inventory, resource, name=None, build_match=None,
+  owner_match=None)`: compatibility/debug adapter for already-projected
+  inventories; this is not the YIDL or Astichi success path
 - `require_one(candidates)`: returns the only candidate or raises a diagnostic
   listing candidate demand/resource lines, including build path, code owner,
   source location where available, and locator
@@ -605,11 +608,12 @@ parallel lower occurrence state for `add(...)`, composable applies, and
 overlay-shaped external/identifier applies. That lower state is exposed through
 `scope.lower_structural_snapshot()` for structural goldens and diagnostics, and
 `scope.project_lower_inventory()` provides the slow debug projection back to
-the existing `Inventory` shape. `scope.find_candidates(...)` can query lower
+the existing `Inventory` shape. `scope.find_candidates(...)` queries lower
 indexes directly for composable, external-value, and identifier resources while
-returning the current candidate objects for compatibility. The legacy
-standalone `find_candidates(scope.inventory, ...)` remains available until
-YIDL and remaining tests are moved to the scope method. Lower state is not yet
+returning the current candidate objects for compatibility. YIDL and Astichi
+success-path tests use that scope method; the standalone
+`find_candidates(inventory, ...)` function is preserved only for
+already-projected inventory debug/compatibility checks. Lower state is not yet
 the source of final materialization. `scope.inventory` now reads through the
 lower debug projection rather than the legacy `_inventory` cache; callers that
 use it are intentionally on the slow compatibility path. The old

@@ -30,6 +30,9 @@ Completed tags:
 
 - `perf-refactor/slice-7a`: lower-index lookup exists as
   `AssemblyScope.find_candidates(...)`.
+- `perf-refactor/slice-7b`: YIDL and Astichi success-path candidate lookup use
+  `AssemblyScope.find_candidates(...)`; standalone
+  `find_candidates(inventory, ...)` is compatibility/debug only.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone
@@ -40,7 +43,8 @@ Completed tags:
 
 The remaining work is primarily:
 
-- moving remaining callers from the debug projection to direct lower lookup;
+- finishing temporary compatibility/debug adapters once materialization no
+  longer needs them;
 - making `scope.build(...)` materialize from lower state;
 - expanding lower materialization and hygiene surface coverage;
 - deleting temporary adapters.

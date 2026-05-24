@@ -1,6 +1,6 @@
 # Assembly API Ledger
 
-Status: Slice 0 corrective pruning checkpoint.
+Status: Slice 7b caller-route checkpoint.
 
 This ledger is the Slice 0 deliverable. It names the assembly APIs that Astichi
 and YIDL actually use before the lower-engine refactor starts deleting or
@@ -41,8 +41,8 @@ API surface:
 | `AssemblyScope.add` | `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append; Slice 6a maintains parallel lower state | keep; make lower state authoritative in Slice 8 | assembler scope tests, YIDL final goldens, structural `scope_lower_occurrence_state` golden |
 | `AssemblyScope.apply` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays; Slice 6a records parallel lower edges/overlays | keep; route in Slices 9-10 | assembler scope tests, YIDL final goldens, structural `scope_lower_occurrence_state` golden |
 | `AssemblyScope.build` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
-| `AssemblyScope.inventory` | `find_candidates(scope.inventory, ...)`, inventory tests | `yidl/src/yidl/generation/assembly_runtime.py` | `adapter-only` | direct lower candidate query plus debug projection; Slice 8 routes the property through `scope.project_lower_inventory()` | remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
-| `find_candidates` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | `AssemblyScope.find_candidates(...)` lower index query; standalone inventory function becomes compatibility/debug adapter | route YIDL in Slice 7b | assembler diagnostics tests and structural goldens |
+| `AssemblyScope.inventory` | inventory/debug tests and compatibility snippets | none after Slice 7b | `adapter-only` | direct lower candidate query plus debug projection; Slice 8 routes the property through `scope.project_lower_inventory()` | remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
+| `find_candidates` | compatibility/debug adapter test and docs | none after Slice 7b | `adapter-only` | `AssemblyScope.find_candidates(...)` lower index query; standalone inventory function is compatibility/debug only | hot path routed in Slice 7b; remove or privatize by Slice 13 | assembler diagnostics tests and structural goldens |
 | `require_one` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `validation-only` | lower candidate batch diagnostic formatter | keep until diagnostics migrate | bespoke missing/ambiguous tests |
 | `as_composable` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | composable resource descriptor | keep facade; lower in Slice 7 | assembler scope tests |
 | `as_external_value` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | external-value resource descriptor with facade object slot | keep facade; lower in Slice 7 | external bind goldens and diagnostics tests |

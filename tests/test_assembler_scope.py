@@ -75,8 +75,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
 
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_identifier("GeneratedClass"),
                 name="class_name",
                 build_match=("Root",),
@@ -85,8 +84,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_identifier("run"),
                 name="method_name",
                 build_match=("Root",),
@@ -96,8 +94,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_external_value(42),
                 name="default_value",
                 build_match=("Root",),
@@ -107,8 +104,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(params, build_name="Params"),
                 name="params",
                 build_match=("Root",),
@@ -118,8 +114,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(body, build_name="Body"),
                 name="body",
                 build_match=("Root",),
@@ -129,8 +124,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_identifier("service"),
                 name="service",
                 build_match=("Root", "Body"),
@@ -139,8 +133,7 @@ astichi_pass(service).append(astichi_bind_external(delta))
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_external_value(1),
                 name="delta",
                 build_match=("Root", "Body"),
@@ -191,8 +184,7 @@ def astichi_elif():
     scope.add("Root", root)
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(branch, build_name="Create"),
                 name="branches",
                 build_match=("Root",),
@@ -201,8 +193,7 @@ def astichi_elif():
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(second_branch, build_name="Delete"),
                 name="branches",
                 build_match=("Root",),
@@ -222,11 +213,7 @@ def astichi_elif():
 
 def test_require_one_reports_ambiguous_targets_with_locations() -> None:
     root = astichi.compile(
-        "def left():\n"
-        "    astichi_hole(body)\n"
-        "\n"
-        "def right():\n"
-        "    astichi_hole(body)\n",
+        "def left():\n    astichi_hole(body)\n\ndef right():\n    astichi_hole(body)\n",
         file_name="assembler/ambiguous_root.py",
         line_number=10,
     )
@@ -238,8 +225,7 @@ def test_require_one_reports_ambiguous_targets_with_locations() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    candidates = find_candidates(
-        scope.inventory,
+    candidates = scope.find_candidates(
         as_composable(body, build_name="Body"),
         name="body",
         build_match=("Root",),
@@ -269,16 +255,14 @@ def test_require_one_reports_ambiguous_targets_with_locations() -> None:
 
 def test_require_one_reports_ambiguous_external_bind_targets() -> None:
     root = astichi.compile(
-        "left = astichi_bind_external(value)\n"
-        "right = astichi_bind_external(value)\n",
+        "left = astichi_bind_external(value)\nright = astichi_bind_external(value)\n",
         file_name="assembler/ambiguous_external.py",
         line_number=20,
     )
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    candidates = find_candidates(
-        scope.inventory,
+    candidates = scope.find_candidates(
         as_external_value(1),
         name="value",
         build_match=("Root",),
@@ -313,8 +297,7 @@ def test_require_one_reports_ambiguous_identifier_demand_targets() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    candidates = find_candidates(
-        scope.inventory,
+    candidates = scope.find_candidates(
         as_identifier("SelectedThing"),
         name="thing",
         build_match=("Root",),
@@ -336,7 +319,7 @@ def test_require_one_reports_ambiguous_identifier_demand_targets() -> None:
     )
 
 
-def test_find_candidates_without_name_scans_all_records_in_map() -> None:
+def test_inventory_find_candidates_adapter_without_name_scans_all_records() -> None:
     root = astichi.compile(
         """
 astichi_hole(body)
@@ -354,8 +337,7 @@ astichi_hole(other)
     )
 
     assert tuple(
-        candidate.target_record.name.logical_name()
-        for candidate in candidates
+        candidate.target_record.name.logical_name() for candidate in candidates
     ) == ("body", "other")
 
 
@@ -367,8 +349,7 @@ def test_build_match_operators_filter_assembler_candidates() -> None:
     scope.add("Root", root)
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(body_shell, build_name="Body"),
                 name="body",
                 build_match=("Root",),
@@ -376,8 +357,7 @@ def test_build_match_operators_filter_assembler_candidates() -> None:
         )
     )
 
-    candidates = find_candidates(
-        scope.inventory,
+    candidates = scope.find_candidates(
         as_composable(step, build_name="Step"),
         name="inner",
         build_match=("Root", "*", "Body"),
@@ -400,8 +380,7 @@ class class_name__astichi_arg__:
     scope.add("Root", root)
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_identifier("GeneratedClass"),
                 name="class_name",
                 build_match=("Root",),
@@ -410,8 +389,7 @@ class class_name__astichi_arg__:
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_identifier("run"),
                 name="method_name",
                 build_match=("Root",),
@@ -420,8 +398,7 @@ class class_name__astichi_arg__:
         )
     )
 
-    candidates = find_candidates(
-        scope.inventory,
+    candidates = scope.find_candidates(
         as_composable(body, build_name="Body"),
         name="body",
         build_match=("Root",),
@@ -429,13 +406,9 @@ class class_name__astichi_arg__:
     )
 
     candidate = require_one(candidates)
-    assert (
-        tuple(
-            node.logical_name()
-            for node in candidate.target_record.code_owner.nodes
-        )
-        == ("GeneratedClass", "run")
-    )
+    assert tuple(
+        node.logical_name() for node in candidate.target_record.code_owner.nodes
+    ) == ("GeneratedClass", "run")
 
 
 def test_composable_resource_filters_incompatible_productions() -> None:
@@ -444,12 +417,14 @@ def test_composable_resource_filters_incompatible_productions() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    assert find_candidates(
-        scope.inventory,
-        as_composable(block_only, build_name="Block"),
-        name="expr",
-        build_match=("Root",),
-    ) == ()
+    assert (
+        scope.find_candidates(
+            as_composable(block_only, build_name="Block"),
+            name="expr",
+            build_match=("Root",),
+        )
+        == ()
+    )
 
 
 def test_external_value_resource_skips_non_external_bind_records() -> None:
@@ -457,12 +432,14 @@ def test_external_value_resource_skips_non_external_bind_records() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    assert find_candidates(
-        scope.inventory,
-        as_external_value(1),
-        name="body",
-        build_match=("Root",),
-    ) == ()
+    assert (
+        scope.find_candidates(
+            as_external_value(1),
+            name="body",
+            build_match=("Root",),
+        )
+        == ()
+    )
 
 
 def test_identifier_resource_skips_non_identifier_demand_records() -> None:
@@ -470,12 +447,14 @@ def test_identifier_resource_skips_non_identifier_demand_records() -> None:
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    assert find_candidates(
-        scope.inventory,
-        as_identifier("total"),
-        name="total",
-        build_match=("Root",),
-    ) == ()
+    assert (
+        scope.find_candidates(
+            as_identifier("total"),
+            name="total",
+            build_match=("Root",),
+        )
+        == ()
+    )
 
 
 def test_expression_production_composable_fills_scalar_expression_hole() -> None:
@@ -485,8 +464,7 @@ def test_expression_production_composable_fills_scalar_expression_hole() -> None
     scope.add("Root", root)
 
     candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_composable(expression, build_name="Expression"),
             name="value",
             build_match=("Root",),
@@ -508,8 +486,7 @@ def test_funcargs_production_composable_fills_variadic_hole() -> None:
     scope.add("Root", root)
 
     candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_composable(args, build_name="Args"),
             name="args",
             build_match=("Root",),
@@ -543,8 +520,7 @@ astichi_pass(result, outer_bind=True).append(astichi_bind_external(delta))
 
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(
                     getter_body,
                     build_name="GetterBody",
@@ -556,8 +532,7 @@ astichi_pass(result, outer_bind=True).append(astichi_bind_external(delta))
         )
     )
     delta_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_external_value(9),
             name="delta",
             build_match=("Root", "GetterBody[1]"),
@@ -595,8 +570,7 @@ astichi_pass(result, outer_bind=True).append(astichi_bind_external(delta))
 
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(
                     getter_body,
                     build_name="GetterBody",
@@ -608,8 +582,7 @@ astichi_pass(result, outer_bind=True).append(astichi_bind_external(delta))
         )
     )
     delta_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_external_value(9),
             name="delta",
             build_match=("Root", "GetterBody[1,2]"),
@@ -646,8 +619,7 @@ astichi_pass(result, outer_bind=True).append("inner")
 
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(
                     wrapper,
                     build_name="Wrapper",
@@ -659,17 +631,14 @@ astichi_pass(result, outer_bind=True).append("inner")
         )
     )
     inner_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_composable(inner, build_name="Inner"),
             name="inner",
             build_match=("Root", "Wrapper[1]"),
         )
     )
 
-    assert "build_path=Root/Wrapper[1]" in "\n".join(
-        inner_candidate.diagnostic_lines()
-    )
+    assert "build_path=Root/Wrapper[1]" in "\n".join(inner_candidate.diagnostic_lines())
 
     scope.apply(inner_candidate)
     source = scope.build().materialize().emit(provenance=False)
@@ -703,8 +672,7 @@ astichi_pass(result, outer_bind=True).append("second")
 
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(second, build_name="Second", order=20),
                 name="body",
                 build_match=("Root",),
@@ -713,8 +681,7 @@ astichi_pass(result, outer_bind=True).append("second")
     )
     scope.apply(
         require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_composable(first, build_name="First", order=10),
                 name="body",
                 build_match=("Root",),
@@ -736,8 +703,7 @@ def test_scope_inventory_refreshes_after_apply() -> None:
     scope.add("Root", root)
 
     candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_composable(body, build_name="Body"),
             name="body",
             build_match=("Root",),
@@ -753,8 +719,7 @@ def test_scope_inventory_refreshes_after_apply() -> None:
     assert scope.inventory.resource_record_ids("value") == ("Root/Body/#1",)
 
     value_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_external_value(1),
             name="value",
             build_match=("Root", "Body"),
@@ -763,12 +728,14 @@ def test_scope_inventory_refreshes_after_apply() -> None:
     scope.apply(value_candidate)
 
     assert scope.inventory.resource_record_ids("value") == ()
-    assert find_candidates(
-        scope.inventory,
-        as_external_value(2),
-        name="value",
-        build_match=("Root", "Body"),
-    ) == ()
+    assert (
+        scope.find_candidates(
+            as_external_value(2),
+            name="value",
+            build_match=("Root", "Body"),
+        )
+        == ()
+    )
 
 
 def test_scope_inventory_updates_without_build_merge(monkeypatch) -> None:
@@ -788,8 +755,7 @@ def test_scope_inventory_updates_without_build_merge(monkeypatch) -> None:
     scope.add("Root", root)
 
     body_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_composable(body, build_name="Body"),
             name="body",
             build_match=("Root",),
@@ -801,8 +767,7 @@ def test_scope_inventory_updates_without_build_merge(monkeypatch) -> None:
     assert scope.inventory.resource_record_ids("value") == ("Root/Body/#1",)
 
     value_candidate = require_one(
-        find_candidates(
-            scope.inventory,
+        scope.find_candidates(
             as_external_value(1),
             name="value",
             build_match=("Root", "Body"),

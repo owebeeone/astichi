@@ -5,7 +5,6 @@ from astichi.assembler import (
     AssemblyScope,
     as_external_value,
     as_identifier,
-    find_candidates,
     require_one,
 )
 from astichi.perf_counters import collect_perf_counters
@@ -18,8 +17,7 @@ def test_perf_counters_collect_assembly_hot_path_counts() -> None:
     with collect_perf_counters() as counters:
         scope.add("Root", root)
         candidate = require_one(
-            find_candidates(
-                scope.inventory,
+            scope.find_candidates(
                 as_external_value(1),
                 name="value",
                 build_match=("Root",),
@@ -34,8 +32,9 @@ def test_perf_counters_collect_assembly_hot_path_counts() -> None:
 
     assert counts.get("inventory_projection", 0) == 0
     assert counts.get("replace_occurrence_inventory", 0) == 0
-    assert counts["debug_inventory_projection"] == 1
-    assert counts["candidate_lookup"] == 1
+    assert counts.get("debug_inventory_projection", 0) == 0
+    assert counts.get("candidate_lookup", 0) == 0
+    assert counts["candidate_lookup_lower"] == 1
     assert counts["assembly_scope_apply"] == 1
     assert counts["assembly_scope_apply_external_value"] == 1
     assert counts["rebuild_composable"] == 1

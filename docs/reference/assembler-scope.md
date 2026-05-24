@@ -2,8 +2,8 @@
 
 `astichi.assembler` is an experimental helper layer for tools that already have
 their own data model and want to apply the minimum needed information to an
-Astichi builder. It sits on top of the current builder and inventory APIs.
-Build and materialize remain authoritative.
+Astichi builder. It sits on top of the current lower-backed scope facade. Build
+and materialize remain authoritative.
 
 Use it when a client can express a resource and a partial selector:
 
@@ -37,11 +37,10 @@ record determines which registered instance is rebound.
 ## Candidate Lookup
 
 ```python
-from astichi.assembler import find_candidates, require_one
+from astichi.assembler import require_one
 
 candidate = require_one(
-    find_candidates(
-        scope.inventory,
+    scope.find_candidates(
         as_external_value(9),
         name="delta",
         build_match=("Root", "GetterBody[1]"),
@@ -79,8 +78,8 @@ owner_match=("GeneratedGetter", ".")
 
 ## Applying Candidates
 
-`AssemblyScope` wraps an existing builder and keeps a refreshed built inventory
-view after each applied candidate.
+`AssemblyScope` wraps an existing builder and keeps lower-backed assembly state
+current after each applied candidate.
 
 ```python
 import astichi
