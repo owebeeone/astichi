@@ -587,6 +587,14 @@ Current assembler helper surface:
 - `scope.apply(candidate)`: mutates the underlying builder graph using the
   selected candidate
 
+The performance refactor has an internal lower-engine skeleton under
+`astichi.lower_engine`. It is not routed into public behavior yet. The skeleton
+owns engine-scoped handles, template records, locators, occurrences, edges,
+overlays, record state, and materialization-plan snapshot data. Its current
+success path is a structural golden fixture for a manually built tiny state;
+production `astichi.compile(...)`, `AssemblyScope`, and materialization still
+use the existing implementation until later route-through slices.
+
 ### 3.6 Emit, materialize, and provenance contract
 
 Current implementation reality:
