@@ -588,12 +588,15 @@ Current assembler helper surface:
   selected candidate
 
 The performance refactor has an internal lower-engine skeleton under
-`astichi.lower_engine`. It is not routed into public behavior yet. The skeleton
-owns engine-scoped handles, template records, locators, occurrences, edges,
-overlays, record state, and materialization-plan snapshot data. Its current
-success path is a structural golden fixture for a manually built tiny state;
-production `astichi.compile(...)`, `AssemblyScope`, and materialization still
-use the existing implementation until later route-through slices.
+`astichi.lower_engine`. The skeleton owns engine-scoped handles, template
+records, locators, occurrences, edges, overlays, record state, and
+materialization-plan snapshot data. Its first route-through is compile-side
+metadata only: `astichi.compile(...)` and composable rebuild paths register the
+existing inventory as a lower template and store an internal `_lower_template`
+binding on `BasicComposable`. That binding carries the registered template
+handle, record specs, current surface-bundle signature, and dynamic surface
+handles. `AssemblyScope`, candidate lookup, and materialization still use the
+existing implementation until later route-through slices.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

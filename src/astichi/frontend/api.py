@@ -140,6 +140,13 @@ def compile(
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
     inventory = build_inventory(tree, markers, demand_ports, supply_ports)
+    from astichi.lower_engine import register_inventory_template
+
+    lower_template = register_inventory_template(
+        tree=tree,
+        origin=origin,
+        inventory=inventory,
+    )
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
     compiled = FrontendComposable(
         tree=tree,
@@ -151,6 +158,7 @@ def compile(
         inventory=inventory,
         arg_bindings=validated_arg_bindings,
         keep_names=validated_keep_names,
+        _lower_template=lower_template,
     )
     if validated_arg_bindings:
         return compiled.bind_identifier(dict(validated_arg_bindings))

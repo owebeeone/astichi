@@ -250,6 +250,18 @@ Golden policy:
 
 Goal: register composable templates into lower-engine records.
 
+Implementation split:
+
+- Slice 5a registers compile/rebuild inventory metadata as lower templates and
+  stores an internal lower binding on `BasicComposable`. This is metadata-only:
+  it proves template record lowering, current surface-bundle registration, and
+  dynamic surface handles without routing `AssemblyScope` yet.
+- Slice 5b completes the template-registration route-through needed by later
+  scope slices: reusable scope-engine template import/deduplication, explicit
+  artifact-copy boundaries for facade tests, and indexes/locators complete
+  enough that candidate lookup no longer has to recover template intent from
+  Python `Inventory`.
+
 Work:
 
 - lower existing `Inventory` extraction into template records;

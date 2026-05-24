@@ -1,0 +1,234 @@
+"""Facade helpers for lower-backed composables during route-through."""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+from dataclasses import dataclass, field
+
+from astichi.asttools import clone_ast
+from astichi.lower_engine.catalog import current_surface_bundle_spec
+from astichi.lower_engine.engine import LowerEngine
+from astichi.lower_engine.handles import TemplateId
+from astichi.lower_engine.templates import TemplateRecordSpec
+from astichi.model.inventory import (
+    BlockProductionInventoryPayload,
+    ClauseHoleInventoryPayload,
+    ExpressionProductionInventoryPayload,
+    FuncargsProductionInventoryPayload,
+    HoleInventoryPayload,
+    Inventory,
+    InventoryRecord,
+    PortInventoryPayload,
+)
+from astichi.model.origin import CompileOrigin
+from astichi.model.ports import DemandPort, SupplyPort
+
+
+@dataclass(frozen=True, slots=True)
+class LowerTemplateBinding:
+    """Internal link between a Python facade composable and lower metadata."""
+
+    engine: LowerEngine = field(repr=False, compare=False)
+    template_id: TemplateId
+    template_key: str
+    source_summary: str
+    record_specs: tuple[TemplateRecordSpec, ...]
+    surface_bundle_signature: str
+
+    def structural_snapshot(self) -> dict[str, object]:
+        """Return a deterministic structural snapshot for this template."""
+        state = self.engine.new_state()
+        self.engine.append_occurrence(
+            state,
+            self.template_id,
+            build_path=("Template",),
+        )
+        return self.engine.structural_snapshot(state)
+
+
+def register_inventory_template(
+    *,
+    tree: ast.Module,
+    origin: CompileOrigin,
+    inventory: Inventory,
+) -> LowerTemplateBinding:
+    """Register existing inventory metadata as one lower-engine template."""
+    engine = LowerEngine()
+    bundle = engine.surface_registry.register_bundle(current_surface_bundle_spec())
+    record_specs = tuple(
+        _template_record_spec(engine=engine, record=record)
+        for record in _sorted_inventory_records(inventory)
+    )
+    source_summary = _source_summary(origin=origin, record_count=len(record_specs))
+    template_key = _template_key(tree=tree, source_summary=source_summary)
+    template_id = engine.register_template(
+        template_key=template_key,
+        source_summary=source_summary,
+        records=record_specs,
+    )
+    return LowerTemplateBinding(
+        engine=engine,
+        template_id=template_id,
+        template_key=template_key,
+        source_summary=source_summary,
+        record_specs=record_specs,
+        surface_bundle_signature=bundle.bundle_signature,
+    )
+
+
+def copy_template_ast(tree: ast.Module) -> ast.Module:
+    """Return a caller-owned copy of a template's CPython AST artifact."""
+    return clone_ast(tree)
+
+
+def _template_record_spec(
+    *,
+    engine: LowerEngine,
+    record: InventoryRecord,
+) -> TemplateRecordSpec:
+    surface = _surface_mapping_for(record)
+    surface_id = engine.surface_registry.surface_handle(surface.surface_key)
+    return TemplateRecordSpec(
+        surface_key=surface.surface_key,
+        semantic_summary=_semantic_summary(record),
+        ast_path=str(record.locator),
+        role_key=record.kind,
+        materialization_anchor=surface.materialization_anchor,
+        authored_summary=_authored_summary(record),
+        surface_id=surface_id,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _InventorySurfaceMapping:
+    surface_key: str
+    materialization_anchor: str
+
+
+def _surface_mapping_for(record: InventoryRecord) -> _InventorySurfaceMapping:
+    payload = record.payload
+    if isinstance(payload, ClauseHoleInventoryPayload):
+        return _InventorySurfaceMapping(
+            "astichi.surface.elif.target",
+            "append-clause",
+        )
+    if isinstance(payload, HoleInventoryPayload):
+        return _hole_surface_mapping(payload.port)
+    if isinstance(payload, PortInventoryPayload):
+        port = payload.port
+        if isinstance(port, DemandPort):
+            return _demand_surface_mapping(port)
+        if isinstance(port, SupplyPort):
+            return _supply_surface_mapping(port)
+    if isinstance(payload, FuncargsProductionInventoryPayload):
+        return _InventorySurfaceMapping(
+            "astichi.surface.funcargs.production",
+            "copy-call-arguments",
+        )
+    if isinstance(payload, ExpressionProductionInventoryPayload):
+        return _InventorySurfaceMapping(
+            "astichi.surface.expression.production",
+            "copy-expression",
+        )
+    if isinstance(payload, BlockProductionInventoryPayload):
+        return _InventorySurfaceMapping(
+            "astichi.surface.block.production",
+            "copy-block",
+        )
+    raise TypeError(
+        f"unsupported inventory payload for lower template: {type(payload).__name__}"
+    )
+
+
+def _hole_surface_mapping(port: DemandPort) -> _InventorySurfaceMapping:
+    if port.is_parameter_hole_demand():
+        return _InventorySurfaceMapping(
+            "astichi.surface.parameter.hole",
+            "splice-parameters",
+        )
+    if port.shape.is_block():
+        return _InventorySurfaceMapping(
+            "astichi.surface.block.hole",
+            "splice-body-at-marker",
+        )
+    if port.shape.is_scalar_expr():
+        return _InventorySurfaceMapping(
+            "astichi.surface.expression.hole",
+            "replace-expression",
+        )
+    if port.shape.is_positional_variadic() or port.shape.is_named_variadic():
+        return _InventorySurfaceMapping(
+            "astichi.surface.funcargs.hole",
+            "splice-call-arguments",
+        )
+    raise TypeError(f"unsupported hole shape for lower template: {port.shape.name}")
+
+
+def _demand_surface_mapping(port: DemandPort) -> _InventorySurfaceMapping:
+    if port.is_external_bind_demand():
+        return _InventorySurfaceMapping(
+            "astichi.surface.external.demand",
+            "bind-external",
+        )
+    if port.is_identifier_demand():
+        return _InventorySurfaceMapping(
+            "astichi.surface.identifier.demand",
+            "rewrite-identifier",
+        )
+    if port.is_additive_hole_demand() or port.is_parameter_hole_demand():
+        return _hole_surface_mapping(port)
+    raise TypeError(f"unsupported demand port for lower template: {port.name}")
+
+
+def _supply_surface_mapping(port: SupplyPort) -> _InventorySurfaceMapping:
+    if port.origins.is_identifier_supply():
+        return _InventorySurfaceMapping(
+            "astichi.surface.identifier.supply",
+            "rewrite-identifier",
+        )
+    if port.shape.is_elif_clause():
+        return _InventorySurfaceMapping(
+            "astichi.surface.elif.production",
+            "copy-clause",
+        )
+    if port.is_signature_parameter_supply():
+        return _InventorySurfaceMapping(
+            "astichi.surface.parameter.production",
+            "copy-parameters",
+        )
+    if port.is_expression_family_supply():
+        return _InventorySurfaceMapping(
+            "astichi.surface.expression.production",
+            "copy-expression",
+        )
+    raise TypeError(f"unsupported supply port for lower template: {port.name}")
+
+
+def _semantic_summary(record: InventoryRecord) -> str:
+    return (
+        f"{record.kind} name={record.name.logical_name()} "
+        f"owner={record.code_owner} build_path={record.build_path}"
+    )
+
+
+def _authored_summary(record: InventoryRecord) -> str:
+    location = record.source_location
+    location_summary = (
+        f"line {location.line_number}" if location is not None else "line ?"
+    )
+    return f"{record.name.logical_name()} at {location_summary}"
+
+
+def _source_summary(*, origin: CompileOrigin, record_count: int) -> str:
+    return f"compile line={origin.line_number} records={record_count}"
+
+
+def _template_key(*, tree: ast.Module, source_summary: str) -> str:
+    payload = ast.dump(tree, include_attributes=False) + "\n" + source_summary
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"template:{digest}"
+
+
+def _sorted_inventory_records(inventory: Inventory) -> tuple[InventoryRecord, ...]:
+    return inventory.records_for_ids(tuple(inventory.records))

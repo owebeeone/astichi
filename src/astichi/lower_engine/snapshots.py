@@ -19,6 +19,7 @@ from astichi.lower_engine.materialization import (
     MaterializationOperation,
     MaterializationPlan,
 )
+from astichi.lower_engine.registry import RegisteredSurfaceBundle
 from astichi.lower_engine.templates import Template
 from astichi.structural_snapshot import SCHEMA
 
@@ -28,18 +29,23 @@ def structural_snapshot(
     templates: tuple[Template, ...],
     state: AssemblyState,
     materialization_plan: MaterializationPlan | None = None,
+    surface_bundle: RegisteredSurfaceBundle | None = None,
 ) -> dict[str, Any]:
     """Render lower-engine state as a structural snapshot mapping."""
     plan = materialization_plan or MaterializationPlan()
     return {
         "schema": SCHEMA,
-        "surface_bundle": {
-            "bundle_key": "astichi.lower_engine.skeleton",
-            "operations": [],
-            "patterns": [],
-            "schema_version": 1,
-            "surfaces": [],
-        },
+        "surface_bundle": (
+            surface_bundle.snapshot()
+            if surface_bundle is not None
+            else {
+                "bundle_key": "astichi.lower_engine.skeleton",
+                "operations": [],
+                "patterns": [],
+                "schema_version": 1,
+                "surfaces": [],
+            }
+        ),
         "templates": [_template_snapshot(template) for template in templates],
         "locators": [
             _locator_snapshot(locator)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from astichi.lower_engine.handles import LocatorId, TemplateId, TemplateRecordId
+from astichi.lower_engine.handles import SurfaceId
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class TemplateRecordSpec:
     role_key: str
     materialization_anchor: str
     authored_summary: str
+    surface_id: SurfaceId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,7 @@ class TemplateRecord:
     surface_key: str
     semantic_summary: str
     locator_id: LocatorId
+    surface_id: SurfaceId | None = None
 
 
 @dataclass(frozen=True, slots=True)

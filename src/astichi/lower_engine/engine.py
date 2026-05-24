@@ -82,6 +82,7 @@ class LowerEngine:
                     surface_key=spec.surface_key,
                     semantic_summary=spec.semantic_summary,
                     locator_id=locator_id,
+                    surface_id=spec.surface_id,
                 )
             )
         self._templates.append(
@@ -221,6 +222,7 @@ class LowerEngine:
             templates=tuple(self._templates),
             state=state,
             materialization_plan=materialization_plan,
+            surface_bundle=self.surface_registry.bundle,
         )
 
     def _template(self, template_id: TemplateId) -> Template:

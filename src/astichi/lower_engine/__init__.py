@@ -6,6 +6,11 @@ from astichi.lower_engine.catalog import (
 )
 from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.errors import LowerEngineError, StaleHandleError
+from astichi.lower_engine.facade import (
+    LowerTemplateBinding,
+    copy_template_ast,
+    register_inventory_template,
+)
 from astichi.lower_engine.handles import (
     EdgeId,
     LocatorId,
@@ -48,6 +53,7 @@ __all__ = [
     "LocatorId",
     "LowerEngine",
     "LowerEngineError",
+    "LowerTemplateBinding",
     "MaterializationOperation",
     "MaterializationPlan",
     "OccurrenceId",
@@ -69,6 +75,8 @@ __all__ = [
     "TemplateId",
     "TemplateRecordId",
     "TemplateRecordSpec",
+    "copy_template_ast",
     "current_plus_future_surface_bundle_spec",
     "current_surface_bundle_spec",
+    "register_inventory_template",
 ]

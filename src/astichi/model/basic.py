@@ -30,6 +30,7 @@ from astichi.perf_counters import counted_perf_call
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
+    from astichi.lower_engine.facade import LowerTemplateBinding
     from astichi.model.descriptors import ComposableDescription
 
 
@@ -54,6 +55,11 @@ class BasicComposable(Composable):
     # without rewriting source (the source-level counterpart of a
     # `__astichi_keep__` suffix). Additive across pipeline passes.
     keep_names: frozenset[str] = field(default_factory=frozenset)
+    _lower_template: LowerTemplateBinding | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def arg_bindings_map(self) -> dict[str, str]:
         """Return the identifier-arg resolutions as a plain dict."""
@@ -377,6 +383,11 @@ def _rebuild_composable(
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
     inventory = build_inventory(tree, markers, demand_ports, supply_ports)
+    lower_template = _register_lower_template(
+        tree=tree,
+        origin=origin,
+        inventory=inventory,
+    )
     return BasicComposable(
         tree=tree,
         origin=origin,
@@ -388,6 +399,22 @@ def _rebuild_composable(
         bound_externals=bound_externals,
         arg_bindings=arg_bindings,
         keep_names=keep_names,
+        _lower_template=lower_template,
+    )
+
+
+def _register_lower_template(
+    *,
+    tree: ast.Module,
+    origin: CompileOrigin,
+    inventory: Inventory,
+) -> "LowerTemplateBinding":
+    from astichi.lower_engine import register_inventory_template
+
+    return register_inventory_template(
+        tree=tree,
+        origin=origin,
+        inventory=inventory,
     )
 
 
