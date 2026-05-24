@@ -309,6 +309,10 @@ class AssemblyScope:
         default_factory=dict,
         init=False,
     )
+    _deferred_composable_adapter_edges: list[ComposableCandidate] = field(
+        default_factory=list,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
@@ -415,6 +419,7 @@ class AssemblyScope:
         return self._build_with_adapter(unroll=unroll)
 
     def _build_with_adapter(self, *, unroll: bool | str = "auto") -> BasicComposable:
+        self._flush_deferred_composable_adapter_edges()
         self._flush_pending_identifier_binds()
         self._flush_pending_external_binds()
         return self.builder.build(unroll=unroll)
@@ -434,27 +439,13 @@ class AssemblyScope:
 
     def _apply_composable(self, candidate: ComposableCandidate) -> None:
         resource = candidate.resource
-        self.builder.add(
-            resource.build_name,
-            resource.composable,
-            indexes=resource.build_index,
-        )
         build_path = candidate.target_record.build_path.parts
         if not build_path:
             raise ValueError("target hole record must have a non-empty build path")
-        owner, ref_path = self._owner_and_ref_path_for(candidate.target_record)
-        self.builder.target(
-            root_instance=owner,
-            ref_path=ref_path,
-            target_name=candidate.target_record.name.logical_name(),
-        ).add(
-            resource.build_name,
-            indexes=resource.build_index,
-            order=resource.order,
-        )
         self._owner_by_build_prefix[build_path + (resource.instance_name,)] = (
             resource.instance_name
         )
+        self._deferred_composable_adapter_edges.append(candidate)
         if _record_is_single_additive_hole_demand(candidate.target_record):
             self._mark_record_satisfied(candidate.target_record.record_id)
             self._mark_lower_record_satisfied(candidate.target_record.record_id)
@@ -474,6 +465,38 @@ class AssemblyScope:
                 operation_key=_operation_key_for_target(candidate.target_record),
                 order=resource.order,
             )
+
+    def _flush_deferred_composable_adapter_edges(self) -> None:
+        if not self._deferred_composable_adapter_edges:
+            return
+        counters = active_perf_counters()
+        deferred = self._deferred_composable_adapter_edges
+        self._deferred_composable_adapter_edges = []
+        for candidate in deferred:
+            if counters is not None:
+                counters.increment("builder_adapter_mutation")
+            self._apply_composable_to_builder_adapter(candidate)
+
+    def _apply_composable_to_builder_adapter(
+        self,
+        candidate: ComposableCandidate,
+    ) -> None:
+        resource = candidate.resource
+        self.builder.add(
+            resource.build_name,
+            resource.composable,
+            indexes=resource.build_index,
+        )
+        owner, ref_path = self._owner_and_ref_path_for(candidate.target_record)
+        self.builder.target(
+            root_instance=owner,
+            ref_path=ref_path,
+            target_name=candidate.target_record.name.logical_name(),
+        ).add(
+            resource.build_name,
+            indexes=resource.build_index,
+            order=resource.order,
+        )
 
     def _apply_external_value(self, candidate: ExternalValueCandidate) -> None:
         appended = self._append_lower_overlay(

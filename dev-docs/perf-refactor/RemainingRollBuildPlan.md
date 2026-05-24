@@ -78,6 +78,10 @@ Completed tags:
 - `perf-refactor/slice-12c3c`: static pyimport name collisions materialize on
   the lower path, with managed-import and rename decisions visible in lower
   hygiene snapshots.
+- `perf-refactor/slice-12c3`: full lower materialization gate for the current
+  migrated surface suite.
+- `perf-refactor/slice-13a`: composable scope applies update lower state and
+  defer legacy builder graph mutations until an adapter fallback is requested.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

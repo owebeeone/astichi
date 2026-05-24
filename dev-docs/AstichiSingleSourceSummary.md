@@ -696,6 +696,13 @@ colliding local binding renamed deterministically. Dynamic module refs and
 source-payload boundary interactions still use the adapter path until the full
 lower materialization gate owns that surface.
 
+`AssemblyScope.apply(...)` no longer mutates the builder graph for composable
+edges on the lower hot path. Composable applies update lower state and queue
+the legacy builder mutation; the queue is flushed only if an adapter fallback
+build is requested, such as an explicit `unroll=True` adapter build. Lower
+selected builds therefore avoid builder add/target mutation cost while keeping
+the compatibility fallback available.
+
 Boundary import/pass/export markers are represented as lower hygiene strip
 operations and have a structural plan golden. Final lower materialization
 supports simple block payload boundary markers when the imported/passed names

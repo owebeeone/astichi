@@ -3,6 +3,7 @@ from __future__ import annotations
 import astichi
 from astichi.assembler import (
     AssemblyScope,
+    as_composable,
     as_external_value,
     as_identifier,
     require_one,
@@ -113,3 +114,49 @@ def test_identifier_apply_queues_overlay_without_rebuild() -> None:
     counts = counters.snapshot()["counts"]
     assert counts["assembly_scope_apply_identifier_name"] == 1
     assert counts.get("rebuild_composable", 0) == 0
+
+
+def test_composable_apply_defers_builder_adapter_mutation_on_lower_path() -> None:
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile("astichi_hole(body)\n"))
+    body = astichi.compile("result = 1\n")
+    candidate = require_one(
+        scope.find_candidates(
+            as_composable(body, build_name="Body"),
+            name="body",
+            build_match=("Root",),
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.apply(candidate)
+        source = scope.build().emit(provenance=False)
+
+    assert source == "result = 1\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["assembly_scope_apply_composable"] == 1
+    assert counts["lower_build_selection"] == 1
+    assert counts.get("builder_adapter_mutation", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+
+
+def test_deferred_composable_adapter_mutation_flushes_on_adapter_fallback() -> None:
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile("astichi_hole(body)\n"))
+    body = astichi.compile("result = 1\n")
+    candidate = require_one(
+        scope.find_candidates(
+            as_composable(body, build_name="Body"),
+            name="body",
+            build_match=("Root",),
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.apply(candidate)
+        source = scope.build(unroll=True).materialize().emit(provenance=False)
+
+    assert source == "result = 1\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["builder_adapter_mutation"] == 1
+    assert counts["build_merge"] == 1
