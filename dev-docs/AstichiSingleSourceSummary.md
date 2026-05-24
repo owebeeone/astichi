@@ -632,10 +632,10 @@ materialization plan through `scope.lower_materialization_plan()`. That plan
 contains operation-stream entries for composable edges and external/identifier
 overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
 structural data. `scope.lower_materialize()` can explicitly materialize the
-current expression-insert plus external/identifier overlay subset without
-calling builder merge; unsupported surfaces still use a counted adapter
-fallback. Default `scope.build(...)` selection is unchanged until the lower
-build-selection slice.
+current expression-insert, ordinary block-insert, and external/identifier
+overlay subset without calling builder merge; unsupported surfaces still use a
+counted adapter fallback. Default `scope.build(...)` selection is unchanged
+until the lower build-selection slice.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after

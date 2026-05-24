@@ -109,7 +109,7 @@ def _block_insert() -> dict[str, Any]:
         owner_match=("run",),
     )
     scope.apply(require_one(check["lower_candidates"]))
-    return _fixture_result("block_insert", scope, (check,))
+    return _fixture_result("block_insert", scope, (check,), lower_supported=True)
 
 
 def _expression_insert() -> dict[str, Any]:

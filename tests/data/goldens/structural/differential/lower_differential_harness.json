@@ -25,7 +25,7 @@
         }
       ],
       "final_source": "def run():\n    result = 1\n",
-      "lower_source": null,
+      "lower_source": "def run():\n    result = 1\n",
       "name": "block_insert",
       "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=run name=body kind=hole.block locator=body[0]/body[0]/value\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Body/#1 build_path=Root/Body code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nport_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nhole_map:\n  body: Root/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Body/#1"
     },

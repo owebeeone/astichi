@@ -679,6 +679,7 @@ class AssemblyScope:
         identifier_bindings: dict[str, str] = {}
         external_bindings: dict[str, object] = {}
         expression_operations: list[MaterializationOperation] = []
+        block_operations: list[MaterializationOperation] = []
         for operation in plan.operation_stream:
             if operation.target_record_id.occurrence_id != root_id:
                 return None
@@ -699,6 +700,9 @@ class AssemblyScope:
             if operation.operation_key == "astichi.operation.replace_expression":
                 expression_operations.append(operation)
                 continue
+            if operation.operation_key == "astichi.operation.splice_body_at_marker":
+                block_operations.append(operation)
+                continue
             return None
 
         if identifier_bindings:
@@ -718,6 +722,11 @@ class AssemblyScope:
         for operation in expression_operations:
             if not self._apply_lower_expression_operation(tree, operation):
                 return None
+        if block_operations and not self._apply_lower_block_operations(
+            tree,
+            block_operations,
+        ):
+            return None
         ast.fix_missing_locations(tree)
         from astichi.model.basic import _rebuild_composable
 
@@ -786,6 +795,45 @@ class AssemblyScope:
         _replace_ast_node_at_path(tree, target_locator.ast_path, replacement)
         return True
 
+    def _apply_lower_block_operations(
+        self,
+        tree: ast.Module,
+        operations: list[MaterializationOperation],
+    ) -> bool:
+        for target_record_id in _ordered_unique_operation_targets(operations):
+            ordered = sorted(
+                (
+                    operation
+                    for operation in operations
+                    if operation.target_record_id == target_record_id
+                ),
+                key=lambda operation: (
+                    operation.order,
+                    int(operation.captures.get("edge_id", 0)),
+                ),
+            )
+            statements: list[ast.stmt] = []
+            for operation in ordered:
+                source_id = operation.source_occurrence_id
+                if source_id is None:
+                    return False
+                source = self._lower_composable_by_occurrence.get(source_id)
+                if source is None:
+                    return False
+                if not self._has_single_block_production(source_id):
+                    return False
+                statements.extend(clone_ast(source.tree.body))
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            _replace_ast_statement_at_path(
+                tree,
+                _statement_path_for_marker_locator(target_locator.ast_path),
+                statements,
+            )
+        return True
+
     def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
         records = self._lower_engine.template_records_for_occurrence(
             self._lower_state,
@@ -806,6 +854,20 @@ class AssemblyScope:
             self._lower_state,
             record_id,
         ).ast_path
+
+    def _has_single_block_production(self, occurrence_id: OccurrenceId) -> bool:
+        records = self._lower_engine.template_records_for_occurrence(
+            self._lower_state,
+            occurrence_id,
+        )
+        return (
+            sum(
+                1
+                for record in records
+                if record.surface_key == "astichi.surface.block.production"
+            )
+            == 1
+        )
 
     def _queue_external_bind(self, owner: str, name: str, value: object) -> None:
         owner_binds = self._pending_external_binds_by_owner.setdefault(owner, {})
@@ -1066,6 +1128,23 @@ def _replace_ast_node_at_path(root: ast.AST, path: str, replacement: ast.AST) ->
     children[index] = replacement
 
 
+def _replace_ast_statement_at_path(
+    root: ast.AST,
+    path: str,
+    replacements: list[ast.stmt],
+) -> None:
+    parent_path, _, final_part = path.rpartition("/")
+    parent = _ast_node_at_path(root, parent_path) if parent_path else root
+    field_name, index = _ast_path_part(final_part)
+    if index is None:
+        raise ValueError(f"AST statement path must select a list item: {path}")
+    children = getattr(parent, field_name)
+    donor = children[index]
+    for replacement in replacements:
+        ast.copy_location(replacement, donor)
+    children[index : index + 1] = replacements
+
+
 def _ast_child(node: ast.AST, part: str) -> ast.AST:
     field_name, index = _ast_path_part(part)
     value = getattr(node, field_name)
@@ -1086,6 +1165,27 @@ def _ast_path_part(part: str) -> tuple[str, int | None]:
     if not field_name or not raw_index:
         raise ValueError(f"invalid AST path part: {part}")
     return field_name, int(raw_index)
+
+
+def _statement_path_for_marker_locator(path: str) -> str:
+    statement_path, _, _ = path.rpartition("/")
+    if not statement_path:
+        raise ValueError(f"marker locator does not include a statement path: {path}")
+    return statement_path
+
+
+def _ordered_unique_operation_targets(
+    operations: list[MaterializationOperation],
+) -> tuple[RecordId, ...]:
+    targets: list[RecordId] = []
+    seen: set[RecordId] = set()
+    for operation in operations:
+        target = operation.target_record_id
+        if target in seen:
+            continue
+        seen.add(target)
+        targets.append(target)
+    return tuple(targets)
 
 
 def _prefix_inventory_record_id(

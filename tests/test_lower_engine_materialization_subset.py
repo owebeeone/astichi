@@ -68,7 +68,7 @@ result = astichi_hole(value)
     assert counts.get("materialize_composable", 0) == 0
 
 
-def test_lower_materialization_fallback_is_counted_for_unsupported_block() -> None:
+def test_lower_materializes_block_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("def run():\n    astichi_hole(body)\n")
     body = astichi.compile("result = 1\n")
@@ -88,6 +88,65 @@ def test_lower_materialization_fallback_is_counted_for_unsupported_block() -> No
         source = scope.lower_materialize().emit(provenance=False)
 
     assert source == "def run():\n    result = 1\n"
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_lower_block_materialization_preserves_edge_order() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("def run():\n    astichi_hole(body)\n")
+    first = astichi.compile("result.append('first')\n")
+    second = astichi.compile("result.append('second')\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(second, build_name="Second", order=20),
+                name="body",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(first, build_name="First", order=10),
+                name="body",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    assert scope.lower_materialize().emit(provenance=False) == (
+        "def run():\n    result.append('first')\n    result.append('second')\n"
+    )
+
+
+def test_lower_materialization_fallback_is_counted_for_unsupported_params() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("def run(value__astichi_param_hole__):\n    pass\n")
+    params = astichi.compile("def astichi_params(item):\n    pass\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(params, build_name="Params"),
+                name="value",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == "def run(item):\n    pass\n"
     counts = counters.snapshot()["counts"]
     assert counts["lower_materialization_adapter_fallback"] == 1
     assert counts["build_merge"] == 1

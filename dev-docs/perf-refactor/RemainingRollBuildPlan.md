@@ -42,6 +42,8 @@ Completed tags:
 - `perf-refactor/slice-11b`: explicit lower materialization supports
   expression insertion with external/identifier overlays; unsupported surfaces
   use a counted adapter fallback.
+- `perf-refactor/slice-11c`: explicit lower materialization supports ordinary
+  block insertion with edge ordering.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone
