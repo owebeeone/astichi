@@ -106,3 +106,40 @@ result = astichi_hole(value)
         _STRUCTURAL_GOLDENS_DIR / "scope_materialization_plan.json"
     ).read_text(encoding="utf-8")
     assert actual_text == expected_text
+
+
+def test_scope_lower_parameter_plan_matches_structural_golden() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("def run(value__astichi_param_hole__):\n    pass\n")
+    params = astichi.compile("def astichi_params(item):\n    pass\n")
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(params, build_name="Params"),
+                name="value",
+                build_match=("Root",),
+                owner_match=("run",),
+            )
+        )
+    )
+
+    plan = scope.lower_materialization_plan()
+    assert tuple(operation.operation_key for operation in plan.operation_stream) == (
+        "astichi.operation.splice_parameters",
+    )
+    assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
+        "astichi.operation.gate_no_unresolved",
+    )
+
+    actual_text = write_structural_snapshot(
+        scope.lower_structural_snapshot(materialization_plan=plan)
+    )
+
+    _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_STRUCTURAL_DIR / "scope_parameter_plan.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (_STRUCTURAL_GOLDENS_DIR / "scope_parameter_plan.json").read_text(
+        encoding="utf-8"
+    )
+    assert actual_text == expected_text

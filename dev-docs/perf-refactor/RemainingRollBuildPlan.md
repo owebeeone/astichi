@@ -47,6 +47,9 @@ Completed tags:
 - `perf-refactor/slice-11d`: `scope.build(...)` automatically selects lower
   materialization for closed Slice 11 states and counts adapter fallback for
   unsupported states.
+- `perf-refactor/slice-12a1`: parameter-hole materialization is represented in
+  lower operation/hygiene streams and differential fixtures, without final
+  lower parameter output yet.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

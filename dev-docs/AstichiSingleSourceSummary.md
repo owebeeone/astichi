@@ -647,9 +647,14 @@ post-Python profile gate. A transient lower differential harness now lives in
 `tests/test_lower_engine_differential_harness.py`; it compares lower candidate
 lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
-For lower-supported fixtures it also records lower-source output. Delete it
-once lower materialization is authoritative enough that the adapter comparison
-is no longer useful.
+It covers block, expression, parameter, external overlay, identifier overlay,
+and single-add satisfaction fixtures. For lower-supported fixtures it also
+records lower-source output. Delete it once lower materialization is
+authoritative enough that the adapter comparison is no longer useful.
+
+Parameter-hole materialization is represented in lower operation and hygiene
+streams and has a structural plan golden, but parameter final materialization is
+still on the adapter path until the next parameter slice.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

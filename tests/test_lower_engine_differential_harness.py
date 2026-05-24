@@ -74,6 +74,7 @@ def _harness_snapshot() -> dict[str, object]:
     fixtures = (
         _Fixture("block_insert", _block_insert),
         _Fixture("expression_insert", _expression_insert),
+        _Fixture("parameter_insert", _parameter_insert),
         _Fixture("external_overlay", _external_overlay),
         _Fixture("identifier_overlay", _identifier_overlay),
         _Fixture("single_add_satisfaction", _single_add_satisfaction),
@@ -127,6 +128,34 @@ def _expression_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("expression_insert", scope, (check,), lower_supported=True)
+
+
+def _parameter_insert() -> dict[str, Any]:
+    root = _piece(
+        """
+        def run(value__astichi_param_hole__):
+            pass
+        """
+    )
+    params = _piece(
+        """
+        def astichi_params(item):
+            pass
+        """
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "value",
+        scope,
+        as_composable(params, build_name="Params"),
+        name="value",
+        build_match=("Root",),
+        owner_match=("run",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result("parameter_insert", scope, (check,))
 
 
 def _external_overlay() -> dict[str, Any]:

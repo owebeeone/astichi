@@ -62,6 +62,35 @@
         {
           "candidate_lines": [
             [
+              "demand: build_path=Root owner=run@<astichi>:1 name=value kind=hole.params location=<astichi>:1 locator=body[0]/args/args[0]",
+              "resource: composable build_name=Params",
+              "  production: name=astichi_params kind=production.supply location=<astichi>:1 locator=body[0]"
+            ]
+          ],
+          "lower_count": 1,
+          "projection_count": 1,
+          "selector": {
+            "build_match": [
+              "Root"
+            ],
+            "name": "value",
+            "owner_match": [
+              "run"
+            ]
+          },
+          "step": "value"
+        }
+      ],
+      "final_source": "def run(item):\n    pass\n",
+      "lower_source": null,
+      "name": "parameter_insert",
+      "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=run name=value kind=hole.params locator=body[0]/args/args[0]\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Params/#1 build_path=Root/Params code_owner=. name=astichi_params kind=production.supply locator=body[0]\n\nresource_map:\n  __block__: Root/#2\n  astichi_params: Root/Params/#1\n  value: Root/#1\n\nport_map:\n  __block__: Root/#2\n  astichi_params: Root/Params/#1\n  value: Root/#1\n\nhole_map:\n  value: Root/#1\n\nproduction_map:\n  __block__: Root/#2\n  astichi_params: Root/Params/#1"
+    },
+    {
+      "candidate_checks": [
+        {
+          "candidate_lines": [
+            [
               "demand: build_path=Root owner=. name=value kind=external.bind location=<astichi>:1 locator=body[0]/value",
               "resource: external value"
             ]
