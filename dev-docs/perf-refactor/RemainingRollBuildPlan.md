@@ -33,6 +33,9 @@ Completed tags:
 - `perf-refactor/slice-7b`: YIDL and Astichi success-path candidate lookup use
   `AssemblyScope.find_candidates(...)`; standalone
   `find_candidates(inventory, ...)` is compatibility/debug only.
+- `perf-refactor/slice-7.5a`: transient differential harness compares lower
+  lookup with the projected-inventory adapter and stores final builder-adapter
+  outputs in structural goldens.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone
