@@ -540,7 +540,10 @@ Implementation split:
   adapter binding until `scope.build(...)`; focused counters assert external
   apply itself does not rebuild a composable.
 - Slice 10b moves identifier applies after lower-owned selector/name resolution
-  can preserve later owner/name matching without eager AST rewrites.
+  can preserve later owner/name matching without eager AST rewrites. The
+  structural snapshot keeps authored template record names plus overlay records,
+  while candidate lookup and debug inventory projection expose the resolved
+  visible-name view.
 
 Work:
 

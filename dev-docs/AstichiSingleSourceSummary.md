@@ -618,9 +618,12 @@ add/apply path; lower template records carry the projection payload needed for
 debug inventory output. External value applies are lower overlays during
 `scope.apply(...)`; they are flushed to the temporary builder adapter only at
 `scope.build(...)`, so external apply no longer triggers a composable rebuild.
-Identifier applies still use eager binding because identifier rewrites affect
-later owner/name selectors until lower-owned selector resolution replaces that
-behavior.
+Identifier applies are also lower overlays during `scope.apply(...)`; lower
+candidate lookup and the slow inventory projection compare selectors against an
+overlay-resolved visible-name view, so later selectors can target resolved
+owners such as `GeneratedClass` and `run` without eager AST rewrites.
+Identifier bindings are flushed to the temporary builder adapter at
+`scope.build(...)`.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

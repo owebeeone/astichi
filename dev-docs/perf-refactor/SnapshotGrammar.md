@@ -122,6 +122,11 @@ and `hygiene_stream` are the contracts used for Python/native parity.
 In `hygiene_stream`, `record_id` is either a two-element record id array or
 `null` for scope-level decisions not owned by one template record.
 
+Identifier overlays keep authored names on template records and write the
+overlay decision in the `overlays` section. Debug inventory projection and
+candidate lookup may expose a resolved visible-name view, but the structural
+record section remains the authored template view plus state bits.
+
 ## Round Trip
 
 The first implementation only needs to prove:

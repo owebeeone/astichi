@@ -40,6 +40,7 @@ from astichi.model import (
     ProductionDescriptor,
     ResourcePath,
     SourceLocation,
+    StaticResourceName,
     empty_inventory,
 )
 from astichi.model.composable import Composable
@@ -230,6 +231,17 @@ class IdentifierNameCandidate(BindingCandidate):
         )
 
 
+@dataclass(frozen=True, eq=False)
+class _ResolvedCodePathNode(CodePathNode):
+    """Code-owner node with an overlay-resolved visible name."""
+
+    name: str
+    source_location: SourceLocation | None
+
+    def logical_name(self) -> str:
+        return self.name
+
+
 @dataclass
 class AssemblyScope:
     """Builder wrapper that can apply inventory-selected binding candidates."""
@@ -270,6 +282,14 @@ class AssemblyScope:
         default_factory=dict,
         init=False,
     )
+    _pending_identifier_binds_by_owner: dict[str, dict[str, str]] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _identifier_bindings_by_occurrence: dict[OccurrenceId, dict[str, str]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
@@ -298,11 +318,9 @@ class AssemblyScope:
         """Project the visible lower state back to the slow debug inventory."""
         mutable = MutableInventory()
         for record_id, record in self._lower_projection_by_record_id.items():
-            if record_id in self._lower_state.dead_records:
-                continue
-            if record_id in self._lower_state.satisfied_records:
-                continue
-            mutable.add_existing_record(record)
+            resolved = self._visible_lower_projection_record(record_id)
+            if resolved is not None:
+                mutable.add_existing_record(resolved)
         return mutable.freeze()
 
     @counted_perf_call("candidate_lookup_lower")
@@ -351,6 +369,7 @@ class AssemblyScope:
 
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Build the current scope graph."""
+        self._flush_pending_identifier_binds()
         self._flush_pending_external_binds()
         return self.builder.build(unroll=unroll)
 
@@ -411,22 +430,23 @@ class AssemblyScope:
         )
 
     def _apply_identifier_name(self, candidate: IdentifierNameCandidate) -> None:
-        self._append_lower_overlay(
+        record_id = self._append_lower_overlay(
             candidate.demand_record,
             kind="identifier",
             source_label=candidate.resource.identifier,
         )
         owner = self._owner_for(candidate.demand_record)
-        composable = self._registered_basic(owner)
-        rebound = composable.bind_identifier(
-            {
-                candidate.demand_record.name.logical_name(): (
-                    candidate.resource.identifier
-                )
-            }
+        authored_name = candidate.demand_record.name.logical_name()
+        if record_id is not None:
+            self._identifier_bindings_by_occurrence.setdefault(
+                record_id.occurrence_id,
+                {},
+            )[authored_name] = candidate.resource.identifier
+        self._queue_identifier_bind(
+            owner,
+            authored_name,
+            candidate.resource.identifier,
         )
-        self.builder.graph.replace_instance(owner, rebound)
-        self._refresh_owner_occurrences(owner, rebound)
 
     def _registered_basic(self, name: str) -> BasicComposable:
         for record in self.builder.graph.instances:
@@ -583,10 +603,10 @@ class AssemblyScope:
         *,
         kind: str,
         source_label: str,
-    ) -> None:
+    ) -> RecordId | None:
         record_id = self._lower_record_by_inventory_id.get(demand_record.record_id)
         if record_id is None:
-            return
+            return None
         self._lower_engine.append_overlay(
             self._lower_state,
             kind=kind,
@@ -594,12 +614,32 @@ class AssemblyScope:
             target_record_id=record_id,
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
+        return record_id
 
     def _queue_external_bind(self, owner: str, name: str, value: object) -> None:
         owner_binds = self._pending_external_binds_by_owner.setdefault(owner, {})
         if name in owner_binds:
             raise ValueError(f"external binding `{name}` is already queued")
         owner_binds[name] = value
+
+    def _queue_identifier_bind(self, owner: str, name: str, value: str) -> None:
+        owner_binds = self._pending_identifier_binds_by_owner.setdefault(owner, {})
+        previous = owner_binds.get(name)
+        if previous is not None:
+            if previous == value:
+                return
+            raise ValueError(f"identifier binding `{name}` is already queued")
+        owner_binds[name] = value
+
+    def _flush_pending_identifier_binds(self) -> None:
+        if not self._pending_identifier_binds_by_owner:
+            return
+        pending = self._pending_identifier_binds_by_owner
+        self._pending_identifier_binds_by_owner = {}
+        for owner in sorted(pending):
+            composable = self._registered_basic(owner)
+            rebound = composable.bind_identifier(pending[owner])
+            self.builder.graph.replace_instance(owner, rebound)
 
     def _flush_pending_external_binds(self) -> None:
         if not self._pending_external_binds_by_owner:
@@ -701,12 +741,50 @@ class AssemblyScope:
     ) -> tuple[RecordId, ...]:
         indexes = self._lower_state.indexes
         if selector.name is not None:
-            return tuple(indexes.by_resource_name.get(selector.name, ()))
+            direct = tuple(indexes.by_resource_name.get(selector.name, ()))
+            if not self._identifier_bindings_by_occurrence:
+                return direct
+            return direct + self._resolved_name_record_ids(
+                selector.name,
+                inventory_kinds=inventory_kinds,
+            )
         return tuple(
             record_id
             for kind in inventory_kinds
             for record_id in indexes.by_inventory_kind.get(kind, ())
         )
+
+    def _resolved_name_record_ids(
+        self,
+        name: str,
+        *,
+        inventory_kinds: tuple[str, ...],
+    ) -> tuple[RecordId, ...]:
+        occurrence_ids = tuple(
+            occurrence_id
+            for occurrence_id, bindings in (
+                self._identifier_bindings_by_occurrence.items()
+            )
+            if name in bindings.values()
+        )
+        if not occurrence_ids:
+            return ()
+        occurrence_id_set = frozenset(occurrence_ids)
+        matches: list[RecordId] = []
+        for kind in inventory_kinds:
+            for record_id in self._lower_state.indexes.by_inventory_kind.get(kind, ()):
+                if record_id.occurrence_id not in occurrence_id_set:
+                    continue
+                record = self._lower_projection_by_record_id.get(record_id)
+                if record is None:
+                    continue
+                bindings = self._identifier_bindings_by_occurrence.get(
+                    record_id.occurrence_id,
+                    {},
+                )
+                if bindings.get(record.name.logical_name()) == name:
+                    matches.append(record_id)
+        return tuple(matches)
 
     def _visible_lower_projection_record(
         self,
@@ -716,7 +794,16 @@ class AssemblyScope:
             return None
         if record_id in self._lower_state.satisfied_records:
             return None
-        return self._lower_projection_by_record_id.get(record_id)
+        record = self._lower_projection_by_record_id.get(record_id)
+        if record is None:
+            return None
+        return _resolve_projection_record(
+            record,
+            self._identifier_bindings_by_occurrence.get(
+                record_id.occurrence_id,
+                {},
+            ),
+        )
 
     def _refresh_inventory_from_build(self) -> None:
         instances = self.builder.graph.instances
@@ -817,6 +904,57 @@ def _projection_record_for(
         payload=record.payload,
         source_location=record.source_location,
     )
+
+
+def _resolve_projection_record(
+    record: InventoryRecord,
+    identifier_bindings: dict[str, str],
+) -> InventoryRecord:
+    if not identifier_bindings:
+        return record
+    name = record.name.logical_name()
+    resolved_name = identifier_bindings.get(name, name)
+    code_owner = _resolve_code_owner(record.code_owner, identifier_bindings)
+    if resolved_name == name and code_owner == record.code_owner:
+        return record
+    return InventoryRecord(
+        record_id=record.record_id,
+        build_path=record.build_path,
+        code_owner=code_owner,
+        name=(
+            record.name
+            if resolved_name == name
+            else StaticResourceName(resolved_name)
+        ),
+        kind=record.kind,
+        locator=record.locator,
+        payload=record.payload,
+        source_location=record.source_location,
+    )
+
+
+def _resolve_code_owner(
+    code_owner: CodePath,
+    identifier_bindings: dict[str, str],
+) -> CodePath:
+    nodes: list[CodePathNode] = []
+    changed = False
+    for node in code_owner.nodes:
+        name = node.logical_name()
+        resolved_name = identifier_bindings.get(name, name)
+        if resolved_name == name:
+            nodes.append(node)
+            continue
+        changed = True
+        nodes.append(
+            _ResolvedCodePathNode(
+                name=resolved_name,
+                source_location=_code_owner_location(node),
+            )
+        )
+    if not changed:
+        return code_owner
+    return CodePath(tuple(nodes))
 
 
 @counted_perf_call("inventory_projection")
@@ -1026,6 +1164,8 @@ def _format_code_owner_node(node: CodePathNode) -> str:
 
 
 def _code_owner_location(node: CodePathNode) -> SourceLocation | None:
+    if isinstance(node, _ResolvedCodePathNode):
+        return node.source_location
     if isinstance(node, ClassCodePathNode):
         return _source_location_for_ast_node(node.class_ast_node)
     if isinstance(node, FunctionCodePathNode):

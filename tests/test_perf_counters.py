@@ -4,6 +4,7 @@ import astichi
 from astichi.assembler import (
     AssemblyScope,
     as_external_value,
+    as_identifier,
     find_candidates,
     require_one,
 )
@@ -67,4 +68,24 @@ def test_external_apply_queues_overlay_without_rebuild() -> None:
 
     counts = counters.snapshot()["counts"]
     assert counts["assembly_scope_apply_external_value"] == 1
+    assert counts.get("rebuild_composable", 0) == 0
+
+
+def test_identifier_apply_queues_overlay_without_rebuild() -> None:
+    root = astichi.compile("class class_name__astichi_arg__:\n    pass\n")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    candidate = require_one(
+        scope.find_candidates(
+            as_identifier("Generated"),
+            name="class_name",
+            build_match=("Root",),
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.apply(candidate)
+
+    counts = counters.snapshot()["counts"]
+    assert counts["assembly_scope_apply_identifier_name"] == 1
     assert counts.get("rebuild_composable", 0) == 0

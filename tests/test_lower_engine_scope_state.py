@@ -85,3 +85,83 @@ class class_name__astichi_arg__:
             build_match=("Root",),
         )
         assert lower_candidates == legacy_candidates
+
+
+def test_identifier_overlay_resolves_later_owner_selectors() -> None:
+    root = astichi.compile(
+        """
+class class_name__astichi_arg__:
+    def method_name__astichi_arg__(self):
+        astichi_hole(body)
+"""
+    )
+    body = astichi.compile("value = 1\n")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_identifier("GeneratedClass"),
+                name="class_name",
+                build_match=("Root",),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_identifier("run"),
+                name="method_name",
+                build_match=("Root",),
+                owner_match=("GeneratedClass",),
+            )
+        )
+    )
+    body_candidates = scope.find_candidates(
+        as_composable(body, build_name="Body"),
+        name="body",
+        build_match=("Root",),
+        owner_match=("GeneratedClass", "run"),
+    )
+
+    assert len(body_candidates) == 1
+    assert body_candidates[0].target_record.code_owner.nodes[0].logical_name() == (
+        "GeneratedClass"
+    )
+    assert body_candidates[0].target_record.code_owner.nodes[1].logical_name() == "run"
+
+
+def test_identifier_overlay_state_matches_structural_golden() -> None:
+    root = astichi.compile(
+        """
+class class_name__astichi_arg__:
+    default = astichi_bind_external(default_value)
+"""
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_identifier("GeneratedClass"),
+                name="class_name",
+                build_match=("Root",),
+            )
+        )
+    )
+
+    projected = scope.project_lower_inventory()
+    external_record = projected.records_for_ids(
+        projected.port_record_ids("default_value")
+    )[0]
+    assert external_record.code_owner.nodes[0].logical_name() == "GeneratedClass"
+    actual_text = write_structural_snapshot(scope.lower_structural_snapshot())
+
+    _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_STRUCTURAL_DIR / "identifier_overlay_state.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (
+        _STRUCTURAL_GOLDENS_DIR / "identifier_overlay_state.json"
+    ).read_text(encoding="utf-8")
+    assert actual_text == expected_text
