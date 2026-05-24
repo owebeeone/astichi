@@ -66,7 +66,7 @@ def test_transient_lower_differential_harness_matches_golden() -> None:
         name = fixture["name"]
         assert fixture == expected_by_name[name], (
             f"lower differential fixture `{name}` mismatch; compared "
-            "candidate_checks, projected_inventory, and final_source"
+            "candidate_checks, lower_source, projected_inventory, and final_source"
         )
 
 
@@ -126,7 +126,7 @@ def _expression_insert() -> dict[str, Any]:
         build_match=("Root",),
     )
     scope.apply(require_one(check["lower_candidates"]))
-    return _fixture_result("expression_insert", scope, (check,))
+    return _fixture_result("expression_insert", scope, (check,), lower_supported=True)
 
 
 def _external_overlay() -> dict[str, Any]:
@@ -142,7 +142,7 @@ def _external_overlay() -> dict[str, Any]:
         build_match=("Root",),
     )
     scope.apply(require_one(check["lower_candidates"]))
-    return _fixture_result("external_overlay", scope, (check,))
+    return _fixture_result("external_overlay", scope, (check,), lower_supported=True)
 
 
 def _identifier_overlay() -> dict[str, Any]:
@@ -163,7 +163,7 @@ def _identifier_overlay() -> dict[str, Any]:
         build_match=("Root",),
     )
     scope.apply(require_one(check["lower_candidates"]))
-    return _fixture_result("identifier_overlay", scope, (check,))
+    return _fixture_result("identifier_overlay", scope, (check,), lower_supported=True)
 
 
 def _single_add_satisfaction() -> dict[str, Any]:
@@ -192,6 +192,7 @@ def _single_add_satisfaction() -> dict[str, Any]:
         "single_add_satisfaction",
         scope,
         (fill_check, satisfied_check),
+        lower_supported=True,
     )
 
 
@@ -240,13 +241,19 @@ def _fixture_result(
     name: str,
     scope: AssemblyScope,
     checks: tuple[dict[str, Any], ...],
+    *,
+    lower_supported: bool = False,
 ) -> dict[str, Any]:
+    lower_source = (
+        scope.lower_materialize().emit(provenance=False) if lower_supported else None
+    )
     return {
         "name": name,
         "candidate_checks": [
             {key: value for key, value in check.items() if key != "lower_candidates"}
             for check in checks
         ],
+        "lower_source": lower_source,
         "projected_inventory": str(scope.inventory),
         "final_source": scope.build().materialize().emit(provenance=False),
     }

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from astichi.ast_provenance import astichi_source_file
+from astichi.asttools import clone_ast
 from astichi.builder.graph import (
     format_indexed_instance_name,
     parse_indexed_instance_name,
@@ -20,8 +22,9 @@ from astichi.lower_engine import (
     MaterializationPlan,
     TemplateRecordSpec,
 )
-from astichi.lower_engine.handles import OccurrenceId, RecordId
+from astichi.lower_engine.handles import OccurrenceId, OverlayId, RecordId
 from astichi.lower_engine.inventory import AssemblyState
+from astichi.lower_engine.materialization import MaterializationOperation
 from astichi.model import (
     BasicComposable,
     BlockProductionInventoryPayload,
@@ -293,6 +296,18 @@ class AssemblyScope:
         default_factory=dict,
         init=False,
     )
+    _lower_composable_by_occurrence: dict[OccurrenceId, BasicComposable] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _external_value_by_overlay: dict[OverlayId, object] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _identifier_value_by_overlay: dict[OverlayId, str] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
@@ -387,6 +402,20 @@ class AssemblyScope:
         self._flush_pending_external_binds()
         return self.builder.build(unroll=unroll)
 
+    @counted_perf_call("lower_materialize")
+    def lower_materialize(self) -> BasicComposable:
+        """Materialize the currently supported lower-owned subset."""
+        plan = self.lower_materialization_plan()
+        materialized = self._try_lower_materialize_expression_overlay_subset(plan)
+        counters = active_perf_counters()
+        if materialized is None:
+            if counters is not None:
+                counters.increment("lower_materialization_adapter_fallback")
+            return self.build().materialize()
+        if counters is not None:
+            counters.increment("lower_materialization_artifact")
+        return materialized
+
     def _apply_composable(self, candidate: ComposableCandidate) -> None:
         resource = candidate.resource
         self.builder.add(
@@ -431,11 +460,14 @@ class AssemblyScope:
             )
 
     def _apply_external_value(self, candidate: ExternalValueCandidate) -> None:
-        self._append_lower_overlay(
+        appended = self._append_lower_overlay(
             candidate.demand_record,
             kind="external",
             source_label=candidate.demand_record.name.logical_name(),
         )
+        if appended is not None:
+            _, overlay_id = appended
+            self._external_value_by_overlay[overlay_id] = candidate.resource.value
         owner = self._owner_for(candidate.demand_record)
         self._queue_external_bind(
             owner,
@@ -444,11 +476,17 @@ class AssemblyScope:
         )
 
     def _apply_identifier_name(self, candidate: IdentifierNameCandidate) -> None:
-        record_id = self._append_lower_overlay(
+        appended = self._append_lower_overlay(
             candidate.demand_record,
             kind="identifier",
             source_label=candidate.resource.identifier,
         )
+        record_id = None
+        if appended is not None:
+            record_id, overlay_id = appended
+            self._identifier_value_by_overlay[overlay_id] = (
+                candidate.resource.identifier
+            )
         owner = self._owner_for(candidate.demand_record)
         authored_name = candidate.demand_record.name.logical_name()
         if record_id is not None:
@@ -556,6 +594,7 @@ class AssemblyScope:
             build_path=build_prefix,
             parent_occurrence_id=parent_occurrence_id,
         )
+        self._lower_composable_by_occurrence[occurrence_id] = composable
         self._lower_occurrence_by_build_prefix[build_prefix] = occurrence_id
         lower_record_ids: set[RecordId] = set()
         inventory_record_ids: set[InventoryRecordId] = set()
@@ -613,18 +652,160 @@ class AssemblyScope:
         *,
         kind: str,
         source_label: str,
-    ) -> RecordId | None:
+    ) -> tuple[RecordId, OverlayId] | None:
         record_id = self._lower_record_by_inventory_id.get(demand_record.record_id)
         if record_id is None:
             return None
-        self._lower_engine.append_overlay(
+        overlay_id = self._lower_engine.append_overlay(
             self._lower_state,
             kind=kind,
             source_label=source_label,
             target_record_id=record_id,
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
-        return record_id
+        return record_id, overlay_id
+
+    def _try_lower_materialize_expression_overlay_subset(
+        self,
+        plan: MaterializationPlan,
+    ) -> BasicComposable | None:
+        root_id = plan.root_occurrence_id
+        if root_id is None:
+            return None
+        root = self._lower_composable_by_occurrence.get(root_id)
+        if root is None:
+            return None
+        tree = clone_ast(root.tree)
+        identifier_bindings: dict[str, str] = {}
+        external_bindings: dict[str, object] = {}
+        expression_operations: list[MaterializationOperation] = []
+        for operation in plan.operation_stream:
+            if operation.target_record_id.occurrence_id != root_id:
+                return None
+            if operation.operation_key == "astichi.operation.rewrite_identifier":
+                if not self._collect_identifier_operation(
+                    operation,
+                    identifier_bindings,
+                ):
+                    return None
+                continue
+            if operation.operation_key == "astichi.operation.lower_external_ref":
+                if not self._collect_external_operation(
+                    operation,
+                    external_bindings,
+                ):
+                    return None
+                continue
+            if operation.operation_key == "astichi.operation.replace_expression":
+                expression_operations.append(operation)
+                continue
+            return None
+
+        if identifier_bindings:
+            from astichi.materialize.api import (
+                _resolve_arg_identifiers,
+                _resolve_boundary_imports,
+                _resolve_boundary_passes,
+            )
+
+            _resolve_arg_identifiers(tree, identifier_bindings)
+            _resolve_boundary_imports(tree, identifier_bindings)
+            _resolve_boundary_passes(tree, identifier_bindings)
+        if external_bindings:
+            from astichi.lowering import apply_external_bindings
+
+            apply_external_bindings(tree, external_bindings)
+        for operation in expression_operations:
+            if not self._apply_lower_expression_operation(tree, operation):
+                return None
+        ast.fix_missing_locations(tree)
+        from astichi.model.basic import _rebuild_composable
+
+        return _rebuild_composable(
+            tree=tree,
+            origin=root.origin,
+            bound_externals=frozenset(),
+        )
+
+    def _collect_identifier_operation(
+        self,
+        operation: MaterializationOperation,
+        bindings: dict[str, str],
+    ) -> bool:
+        if operation.overlay_id is None:
+            return False
+        value = self._identifier_value_by_overlay.get(operation.overlay_id)
+        if value is None:
+            return False
+        record = self._lower_engine.template_record(
+            self._lower_state,
+            operation.target_record_id,
+        )
+        bindings[record.resource_name] = value
+        return True
+
+    def _collect_external_operation(
+        self,
+        operation: MaterializationOperation,
+        bindings: dict[str, object],
+    ) -> bool:
+        if operation.overlay_id is None:
+            return False
+        if operation.overlay_id not in self._external_value_by_overlay:
+            return False
+        record = self._lower_engine.template_record(
+            self._lower_state,
+            operation.target_record_id,
+        )
+        bindings[record.resource_name] = self._external_value_by_overlay[
+            operation.overlay_id
+        ]
+        return True
+
+    def _apply_lower_expression_operation(
+        self,
+        tree: ast.Module,
+        operation: MaterializationOperation,
+    ) -> bool:
+        source_id = operation.source_occurrence_id
+        if source_id is None:
+            return False
+        source = self._lower_composable_by_occurrence.get(source_id)
+        if source is None:
+            return False
+        source_path = self._source_expression_path(source_id)
+        if source_path is None:
+            return False
+        replacement = clone_ast(_ast_node_at_path(source.tree, source_path))
+        if not isinstance(replacement, ast.expr):
+            return False
+        target_locator = self._lower_engine.locator_for_record(
+            self._lower_state,
+            operation.target_record_id,
+        )
+        _replace_ast_node_at_path(tree, target_locator.ast_path, replacement)
+        return True
+
+    def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
+        records = self._lower_engine.template_records_for_occurrence(
+            self._lower_state,
+            occurrence_id,
+        )
+        matches = tuple(
+            record
+            for record in records
+            if record.surface_key == "astichi.surface.expression.production"
+        )
+        if len(matches) != 1:
+            return None
+        record_id = RecordId(
+            occurrence_id=occurrence_id,
+            template_record_id=matches[0].template_record_id,
+        )
+        return self._lower_engine.locator_for_record(
+            self._lower_state,
+            record_id,
+        ).ast_path
 
     def _queue_external_bind(self, owner: str, name: str, value: object) -> None:
         owner_binds = self._pending_external_binds_by_owner.setdefault(owner, {})
@@ -861,6 +1042,50 @@ def _ref_path_from_build_parts(parts: tuple[str, ...]) -> tuple[str | int, ...]:
         ref_path.append(stem)
         ref_path.extend(indexes)
     return tuple(ref_path)
+
+
+def _ast_node_at_path(root: ast.AST, path: str) -> ast.AST:
+    node = root
+    if path == ".":
+        return node
+    for part in path.split("/"):
+        node = _ast_child(node, part)
+    return node
+
+
+def _replace_ast_node_at_path(root: ast.AST, path: str, replacement: ast.AST) -> None:
+    parent_path, _, final_part = path.rpartition("/")
+    parent = _ast_node_at_path(root, parent_path) if parent_path else root
+    donor = _ast_child(parent, final_part)
+    ast.copy_location(replacement, donor)
+    field_name, index = _ast_path_part(final_part)
+    if index is None:
+        setattr(parent, field_name, replacement)
+        return
+    children = getattr(parent, field_name)
+    children[index] = replacement
+
+
+def _ast_child(node: ast.AST, part: str) -> ast.AST:
+    field_name, index = _ast_path_part(part)
+    value = getattr(node, field_name)
+    if index is None:
+        if not isinstance(value, ast.AST):
+            raise TypeError(f"AST path part does not select a node: {part}")
+        return value
+    child = value[index]
+    if not isinstance(child, ast.AST):
+        raise TypeError(f"AST path part does not select a node: {part}")
+    return child
+
+
+def _ast_path_part(part: str) -> tuple[str, int | None]:
+    if not part.endswith("]"):
+        return part, None
+    field_name, _, raw_index = part[:-1].partition("[")
+    if not field_name or not raw_index:
+        raise ValueError(f"invalid AST path part: {part}")
+    return field_name, int(raw_index)
 
 
 def _prefix_inventory_record_id(

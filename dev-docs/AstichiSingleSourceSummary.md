@@ -631,8 +631,11 @@ Identifier bindings are flushed to the temporary builder adapter at
 materialization plan through `scope.lower_materialization_plan()`. That plan
 contains operation-stream entries for composable edges and external/identifier
 overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
-structural data. It does not change final output yet; `scope.build(...)` still
-uses the temporary builder adapter for final materialization.
+structural data. `scope.lower_materialize()` can explicitly materialize the
+current expression-insert plus external/identifier overlay subset without
+calling builder merge; unsupported surfaces still use a counted adapter
+fallback. Default `scope.build(...)` selection is unchanged until the lower
+build-selection slice.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
@@ -642,8 +645,9 @@ post-Python profile gate. A transient lower differential harness now lives in
 `tests/test_lower_engine_differential_harness.py`; it compares lower candidate
 lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
-Delete it once lower materialization is authoritative enough that the adapter
-comparison is no longer useful.
+For lower-supported fixtures it also records lower-source output. Delete it
+once lower materialization is authoritative enough that the adapter comparison
+is no longer useful.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

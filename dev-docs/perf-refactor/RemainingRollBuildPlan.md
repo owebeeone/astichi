@@ -39,6 +39,9 @@ Completed tags:
 - `perf-refactor/slice-11a`: lower materialization-plan construction emits
   operation and hygiene streams for the first edge/overlay subset without
   changing final output.
+- `perf-refactor/slice-11b`: explicit lower materialization supports
+  expression insertion with external/identifier overlays; unsupported surfaces
+  use a counted adapter fallback.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

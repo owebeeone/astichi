@@ -221,6 +221,53 @@ class LowerEngine:
             template_record_id=template_record.template_record_id,
         )
 
+    def occurrence(
+        self,
+        state: AssemblyState,
+        occurrence_id: OccurrenceId,
+    ) -> Occurrence:
+        """Return one occurrence record after validating its handle."""
+        self._check_state(state)
+        self._check_occurrence_id(occurrence_id)
+        return state.occurrences[occurrence_id.index]
+
+    def template_record(
+        self,
+        state: AssemblyState,
+        record_id: RecordId,
+    ) -> TemplateRecord:
+        """Return the template record addressed by a derived record handle."""
+        self._check_state(state)
+        self._check_record_id(record_id)
+        occurrence = self.occurrence(state, record_id.occurrence_id)
+        template = self._template(occurrence.template_id)
+        return template.records[record_id.template_record_id.index]
+
+    def locator_for_record(
+        self,
+        state: AssemblyState,
+        record_id: RecordId,
+    ) -> SourceLocator:
+        """Return the source locator associated with one derived record."""
+        occurrence = self.occurrence(state, record_id.occurrence_id)
+        template = self._template(occurrence.template_id)
+        template_record = template.records[record_id.template_record_id.index]
+        for locator in template.locators:
+            if locator.locator_id == template_record.locator_id:
+                return locator
+        raise KeyError(
+            f"unknown locator for record: {record_id.template_record_id.index}"
+        )
+
+    def template_records_for_occurrence(
+        self,
+        state: AssemblyState,
+        occurrence_id: OccurrenceId,
+    ) -> tuple[TemplateRecord, ...]:
+        """Return template records for one occurrence."""
+        occurrence = self.occurrence(state, occurrence_id)
+        return self._template(occurrence.template_id).records
+
     def structural_snapshot(
         self,
         state: AssemblyState,

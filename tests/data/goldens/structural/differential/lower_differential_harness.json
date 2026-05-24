@@ -25,6 +25,7 @@
         }
       ],
       "final_source": "def run():\n    result = 1\n",
+      "lower_source": null,
       "name": "block_insert",
       "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=run name=body kind=hole.block locator=body[0]/body[0]/value\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Body/#1 build_path=Root/Body code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nport_map:\n  __block__: Root/#2, Root/Body/#1\n  body: Root/#1\n\nhole_map:\n  body: Root/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Body/#1"
     },
@@ -52,6 +53,7 @@
         }
       ],
       "final_source": "result = 40 + 2\n",
+      "lower_source": "result = 40 + 2\n",
       "name": "expression_insert",
       "projected_inventory": "records:\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Value/#1 build_path=Root/Value code_owner=. name=__expr__ kind=production.expression locator=body[0]/value\n  Root/Value/#2 build_path=Root/Value code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Value/#2\n  __expr__: Root/Value/#1\n\nport_map:\n  __block__: Root/#2, Root/Value/#2\n  __expr__: Root/Value/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Value/#2\n  __expr__: Root/Value/#1"
     },
@@ -77,6 +79,7 @@
         }
       ],
       "final_source": "value = 7\n",
+      "lower_source": "value = 7\n",
       "name": "external_overlay",
       "projected_inventory": "records:\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2\n\nport_map:\n  __block__: Root/#2\n\nproduction_map:\n  __block__: Root/#2"
     },
@@ -102,6 +105,7 @@
         }
       ],
       "final_source": "class GeneratedClass:\n    pass\n",
+      "lower_source": "class GeneratedClass:\n    pass\n",
       "name": "identifier_overlay",
       "projected_inventory": "records:\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2\n\nport_map:\n  __block__: Root/#2\n\nproduction_map:\n  __block__: Root/#2"
     },
@@ -142,6 +146,7 @@
         }
       ],
       "final_source": "result = 1\n",
+      "lower_source": "result = 1\n",
       "name": "single_add_satisfaction",
       "projected_inventory": "records:\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/First/#1 build_path=Root/First code_owner=. name=__expr__ kind=production.expression locator=body[0]/value\n  Root/First/#2 build_path=Root/First code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/First/#2\n  __expr__: Root/First/#1\n\nport_map:\n  __block__: Root/#2, Root/First/#2\n  __expr__: Root/First/#1\n\nproduction_map:\n  __block__: Root/#2, Root/First/#2\n  __expr__: Root/First/#1"
     }
