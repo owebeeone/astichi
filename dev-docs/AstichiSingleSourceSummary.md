@@ -632,12 +632,12 @@ materialization plan through `scope.lower_materialization_plan()`. That plan
 contains operation-stream entries for composable edges and external/identifier
 overlays plus a minimal hygiene gate stream, and it is snapshot-tested as lower
 structural data. `scope.lower_materialize()` can explicitly materialize the
-current expression-insert, ordinary block-insert, simple parameter-insert, and
-external/identifier overlay subset without calling builder merge; unsupported
-surfaces still use a counted adapter fallback. `scope.build(...)` now selects
-that lower path automatically when the lower result is closed, meaning no
-demand ports remain after materialization. Unsupported or not-yet-closed states
-stay on the counted builder-adapter path.
+current expression-insert, ordinary block-insert, simple parameter-insert,
+simple elif-clause insert, and external/identifier overlay subset without
+calling builder merge; unsupported surfaces still use a counted adapter
+fallback. `scope.build(...)` now selects that lower path automatically when the
+lower result is closed, meaning no demand ports remain after materialization.
+Unsupported or not-yet-closed states stay on the counted builder-adapter path.
 
 The remaining Python refactor is broken into roll-build checkpoints in
 `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
@@ -647,9 +647,9 @@ post-Python profile gate. A transient lower differential harness now lives in
 `tests/test_lower_engine_differential_harness.py`; it compares lower candidate
 lookup with the projected-inventory compatibility adapter for named fixtures
 and snapshots final builder-adapter output in a structural golden subdirectory.
-It covers block, expression, parameter, external overlay, identifier overlay,
-and single-add satisfaction fixtures. For lower-supported fixtures it also
-records lower-source output. Delete it once lower materialization is
+It covers block, expression, parameter, elif, external overlay, identifier
+overlay, and single-add satisfaction fixtures. For lower-supported fixtures it
+also records lower-source output. Delete it once lower materialization is
 authoritative enough that the adapter comparison is no longer useful.
 
 Parameter-hole materialization is represented in lower operation and hygiene
@@ -657,6 +657,12 @@ streams, has a structural plan golden, and final lower materialization supports
 the simple parameter-payload subset. Parameter payloads that still need marker
 resolution remain on the adapter path until the lower materializer owns that
 surface.
+
+Elif-clause materialization is represented in lower operation and hygiene
+streams, has a structural plan golden, and final lower materialization supports
+simple `def astichi_elif(): if ...` payloads. Elif payloads that require
+boundary imports or broader hygiene still use the adapter path until the
+boundary/hygiene slices.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

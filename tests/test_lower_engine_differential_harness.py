@@ -75,6 +75,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("block_insert", _block_insert),
         _Fixture("expression_insert", _expression_insert),
         _Fixture("parameter_insert", _parameter_insert),
+        _Fixture("elif_insert", _elif_insert),
         _Fixture("external_overlay", _external_overlay),
         _Fixture("identifier_overlay", _identifier_overlay),
         _Fixture("single_add_satisfaction", _single_add_satisfaction),
@@ -156,6 +157,40 @@ def _parameter_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("parameter_insert", scope, (check,), lower_supported=True)
+
+
+def _elif_insert() -> dict[str, Any]:
+    root = _piece(
+        """
+        def dispatch(kind):
+            if kind == "base":
+                return "base"
+            elif astichi_elif(branches):
+                pass
+            else:
+                return "fallback"
+        """
+    )
+    branch = _piece(
+        """
+        def astichi_elif():
+            if kind == "create":
+                return "created"
+        """
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "branches",
+        scope,
+        as_composable(branch, build_name="Create"),
+        name="branches",
+        build_match=("Root",),
+        owner_match=("dispatch",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result("elif_insert", scope, (check,), lower_supported=True)
 
 
 def _external_overlay() -> dict[str, Any]:

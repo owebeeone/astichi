@@ -207,6 +207,128 @@ def test_scope_build_selects_lower_materialization_for_parameters() -> None:
     assert counts.get("build_merge", 0) == 0
 
 
+def test_lower_materializes_elif_clauses_without_builder_merge() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+    else:
+        return "fallback"
+""".strip()
+        + "\n"
+    )
+    create = astichi.compile(
+        """
+def astichi_elif():
+    if kind == "create":
+        return "created"
+""".strip()
+        + "\n"
+    )
+    delete = astichi.compile(
+        """
+def astichi_elif():
+    if kind == "delete":
+        return "deleted"
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(delete, build_name="Delete", order=20),
+                name="branches",
+                build_match=("Root",),
+                owner_match=("dispatch",),
+            )
+        )
+    )
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(create, build_name="Create", order=10),
+                name="branches",
+                build_match=("Root",),
+                owner_match=("dispatch",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.lower_materialize().emit(provenance=False)
+
+    assert source == (
+        "def dispatch(kind):\n"
+        "    if kind == 'base':\n"
+        "        return 'base'\n"
+        "    elif kind == 'create':\n"
+        "        return 'created'\n"
+        "    elif kind == 'delete':\n"
+        "        return 'deleted'\n"
+        "    else:\n"
+        "        return 'fallback'\n"
+    )
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    dispatch = namespace["dispatch"]
+    assert dispatch("create") == "created"  # type: ignore[operator]
+    assert dispatch("delete") == "deleted"  # type: ignore[operator]
+    assert dispatch("base") == "base"  # type: ignore[operator]
+    assert dispatch("other") == "fallback"  # type: ignore[operator]
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
+
+
+def test_scope_build_uses_adapter_for_boundary_elif_payloads() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+""".strip()
+        + "\n"
+    )
+    create = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "created"
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(create, build_name="Create"),
+                name="branches",
+                build_match=("Root",),
+                owner_match=("dispatch",),
+            )
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        source = scope.build().materialize().emit(provenance=False)
+
+    assert "elif kind == 'create':" in source
+    counts = counters.snapshot()["counts"]
+    assert counts["lower_materialization_adapter_fallback"] == 1
+    assert counts["build_merge"] == 1
+
+
 def test_scope_build_uses_adapter_for_unsupported_funcargs() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile("result = func(*astichi_hole(args))\n")

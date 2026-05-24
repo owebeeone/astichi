@@ -694,6 +694,7 @@ class AssemblyScope:
         expression_operations: list[MaterializationOperation] = []
         block_operations: list[MaterializationOperation] = []
         parameter_operations: list[MaterializationOperation] = []
+        elif_operations: list[MaterializationOperation] = []
         for operation in plan.operation_stream:
             if operation.target_record_id.occurrence_id != root_id:
                 return None
@@ -719,6 +720,9 @@ class AssemblyScope:
                 continue
             if operation.operation_key == "astichi.operation.splice_parameters":
                 parameter_operations.append(operation)
+                continue
+            if operation.operation_key == "astichi.operation.append_clause":
+                elif_operations.append(operation)
                 continue
             return None
 
@@ -747,6 +751,11 @@ class AssemblyScope:
         if parameter_operations and not self._apply_lower_parameter_operations(
             tree,
             parameter_operations,
+        ):
+            return None
+        if elif_operations and not self._apply_lower_elif_operations(
+            tree,
+            elif_operations,
         ):
             return None
         ast.fix_missing_locations(tree)
@@ -934,6 +943,74 @@ class AssemblyScope:
             )
         return True
 
+    def _apply_lower_elif_operations(
+        self,
+        tree: ast.Module,
+        operations: list[MaterializationOperation],
+    ) -> bool:
+        for target_record_id in _ordered_unique_operation_targets(operations):
+            target_record = self._lower_engine.template_record(
+                self._lower_state,
+                target_record_id,
+            )
+            target_locator = self._lower_engine.locator_for_record(
+                self._lower_state,
+                target_record_id,
+            )
+            marker_if_path = _if_statement_path_for_elif_locator(
+                target_locator.ast_path,
+            )
+            if marker_if_path is None:
+                return False
+            marker_if = _ast_node_at_path(tree, marker_if_path)
+            if not isinstance(marker_if, ast.If):
+                return False
+            chain_tail = clone_ast(marker_if.orelse)
+            payloads: list[ast.If] = []
+            ordered = sorted(
+                (
+                    operation
+                    for operation in operations
+                    if operation.target_record_id == target_record_id
+                ),
+                key=lambda operation: (
+                    operation.order,
+                    int(operation.captures.get("edge_id", 0)),
+                ),
+            )
+            for operation in ordered:
+                source_id = operation.source_occurrence_id
+                if source_id is None:
+                    return False
+                source = self._lower_composable_by_occurrence.get(source_id)
+                if source is None:
+                    return False
+                payload_path = self._source_elif_path(source_id)
+                if payload_path is None:
+                    return False
+                payload_node = _ast_node_at_path(source.tree, payload_path)
+                if not isinstance(payload_node, ast.FunctionDef):
+                    return False
+                payload_if = _single_lower_elif_payload_if(payload_node)
+                if payload_if is None:
+                    return False
+                if not target_record.code_owner_parts and _body_contains_return(
+                    payload_if.body
+                ):
+                    return False
+                payloads.append(payload_if)
+            chain = chain_tail
+            for payload_if in reversed(payloads):
+                branch = ast.If(
+                    test=clone_ast(payload_if.test),
+                    body=clone_ast(payload_if.body),
+                    orelse=chain,
+                )
+                ast.copy_location(branch, marker_if)
+                chain = [branch]
+            _replace_ast_statement_at_path(tree, marker_if_path, chain)
+        return True
+
     def _source_expression_path(self, occurrence_id: OccurrenceId) -> str | None:
         records = self._lower_engine.template_records_for_occurrence(
             self._lower_state,
@@ -964,6 +1041,27 @@ class AssemblyScope:
             record
             for record in records
             if record.surface_key == "astichi.surface.parameter.production"
+        )
+        if len(matches) != 1:
+            return None
+        record_id = RecordId(
+            occurrence_id=occurrence_id,
+            template_record_id=matches[0].template_record_id,
+        )
+        return self._lower_engine.locator_for_record(
+            self._lower_state,
+            record_id,
+        ).ast_path
+
+    def _source_elif_path(self, occurrence_id: OccurrenceId) -> str | None:
+        records = self._lower_engine.template_records_for_occurrence(
+            self._lower_state,
+            occurrence_id,
+        )
+        matches = tuple(
+            record
+            for record in records
+            if record.surface_key == "astichi.surface.elif.production"
         )
         if len(matches) != 1:
             return None
@@ -1295,11 +1393,37 @@ def _statement_path_for_marker_locator(path: str) -> str:
     return statement_path
 
 
+def _if_statement_path_for_elif_locator(path: str) -> str | None:
+    statement_path, separator, field_name = path.rpartition("/")
+    if not separator or field_name != "test":
+        return None
+    return statement_path
+
+
 def _function_path_for_parameter_locator(path: str) -> str | None:
     function_path, separator, _ = path.partition("/args/")
     if not separator or not function_path:
         return None
     return function_path
+
+
+def _single_lower_elif_payload_if(node: ast.FunctionDef) -> ast.If | None:
+    if node.name != "astichi_elif" or len(node.body) != 1:
+        return None
+    payload = node.body[0]
+    if not isinstance(payload, ast.If):
+        return None
+    if payload.orelse:
+        return None
+    return payload
+
+
+def _body_contains_return(body: Iterable[ast.stmt]) -> bool:
+    return any(
+        isinstance(node, ast.Return)
+        for statement in body
+        for node in ast.walk(statement)
+    )
 
 
 def _ordered_unique_operation_targets(
