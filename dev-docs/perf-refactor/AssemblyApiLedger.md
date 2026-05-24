@@ -1,6 +1,6 @@
 # Assembly API Ledger
 
-Status: Slice 7b caller-route checkpoint.
+Status: Slice 13b API cleanup checkpoint.
 
 This ledger is the Slice 0 deliverable. It names the assembly APIs that Astichi
 and YIDL actually use before the lower-engine refactor starts deleting or
@@ -42,7 +42,7 @@ API surface:
 | `AssemblyScope.apply` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays; Slice 6a records parallel lower edges/overlays | keep; route in Slices 9-10 | assembler scope tests, YIDL final goldens, structural `scope_lower_occurrence_state` golden |
 | `AssemblyScope.build` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
 | `AssemblyScope.inventory` | inventory/debug tests and compatibility snippets | none after Slice 7b | `adapter-only` | direct lower candidate query plus debug projection; Slice 8 routes the property through `scope.project_lower_inventory()` | remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
-| `find_candidates` | compatibility/debug adapter test and docs | none after Slice 7b | `adapter-only` | `AssemblyScope.find_candidates(...)` lower index query; standalone inventory function is compatibility/debug only | hot path routed in Slice 7b; remove or privatize by Slice 13 | assembler diagnostics tests and structural goldens |
+| `find_candidates_in_inventory` | compatibility/debug adapter tests and transient differential harness | none after Slice 7b | `adapter-only` | `AssemblyScope.find_candidates(...)` lower index query; helper is private to already-projected inventory comparisons and is not exported from `astichi.assembler` | public export removed in Slice 13b | assembler diagnostics tests and structural goldens |
 | `require_one` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `validation-only` | lower candidate batch diagnostic formatter | keep until diagnostics migrate | bespoke missing/ambiguous tests |
 | `as_composable` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | composable resource descriptor | keep facade; lower in Slice 7 | assembler scope tests |
 | `as_external_value` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | external-value resource descriptor with facade object slot | keep facade; lower in Slice 7 | external bind goldens and diagnostics tests |
@@ -64,7 +64,7 @@ API surface:
 | `BasicComposable.bind` | materialize tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` calls bind indirectly through scope external applies | `adapter-only` | lower external overlay; Slice 10a queues scope external binds until build adapter flush | remove from scope apply path in Slice 10a; remove build adapter after lower materialization | external bind goldens |
 | `BasicComposable.bind_identifier` | tests/docs and YIDL generator helpers | `yidl/src/yidl/generation/matcher.py`, `data_schema.py`, `assembly_runtime.py` | `adapter-only` | lower identifier overlay; Slice 10b queues scope identifier binds until build adapter flush and resolves later selectors through overlay state | remove from scope apply path in Slice 10b; remove build adapter after lower materialization | identifier bind goldens |
 | `BasicComposable.with_keep_names` | tests/docs and YIDL helpers | `yidl/src/yidl/generation/matcher.py`, `data_schema.py` | `required-final` | lower hygiene keep-name operation | route in Slice 12c | hygiene goldens |
-| builder graph mutation helpers | builder, assembler scope, runner | through `AssemblyScope` only | `adapter-only` | lower state append/apply/materialize; Slice 9a removed legacy occurrence-inventory replacement from scope add/apply but builder graph mutation remains for final build | remove hot-path use after lower materialization coverage | builder and assembler tests |
+| builder graph mutation helpers | builder and adapter fallback only | through `AssemblyScope` fallback only | `adapter-only` | lower state append/apply/materialize; Slice 13a defers builder graph mutation until fallback build | remove remaining fallback once no debug path needs it | builder and assembler tests |
 | `Inventory.__str__` / debug inventory printing | tests/docs | none found | `adapter-only` | structural snapshots and debug views | keep as slow projection only | existing inventory string tests until replaced |
 | `Inventory.find_resource` and record-id map accessors | descriptor/inventory tests/docs | none found | `adapter-only` | lower indexes plus structural snapshots | migrate after Slice 7 | inventory tests, then structural goldens |
 | parameter-hole helpers | materialize/lowering/tests | YIDL lifecycle-shaped templates | `required-final` | lower materialization operation | route in Slice 12a | parameter goldens |

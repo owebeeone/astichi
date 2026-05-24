@@ -13,9 +13,9 @@ from astichi.assembler import (
     as_composable,
     as_external_value,
     as_identifier,
-    find_candidates,
     require_one,
 )
+from astichi.assembler.scope import find_candidates_in_inventory
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
 
@@ -434,7 +434,7 @@ def _candidate_check(
         build_match=build_match,
         owner_match=owner_match,
     )
-    projected_candidates = find_candidates(
+    projected_candidates = find_candidates_in_inventory(
         scope.inventory,
         resource,
         name=name,

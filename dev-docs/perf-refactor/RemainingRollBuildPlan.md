@@ -31,8 +31,8 @@ Completed tags:
 - `perf-refactor/slice-7a`: lower-index lookup exists as
   `AssemblyScope.find_candidates(...)`.
 - `perf-refactor/slice-7b`: YIDL and Astichi success-path candidate lookup use
-  `AssemblyScope.find_candidates(...)`; standalone
-  `find_candidates(inventory, ...)` is compatibility/debug only.
+  `AssemblyScope.find_candidates(...)`; standalone inventory lookup is
+  compatibility/debug only and private.
 - `perf-refactor/slice-7.5a`: transient differential harness compares lower
   lookup with the projected-inventory adapter and stores final builder-adapter
   outputs in structural goldens.
@@ -82,6 +82,9 @@ Completed tags:
   migrated surface suite.
 - `perf-refactor/slice-13a`: composable scope applies update lower state and
   defer legacy builder graph mutations until an adapter fallback is requested.
+- `perf-refactor/slice-13b`: standalone inventory candidate lookup is removed
+  from the public assembler facade and retained only as the private
+  `find_candidates_in_inventory(...)` debug helper.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone
@@ -109,8 +112,8 @@ Work:
   `scope.find_candidates(resource, ...)` directly.
 - Update Astichi success-path tests and performance-counter tests that currently
   use `find_candidates(scope.inventory, ...)`.
-- Keep the standalone `find_candidates(inventory, ...)` function as a debug and
-  compatibility adapter only.
+- Keep projected-inventory lookup as a debug and compatibility adapter only;
+  Slice 13b later privatizes it as `find_candidates_in_inventory(...)`.
 - Add a focused counter test proving candidate lookup on the updated hot path
   does not call `debug_inventory_projection`.
 - Keep missing/ambiguous diagnostics equivalent for the caller-migrated path.

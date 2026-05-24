@@ -2466,7 +2466,7 @@ def _without_record_ids(
 
 
 @counted_perf_call("candidate_lookup")
-def find_candidates(
+def find_candidates_in_inventory(
     inventory: Inventory,
     resource: BindingResource,
     *,

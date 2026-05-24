@@ -581,14 +581,15 @@ Current assembler helper surface:
 - `scope.find_candidates(resource, name=None, build_match=None,
   owner_match=None)`: returns compatible candidate applications from lower
   indexes using literal names plus `pathmatch` selectors
-- `find_candidates(inventory, resource, name=None, build_match=None,
-  owner_match=None)`: compatibility/debug adapter for already-projected
-  inventories; this is not the YIDL or Astichi success path
+- `find_candidates_in_inventory(inventory, resource, name=None,
+  build_match=None, owner_match=None)`: private compatibility/debug adapter for
+  already-projected inventories; this is not the YIDL or Astichi success path
 - `require_one(candidates)`: returns the only candidate or raises a diagnostic
   listing candidate demand/resource lines, including build path, code owner,
   source location where available, and locator
-- `scope.apply(candidate)`: mutates the underlying builder graph using the
-  selected candidate
+- `scope.apply(candidate)`: updates lower state using the selected candidate;
+  legacy builder graph mutation is deferred until an adapter fallback build is
+  requested
 
 The performance refactor has an internal lower-engine skeleton under
 `astichi.lower_engine`. The skeleton owns engine-scoped handles, template
@@ -601,10 +602,8 @@ handle, record specs, current surface-bundle signature, and dynamic surface
 handles. Lower template bindings can now be imported into a shared destination
 `LowerEngine` through `LowerTemplateCache`, rebinding dynamic surface handles
 from stable surface keys. The facade also exposes explicit artifact-copy
-helpers for template AST, executable AST, and rendered source. `AssemblyScope`,
-candidate lookup, and materialization still use the existing implementation
-until later route-through slices, but `AssemblyScope` now also maintains
-parallel lower occurrence state for `add(...)`, composable applies, and
+helpers for template AST, executable AST, and rendered source. `AssemblyScope`
+now maintains lower occurrence state for `add(...)`, composable applies, and
 overlay-shaped external/identifier applies. That lower state is exposed through
 `scope.lower_structural_snapshot()` for structural goldens and diagnostics, and
 `scope.project_lower_inventory()` provides the slow debug projection back to
@@ -612,9 +611,10 @@ the existing `Inventory` shape. `scope.find_candidates(...)` queries lower
 indexes directly for composable, external-value, and identifier resources while
 returning the current candidate objects for compatibility. YIDL and Astichi
 success-path tests use that scope method; the standalone
-`find_candidates(inventory, ...)` function is preserved only for
-already-projected inventory debug/compatibility checks. Lower state is not yet
-the source of final materialization. `scope.inventory` now reads through the
+`find_candidates_in_inventory(...)` helper is private and preserved only for
+already-projected inventory debug/compatibility checks. Lower state is now the
+source of final materialization for the migrated surface suite.
+`scope.inventory` reads through the
 lower debug projection rather than the legacy `_inventory` cache; callers that
 use it are intentionally on the slow compatibility path. The old
 `_replace_occurrence_inventory` projection is no longer called by the scope

@@ -9,19 +9,23 @@ from astichi.assembler import (
     as_composable,
     as_external_value,
     as_identifier,
-    find_candidates,
     require_one,
 )
+from astichi.assembler.scope import find_candidates_in_inventory
 from astichi.structural_snapshot import write_structural_snapshot
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _STRUCTURAL_GOLDENS_DIR = data_golden_dir(_PROJECT_ROOT, phase="structural")
-_ACTUAL_STRUCTURAL_DIR = actual_results_dir(
-    _PROJECT_ROOT,
-    runtime_version=(sys.version_info.major, sys.version_info.minor),
-) / "goldens" / "structural"
+_ACTUAL_STRUCTURAL_DIR = (
+    actual_results_dir(
+        _PROJECT_ROOT,
+        runtime_version=(sys.version_info.major, sys.version_info.minor),
+    )
+    / "goldens"
+    / "structural"
+)
 
 
 def test_scope_lower_occurrence_state_matches_structural_golden() -> None:
@@ -31,7 +35,7 @@ def test_scope_lower_occurrence_state_matches_structural_golden() -> None:
     scope.add("Root", root)
 
     resource = as_composable(value, build_name="Value")
-    legacy_candidates = find_candidates(
+    legacy_candidates = find_candidates_in_inventory(
         scope.inventory,
         resource,
         name="value",
@@ -73,7 +77,7 @@ class class_name__astichi_arg__:
         (as_identifier("Generated"), "class_name"),
         (as_external_value(1), "default_value"),
     ):
-        legacy_candidates = find_candidates(
+        legacy_candidates = find_candidates_in_inventory(
             scope.inventory,
             resource,
             name=name,

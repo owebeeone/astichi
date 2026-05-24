@@ -73,8 +73,8 @@ decisions are now assigned to named slice deliverables:
   signature/version policy for serialized or cached representations.
 - Slice 7b moved YIDL and Astichi success-path lookup to
   `AssemblyScope.find_candidates(...)`; standalone
-  `find_candidates(inventory, ...)` is now a temporary debug/compatibility
-  adapter.
+  inventory lookup is now the private debug helper
+  `find_candidates_in_inventory(...)`.
 - Slice 14 owns the test-visible native engine selection spelling through
   `EngineSelectionContract.md`.
 - Slice 16 decides whether native materialization emits Python `_ast` objects

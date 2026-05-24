@@ -5,7 +5,6 @@ from astichi.assembler.scope import (
     as_composable,
     as_external_value,
     as_identifier,
-    find_candidates,
     require_one,
 )
 
@@ -14,6 +13,5 @@ __all__ = [
     "as_composable",
     "as_external_value",
     "as_identifier",
-    "find_candidates",
     "require_one",
 ]

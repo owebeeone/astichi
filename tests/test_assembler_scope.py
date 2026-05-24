@@ -8,10 +8,9 @@ from astichi.assembler import (
     as_composable,
     as_external_value,
     as_identifier,
-    find_candidates,
     require_one,
 )
-from astichi.assembler.scope import BindingCandidate
+from astichi.assembler.scope import BindingCandidate, find_candidates_in_inventory
 from astichi.model import empty_inventory
 
 
@@ -319,7 +318,7 @@ def test_require_one_reports_ambiguous_identifier_demand_targets() -> None:
     )
 
 
-def test_inventory_find_candidates_adapter_without_name_scans_all_records() -> None:
+def test_inventory_debug_candidates_adapter_without_name_scans_all_records() -> None:
     root = astichi.compile(
         """
 astichi_hole(body)
@@ -330,7 +329,7 @@ astichi_hole(other)
     scope = AssemblyScope(astichi.build())
     scope.add("Root", root)
 
-    candidates = find_candidates(
+    candidates = find_candidates_in_inventory(
         scope.inventory,
         as_composable(body, build_name="Body"),
         build_match=("Root",),
