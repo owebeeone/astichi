@@ -677,10 +677,11 @@ on the adapter path until the full lower materialization gate owns that
 surface.
 
 Elif-clause materialization is represented in lower operation and hygiene
-streams, has a structural plan golden, and final lower materialization supports
-simple `def astichi_elif(): if ...` payloads. Elif payloads that require
-boundary imports or broader hygiene still use the adapter path until the
-boundary/hygiene slices.
+streams, has structural plan goldens, and final lower materialization supports
+simple `def astichi_elif(): if ...` payloads plus payload-prefix boundary
+imports that resolve against the target scope. Elif payloads that require
+broader hygiene still use the adapter path until the full lower
+materialization gate owns that surface.
 
 Defaulted block-hole fallback selection is represented in lower operation
 streams with an explicit fallback capture and structural plan golden. Filled

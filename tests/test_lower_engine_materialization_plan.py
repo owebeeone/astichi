@@ -402,3 +402,58 @@ def astichi_elif():
         encoding="utf-8"
     )
     assert actual_text == expected_text
+
+
+def test_scope_lower_boundary_elif_plan_matches_structural_golden() -> None:
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        """
+def dispatch(kind):
+    if kind == "base":
+        return "base"
+    elif astichi_elif(branches):
+        pass
+""".strip()
+        + "\n"
+    )
+    branch = astichi.compile(
+        """
+def astichi_elif():
+    astichi_import(kind)
+    if kind == "create":
+        return "created"
+""".strip()
+        + "\n"
+    )
+    scope.add("Root", root)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(branch, build_name="Create"),
+                name="branches",
+                build_match=("Root",),
+                owner_match=("dispatch",),
+            )
+        )
+    )
+
+    plan = scope.lower_materialization_plan()
+    assert tuple(operation.operation_key for operation in plan.operation_stream) == (
+        "astichi.operation.append_clause",
+    )
+    assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
+        "astichi.operation.strip_marker",
+        "astichi.operation.gate_no_unresolved",
+    )
+
+    actual_text = write_structural_snapshot(
+        scope.lower_structural_snapshot(materialization_plan=plan)
+    )
+
+    _ACTUAL_STRUCTURAL_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_STRUCTURAL_DIR / "scope_boundary_elif_plan.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (
+        _STRUCTURAL_GOLDENS_DIR / "scope_boundary_elif_plan.json"
+    ).read_text(encoding="utf-8")
+    assert actual_text == expected_text

@@ -1169,6 +1169,7 @@ class AssemblyScope:
             marker_if = _ast_node_at_path(tree, marker_if_path)
             if not isinstance(marker_if, ast.If):
                 return False
+            boundary_names = _lower_boundary_available_names(tree, marker_if_path)
             chain_tail = clone_ast(marker_if.orelse)
             payloads: list[ast.If] = []
             ordered = sorted(
@@ -1194,6 +1195,11 @@ class AssemblyScope:
                     return False
                 payload_node = _ast_node_at_path(source.tree, payload_path)
                 if not isinstance(payload_node, ast.FunctionDef):
+                    return False
+                if source.markers and not _lower_boundary_markers_supported(
+                    source,
+                    boundary_names,
+                ):
                     return False
                 payload_if = _single_lower_elif_payload_if(payload_node)
                 if payload_if is None:
@@ -1773,14 +1779,32 @@ def _call_argument_placement_for_locator(
 
 
 def _single_lower_elif_payload_if(node: ast.FunctionDef) -> ast.If | None:
-    if node.name != "astichi_elif" or len(node.body) != 1:
+    if node.name != "astichi_elif":
         return None
-    payload = node.body[0]
+    payloads = [
+        statement
+        for statement in node.body
+        if not _is_lower_marker_only_statement(statement)
+    ]
+    if len(payloads) != 1:
+        return None
+    payload = payloads[0]
     if not isinstance(payload, ast.If):
         return None
     if payload.orelse:
         return None
     return payload
+
+
+def _is_lower_marker_only_statement(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and (
+            _is_lower_boundary_call(statement.value)
+            or _is_lower_keep_call(statement.value)
+        )
+    )
 
 
 def _body_contains_return(body: Iterable[ast.stmt]) -> bool:
@@ -1859,6 +1883,8 @@ def _lower_boundary_markers_supported(
     )
 
     for marker in source.markers:
+        if marker.source_name == "astichi_elif":
+            continue
         if marker.source_name == "astichi_export":
             continue
         if marker.source_name not in {"astichi_import", "astichi_pass"}:

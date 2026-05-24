@@ -151,6 +151,36 @@
       "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=dispatch name=branches kind=hole.elif locator=body[0]/body[0]/orelse[0]/test\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Create/#1 build_path=Root/Create code_owner=. name=astichi_elif kind=production.elif locator=body[0]\n  Root/Create/#2 build_path=Root/Create code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n\nport_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n\nhole_map:\n  branches: Root/#1\n\nproduction_map:\n  __block__: Root/#2, Root/Create/#2\n  astichi_elif: Root/Create/#1"
     },
     {
+      "candidate_checks": [
+        {
+          "candidate_lines": [
+            [
+              "demand: build_path=Root owner=dispatch@<astichi>:1 name=branches kind=hole.elif location=<astichi>:4 locator=body[0]/body[0]/orelse[0]/test",
+              "resource: composable build_name=Create",
+              "  production: name=astichi_elif kind=production.elif location=<astichi>:1 locator=body[0]",
+              "  production: name=__block__ kind=production.block location=<astichi>:1 locator=."
+            ]
+          ],
+          "lower_count": 1,
+          "projection_count": 1,
+          "selector": {
+            "build_match": [
+              "Root"
+            ],
+            "name": "branches",
+            "owner_match": [
+              "dispatch"
+            ]
+          },
+          "step": "branches"
+        }
+      ],
+      "final_source": "def dispatch(kind):\n    if kind == 'base':\n        return 'base'\n    elif kind == 'create':\n        return 'created'\n",
+      "lower_source": "def dispatch(kind):\n    if kind == 'base':\n        return 'base'\n    elif kind == 'create':\n        return 'created'\n",
+      "name": "boundary_elif_insert",
+      "projected_inventory": "records:\n  Root/#1 build_path=Root code_owner=dispatch name=branches kind=hole.elif locator=body[0]/body[0]/orelse[0]/test\n  Root/#2 build_path=Root code_owner=. name=__block__ kind=production.block locator=.\n  Root/Create/#1 build_path=Root/Create code_owner=. name=astichi_elif kind=production.elif locator=body[0]\n  Root/Create/#2 build_path=Root/Create code_owner=astichi_elif name=kind kind=identifier.demand locator=body[0]/body[0]/value\n  Root/Create/#3 build_path=Root/Create code_owner=. name=__block__ kind=production.block locator=.\n\nresource_map:\n  __block__: Root/#2, Root/Create/#3\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n  kind: Root/Create/#2\n\nport_map:\n  __block__: Root/#2, Root/Create/#3\n  astichi_elif: Root/Create/#1\n  branches: Root/#1\n  kind: Root/Create/#2\n\nhole_map:\n  branches: Root/#1\n\nidentifier_map:\n  kind: Root/Create/#2\n\nproduction_map:\n  __block__: Root/#2, Root/Create/#3\n  astichi_elif: Root/Create/#1"
+    },
+    {
       "candidate_checks": [],
       "final_source": "from foo import a, b\nresult = a + b\n",
       "lower_source": "from foo import a, b\nresult = a + b\n",

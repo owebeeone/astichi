@@ -72,6 +72,9 @@ Completed tags:
 - `perf-refactor/slice-12c3a`: simple variadic call-argument holes materialize
   on the lower path, with `splice_call_arguments` visible in lower operation
   snapshots.
+- `perf-refactor/slice-12c3b`: simple boundary imports in elif payloads
+  materialize on the lower path, with marker-strip decisions visible in lower
+  hygiene snapshots.
 - `perf-refactor/slice-8`: `scope.inventory` reads through lower debug
   projection.
 - `perf-refactor/slice-9a`: legacy occurrence-inventory replacement is gone

@@ -444,7 +444,7 @@ def astichi_elif():
     assert counts.get("materialize_composable", 0) == 0
 
 
-def test_scope_build_uses_adapter_for_boundary_elif_payloads() -> None:
+def test_lower_materializes_boundary_elif_payloads_without_builder_merge() -> None:
     scope = AssemblyScope(astichi.build())
     root = astichi.compile(
         """
@@ -478,12 +478,14 @@ def astichi_elif():
     )
 
     with collect_perf_counters() as counters:
-        source = scope.build().materialize().emit(provenance=False)
+        source = scope.build().emit(provenance=False)
 
     assert "elif kind == 'create':" in source
     counts = counters.snapshot()["counts"]
-    assert counts["lower_materialization_adapter_fallback"] == 1
-    assert counts["build_merge"] == 1
+    assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("lower_materialization_adapter_fallback", 0) == 0
+    assert counts.get("build_merge", 0) == 0
+    assert counts.get("materialize_composable", 0) == 0
 
 
 def test_lower_materializes_starred_funcargs_without_builder_merge() -> None:

@@ -78,6 +78,7 @@ def _harness_snapshot() -> dict[str, object]:
         _Fixture("parameter_insert", _parameter_insert),
         _Fixture("funcargs_insert", _funcargs_insert),
         _Fixture("elif_insert", _elif_insert),
+        _Fixture("boundary_elif_insert", _boundary_elif_insert),
         _Fixture("pyimport_static", _pyimport_static),
         _Fixture("boundary_markers", _boundary_markers),
         _Fixture("keep_collision", _keep_collision),
@@ -231,6 +232,41 @@ def _elif_insert() -> dict[str, Any]:
     )
     scope.apply(require_one(check["lower_candidates"]))
     return _fixture_result("elif_insert", scope, (check,), lower_supported=True)
+
+
+def _boundary_elif_insert() -> dict[str, Any]:
+    root = _piece(
+        """
+        def dispatch(kind):
+            if kind == "base":
+                return "base"
+            elif astichi_elif(branches):
+                pass
+        """
+    )
+    branch = _piece(
+        """
+        def astichi_elif():
+            astichi_import(kind)
+            if kind == "create":
+                return "created"
+        """
+    )
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    check = _candidate_check(
+        "branches",
+        scope,
+        as_composable(branch, build_name="Create"),
+        name="branches",
+        build_match=("Root",),
+        owner_match=("dispatch",),
+    )
+    scope.apply(require_one(check["lower_candidates"]))
+    return _fixture_result(
+        "boundary_elif_insert", scope, (check,), lower_supported=True
+    )
 
 
 def _pyimport_static() -> dict[str, Any]:
