@@ -1,6 +1,6 @@
 # Native AST Probe
 
-Status: parallel proof-of-concept plan.
+Status: tracked proof-of-concept module.
 
 The native implementation does not have to be C++. The requirement is a native
 compiler path that can parse, transform, and materialize Astichi templates
@@ -9,6 +9,14 @@ without using CPython AST objects as the working graph.
 This probe is independent of the main Python lower-engine route-through. Its
 job is to answer whether a native parser plus final CPython AST construction is
 practical and fast enough to become the later native backend.
+
+Use the `native_probe/` directory for the tracked probe module. Ignored
+`scratch/native_probe/` files are local experiments and build artifacts only.
+
+The tracked module currently uses Rust, PyO3, and `rustpython-parser`. It builds
+with `native_probe/build.py`, exposes the probe API from
+`native_probe/native_probe.py`, and keeps compiled extension artifacts out of
+git.
 
 ## Hypothesis
 

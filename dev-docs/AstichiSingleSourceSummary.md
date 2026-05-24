@@ -607,6 +607,13 @@ else/finally, and with-item insertion are registered disabled in a separate
 catalog golden to prove those surfaces can receive handles without changing the
 core lower-engine API.
 
+The native AST probe is tracked under `native_probe/`. It is a Rust/PyO3 module
+using `rustpython-parser` that parses without the GIL, keeps a native parser
+tree inside its probe `LowerComposable`, and copies to CPython `ast` objects
+only through explicit artifact APIs. It currently verifies all Astichi
+`tests/data/gold_src/*.py` fixtures through native parse, conversion, and
+`compile(...)` validation, but it is not selected by production Astichi APIs.
+
 ### 3.6 Emit, materialize, and provenance contract
 
 Current implementation reality:

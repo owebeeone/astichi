@@ -1,0 +1,22 @@
+[package]
+name = "native_ast_probe_ext"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "_native_ast_probe_ext"
+# cdylib is required to compile down to a shared library (.so / .pyd) that Python can load
+crate-type = ["cdylib"]
+
+[dependencies]
+# Added "abi3-py38" to lock compilation to the Stable ABI targeting Python 3.8+ 
+pyo3 = { version = "0.28.3", features = ["extension-module", "abi3-py38"] }
+rustpython-parser = "0.4.0"
+
+# Production profile optimizations for cross-compiled architecture wheels
+[profile.release]
+log-optimization = true
+lto = true             # Link-Time Optimization reduces binary size and speeds up execution
+codegen-units = 1      # Maximizes compiler optimization paths across the extension
+strip = "symbols"      # Strips debug symbols automatically to keep the final wheel small
