@@ -6,6 +6,12 @@ This plan breaks the inventory-first refactor into implementation slices. Each
 slice should be small enough to review independently and should preserve a
 working tree with focused verification.
 
+The post-`perf-refactor/slice-10b` completion roll-build is further broken down
+in `dev-docs/perf-refactor/RemainingRollBuildPlan.md`. Use that document as
+the operational phase list for finishing the Python lower-engine refactor
+through Slice 13 and for the gated native library roll-build after the Python
+profile gate.
+
 No lower-engine implementation slice should start before API pruning has
 reduced the assembly surface.
 

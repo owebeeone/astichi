@@ -625,6 +625,12 @@ owners such as `GeneratedClass` and `run` without eager AST rewrites.
 Identifier bindings are flushed to the temporary builder adapter at
 `scope.build(...)`.
 
+The remaining Python refactor is broken into roll-build checkpoints in
+`dev-docs/perf-refactor/RemainingRollBuildPlan.md`. That plan starts after
+`perf-refactor/slice-10b`, finishes the Python lower-engine route through Slice
+13, and includes the gated native library component roll-build after the
+post-Python profile gate.
+
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,
 operations, and patterns, snapshots stable keys rather than handle ids, and
