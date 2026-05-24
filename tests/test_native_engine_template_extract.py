@@ -77,10 +77,10 @@ def test_native_template_extract_rejects_marker_source_when_available() -> None:
     if module is None:
         pytest.skip("native engine extension is not built")
 
-    with pytest.raises(ValueError, match="marker-free source"):
+    with pytest.raises(ValueError, match="suffix marker extraction starts in N4c"):
         module.extract_template_snapshot(
             _engine_with_current_bundle(module),
-            "result = astichi_hole(value)\n",
+            "class Name__astichi_arg__:\n    pass\n",
             "marker.py",
             1,
         )
@@ -96,6 +96,53 @@ def test_native_template_extract_rejects_syntax_error_when_available() -> None:
             _engine_with_current_bundle(module),
             "def broken(:\n    pass\n",
             "broken.py",
+            1,
+        )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "result = astichi_hole(value)\n",
+        "astichi_hole(body)\n",
+        "value = astichi_bind_external(default)\n",
+        "value = astichi_ref(external=thing)\n",
+        "astichi_export(result)\nresult = 1\n",
+        "astichi_import(name)\nresult = name\n",
+        "value = astichi_pass(name)\n",
+        "astichi_pyimport(module=foo, names=(a,))\nresult = a\n",
+        "astichi_keep(name)\nresult = name\n",
+        "astichi_comment(\"hello\")\n",
+    ],
+)
+def test_native_template_extract_direct_call_markers_match_python_reference_when_available(
+    source: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    actual = module.extract_template_snapshot(
+        _engine_with_current_bundle(module),
+        source,
+        "direct_call.py",
+        1,
+    )
+    expected = astichi.compile(source)._lower_template.structural_snapshot()
+
+    assert actual == expected
+
+
+def test_native_template_extract_rejects_bad_direct_call_shape_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    with pytest.raises(ValueError, match="name argument must be a bare identifier"):
+        module.extract_template_snapshot(
+            _engine_with_current_bundle(module),
+            "result = astichi_hole('value')\n",
+            "bad_marker.py",
             1,
         )
 

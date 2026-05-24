@@ -1,9 +1,48 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule};
+use rustpython_parser::ast;
+use rustpython_parser::text_size::TextRange;
 
 use crate::handles::EngineHandle;
 
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
+
+#[derive(Clone)]
+struct SourceMap {
+    line_starts: Vec<usize>,
+}
+
+impl SourceMap {
+    fn new(source: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (idx, byte) in source.bytes().enumerate() {
+            if byte == b'\n' {
+                line_starts.push(idx + 1);
+            }
+        }
+        Self { line_starts }
+    }
+
+    fn line(&self, range: TextRange) -> usize {
+        let offset = range.start().to_u32() as usize;
+        match self.line_starts.binary_search(&offset) {
+            Ok(idx) => idx + 1,
+            Err(idx) => idx,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ExtractedRecord {
+    ast_path: String,
+    authored_summary: String,
+    role_key: String,
+    materialization_anchor: String,
+    inventory_kind: String,
+    resource_name: String,
+    semantic_summary: String,
+    surface_key: String,
+}
 
 #[pyfunction]
 #[pyo3(signature = (engine, source, filename = None, line_number = 1))]
@@ -18,11 +57,17 @@ fn extract_template_snapshot(
     let surface_bundle = engine
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
-    reject_marker_bearing_source(&source)?;
 
+    reject_deferred_markers(&source)?;
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
     let module = crate::parser_ir::parse_native_module(&source, &filename)?;
-    let source_summary = "compile line=".to_string() + &line_number.to_string() + " records=1";
+    let mut records = extract_records(&source, &module)?;
+    records.push(block_production_record(line_number));
+
+    let source_summary = "compile line=".to_string()
+        + &line_number.to_string()
+        + " records="
+        + &records.len().to_string();
     let ast_dump = crate::parser_ir::ast_dump_without_attributes(py, &source, &module)?;
     let template_key = template_key(py, &ast_dump, &source_summary)?;
 
@@ -31,7 +76,7 @@ fn extract_template_snapshot(
         surface_bundle.snapshot(py)?,
         &template_key,
         &source_summary,
-        line_number,
+        &records,
     )
 }
 
@@ -40,13 +85,401 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn reject_marker_bearing_source(source: &str) -> PyResult<()> {
-    if source.contains("astichi_") || source.contains("__astichi_") {
+fn reject_deferred_markers(source: &str) -> PyResult<()> {
+    if source.contains("__astichi_") {
         return Err(crate::errors::schema_error(
-            "native N4a template extraction only supports marker-free source",
+            "native suffix marker extraction starts in N4c",
+        ));
+    }
+    if source.contains("astichi_insert") || source.contains("astichi_params") {
+        return Err(crate::errors::schema_error(
+            "native metadata and payload extraction starts after N4b",
         ));
     }
     Ok(())
+}
+
+fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<ExtractedRecord>> {
+    let source_map = SourceMap::new(source);
+    let mut records = Vec::new();
+    for (index, stmt) in module.body.iter().enumerate() {
+        stmt_records(
+            stmt,
+            &format!("body[{index}]"),
+            &source_map,
+            false,
+            &mut records,
+        )?;
+    }
+    Ok(records)
+}
+
+fn stmt_records(
+    stmt: &ast::Stmt,
+    path: &str,
+    source_map: &SourceMap,
+    _in_expr_stmt: bool,
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    match stmt {
+        ast::Stmt::Expr(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            true,
+            records,
+        ),
+        ast::Stmt::Assign(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            false,
+            records,
+        ),
+        ast::Stmt::AnnAssign(node) => {
+            expr_records(
+                &node.annotation,
+                &(path.to_string() + "/annotation"),
+                source_map,
+                false,
+                records,
+            )?;
+            if let Some(value) = node.value.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/value"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/value"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::FunctionDef(node) => {
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::ClassDef(node) => {
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn expr_records(
+    expr: &ast::Expr,
+    path: &str,
+    source_map: &SourceMap,
+    in_expr_stmt: bool,
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    match expr {
+        ast::Expr::Call(node) => {
+            if let Some(name) = call_name(&node.func) {
+                direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
+            }
+            for (index, arg) in node.args.iter().enumerate() {
+                expr_records(
+                    arg,
+                    &format!("{path}/args[{index}]"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                expr_records(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::BoolOp(node) => {
+            for (index, value) in node.values.iter().enumerate() {
+                expr_records(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    source_map,
+                    false,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::BinOp(node) => {
+            expr_records(
+                &node.left,
+                &(path.to_string() + "/left"),
+                source_map,
+                false,
+                records,
+            )?;
+            expr_records(
+                &node.right,
+                &(path.to_string() + "/right"),
+                source_map,
+                false,
+                records,
+            )
+        }
+        ast::Expr::UnaryOp(node) => expr_records(
+            &node.operand,
+            &(path.to_string() + "/operand"),
+            source_map,
+            false,
+            records,
+        ),
+        ast::Expr::IfExp(node) => {
+            expr_records(
+                &node.test,
+                &(path.to_string() + "/test"),
+                source_map,
+                false,
+                records,
+            )?;
+            expr_records(
+                &node.body,
+                &(path.to_string() + "/body"),
+                source_map,
+                false,
+                records,
+            )?;
+            expr_records(
+                &node.orelse,
+                &(path.to_string() + "/orelse"),
+                source_map,
+                false,
+                records,
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.as_str()),
+        _ => None,
+    }
+}
+
+fn direct_call_record(
+    name: &str,
+    node: &ast::ExprCall,
+    path: &str,
+    source_map: &SourceMap,
+    in_expr_stmt: bool,
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    match name {
+        "astichi_hole" => {
+            let resource_name = first_name_arg(node, name)?;
+            if in_expr_stmt {
+                records.push(record(
+                    path,
+                    &authored_summary(&resource_name, source_map.line(node.range)),
+                    "hole.block",
+                    "splice-body-at-marker",
+                    "hole.block",
+                    &resource_name,
+                    "astichi.surface.block.hole",
+                ));
+                records.push(record(
+                    path,
+                    &authored_summary("__expr__", source_map.line(node.range)),
+                    "production.expression",
+                    "copy-expression",
+                    "production.expression",
+                    "__expr__",
+                    "astichi.surface.expression.production",
+                ));
+            } else {
+                records.push(record(
+                    path,
+                    &authored_summary(&resource_name, source_map.line(node.range)),
+                    "hole.expr",
+                    "replace-expression",
+                    "hole.expr",
+                    &resource_name,
+                    "astichi.surface.expression.hole",
+                ));
+            }
+            Ok(())
+        }
+        "astichi_bind_external" => {
+            let resource_name = first_name_arg(node, name)?;
+            records.push(external_record(
+                path,
+                &resource_name,
+                source_map.line(node.range),
+            ));
+            Ok(())
+        }
+        "astichi_ref" => {
+            if let Some(resource_name) = external_keyword_name(node)? {
+                records.push(external_record(
+                    &(path.to_string() + "/args[0]"),
+                    &resource_name,
+                    source_map.line(node.range),
+                ));
+            }
+            Ok(())
+        }
+        "astichi_export" => {
+            let resource_name = first_name_arg(node, name)?;
+            records.push(record(
+                path,
+                &authored_summary(&resource_name, source_map.line(node.range)),
+                "identifier.supply",
+                "rewrite-identifier",
+                "identifier.supply",
+                &resource_name,
+                "astichi.surface.identifier.supply",
+            ));
+            Ok(())
+        }
+        "astichi_import" | "astichi_pass" => {
+            let resource_name = first_name_arg(node, name)?;
+            records.push(record(
+                path,
+                &authored_summary(&resource_name, source_map.line(node.range)),
+                "identifier.demand",
+                "rewrite-identifier",
+                "identifier.demand",
+                &resource_name,
+                "astichi.surface.identifier.demand",
+            ));
+            Ok(())
+        }
+        "astichi_comment" => {
+            records.push(record(
+                path,
+                &authored_summary("__expr__", source_map.line(node.range)),
+                "production.expression",
+                "copy-expression",
+                "production.expression",
+                "__expr__",
+                "astichi.surface.expression.production",
+            ));
+            Ok(())
+        }
+        "astichi_keep" | "astichi_pyimport" => Ok(()),
+        other if other.starts_with("astichi_") => Err(crate::errors::schema_error(&format!(
+            "unsupported native direct call marker: {other}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+fn first_name_arg(node: &ast::ExprCall, marker: &str) -> PyResult<String> {
+    let Some(first) = node.args.first() else {
+        return Err(crate::errors::schema_error(&format!(
+            "{marker} requires a name argument"
+        )));
+    };
+    match first {
+        ast::Expr::Name(name) => Ok(name.id.to_string()),
+        _ => Err(crate::errors::schema_error(&format!(
+            "{marker} name argument must be a bare identifier"
+        ))),
+    }
+}
+
+fn external_keyword_name(node: &ast::ExprCall) -> PyResult<Option<String>> {
+    for keyword in &node.keywords {
+        if keyword.arg.as_ref().map(|arg| arg.as_str()) != Some("external") {
+            continue;
+        }
+        return match &keyword.value {
+            ast::Expr::Name(name) => Ok(Some(name.id.to_string())),
+            _ => Err(crate::errors::schema_error(
+                "astichi_ref external argument must be a bare identifier",
+            )),
+        };
+    }
+    Ok(None)
+}
+
+fn external_record(path: &str, resource_name: &str, line_number: usize) -> ExtractedRecord {
+    record(
+        path,
+        &authored_summary(resource_name, line_number),
+        "external.bind",
+        "bind-external",
+        "external.bind",
+        resource_name,
+        "astichi.surface.external.demand",
+    )
+}
+
+fn block_production_record(line_number: u32) -> ExtractedRecord {
+    record(
+        ".",
+        &authored_summary("__block__", line_number as usize),
+        "production.block",
+        "copy-block",
+        "production.block",
+        "__block__",
+        "astichi.surface.block.production",
+    )
+}
+
+fn record(
+    ast_path: &str,
+    authored_summary: &str,
+    role_key: &str,
+    materialization_anchor: &str,
+    inventory_kind: &str,
+    resource_name: &str,
+    surface_key: &str,
+) -> ExtractedRecord {
+    ExtractedRecord {
+        ast_path: ast_path.to_string(),
+        authored_summary: authored_summary.to_string(),
+        role_key: role_key.to_string(),
+        materialization_anchor: materialization_anchor.to_string(),
+        inventory_kind: inventory_kind.to_string(),
+        resource_name: resource_name.to_string(),
+        semantic_summary: format!("{inventory_kind} name={resource_name} owner=. build_path=."),
+        surface_key: surface_key.to_string(),
+    }
+}
+
+fn authored_summary(resource_name: &str, line_number: usize) -> String {
+    format!("{resource_name} at line {line_number}")
 }
 
 fn template_key(py: Python<'_>, ast_dump: &str, source_summary: &str) -> PyResult<String> {
@@ -66,15 +499,18 @@ fn structural_snapshot(
     surface_bundle: Py<PyAny>,
     template_key: &str,
     source_summary: &str,
-    line_number: u32,
+    records: &[ExtractedRecord],
 ) -> PyResult<Py<PyAny>> {
     let snapshot = PyDict::new(py);
     snapshot.set_item("schema", STRUCTURAL_SCHEMA)?;
     snapshot.set_item("surface_bundle", surface_bundle)?;
-    snapshot.set_item("templates", templates(py, template_key, source_summary)?)?;
-    snapshot.set_item("locators", locators(py, line_number)?)?;
+    snapshot.set_item(
+        "templates",
+        templates(py, template_key, source_summary, records.len())?,
+    )?;
+    snapshot.set_item("locators", locators(py, records)?)?;
     snapshot.set_item("occurrences", occurrences(py)?)?;
-    snapshot.set_item("records", records(py)?)?;
+    snapshot.set_item("records", record_snapshots(py, records)?)?;
     snapshot.set_item("edges", PyList::empty(py))?;
     snapshot.set_item("overlays", PyList::empty(py))?;
     snapshot.set_item("materialization", materialization(py)?)?;
@@ -82,9 +518,14 @@ fn structural_snapshot(
     Ok(snapshot.into_any().unbind())
 }
 
-fn templates(py: Python<'_>, template_key: &str, source_summary: &str) -> PyResult<Py<PyAny>> {
+fn templates(
+    py: Python<'_>,
+    template_key: &str,
+    source_summary: &str,
+    record_count: usize,
+) -> PyResult<Py<PyAny>> {
     let item = PyDict::new(py);
-    item.set_item("record_count", 1)?;
+    item.set_item("record_count", record_count)?;
     item.set_item("source_summary", source_summary)?;
     item.set_item("template_id", 0)?;
     item.set_item("template_key", template_key)?;
@@ -93,20 +534,19 @@ fn templates(py: Python<'_>, template_key: &str, source_summary: &str) -> PyResu
     Ok(list.into_any().unbind())
 }
 
-fn locators(py: Python<'_>, line_number: u32) -> PyResult<Py<PyAny>> {
-    let item = PyDict::new(py);
-    item.set_item("ast_path", ".")?;
-    item.set_item(
-        "authored_summary",
-        "__block__ at line ".to_string() + &line_number.to_string(),
-    )?;
-    item.set_item("locator_id", 0)?;
-    item.set_item("materialization_anchor", "copy-block")?;
-    item.set_item("parent_locator_id", py.None())?;
-    item.set_item("role_key", "production.block")?;
-    item.set_item("template_id", 0)?;
+fn locators(py: Python<'_>, records: &[ExtractedRecord]) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
-    list.append(item)?;
+    for (index, record) in records.iter().enumerate() {
+        let item = PyDict::new(py);
+        item.set_item("ast_path", &record.ast_path)?;
+        item.set_item("authored_summary", &record.authored_summary)?;
+        item.set_item("locator_id", index)?;
+        item.set_item("materialization_anchor", &record.materialization_anchor)?;
+        item.set_item("parent_locator_id", py.None())?;
+        item.set_item("role_key", &record.role_key)?;
+        item.set_item("template_id", 0)?;
+        list.append(item)?;
+    }
     Ok(list.into_any().unbind())
 }
 
@@ -121,26 +561,25 @@ fn occurrences(py: Python<'_>) -> PyResult<Py<PyAny>> {
     Ok(list.into_any().unbind())
 }
 
-fn records(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let item = PyDict::new(py);
-    item.set_item("code_owner", Vec::<&str>::new())?;
-    item.set_item("inventory_kind", "production.block")?;
-    item.set_item("locator_id", 0)?;
-    item.set_item("occurrence_id", 0)?;
-    item.set_item("record_id", vec![0, 0])?;
-    item.set_item("resource_name", "__block__")?;
-    item.set_item(
-        "semantic_summary",
-        "production.block name=__block__ owner=. build_path=.",
-    )?;
-    let state = PyDict::new(py);
-    state.set_item("satisfied", false)?;
-    state.set_item("visible", true)?;
-    item.set_item("state", state)?;
-    item.set_item("surface_key", "astichi.surface.block.production")?;
-    item.set_item("template_record_id", 0)?;
+fn record_snapshots(py: Python<'_>, records: &[ExtractedRecord]) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
-    list.append(item)?;
+    for (index, record) in records.iter().enumerate() {
+        let item = PyDict::new(py);
+        item.set_item("code_owner", Vec::<&str>::new())?;
+        item.set_item("inventory_kind", &record.inventory_kind)?;
+        item.set_item("locator_id", index)?;
+        item.set_item("occurrence_id", 0)?;
+        item.set_item("record_id", vec![0, index])?;
+        item.set_item("resource_name", &record.resource_name)?;
+        item.set_item("semantic_summary", &record.semantic_summary)?;
+        let state = PyDict::new(py);
+        state.set_item("satisfied", false)?;
+        state.set_item("visible", true)?;
+        item.set_item("state", state)?;
+        item.set_item("surface_key", &record.surface_key)?;
+        item.set_item("template_record_id", index)?;
+        list.append(item)?;
+    }
     Ok(list.into_any().unbind())
 }
 

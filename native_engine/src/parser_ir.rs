@@ -312,6 +312,7 @@ pub(crate) fn ast_dump_without_attributes(
     module: &ast::ModModule,
 ) -> PyResult<String> {
     let artifact = convert_module_artifact(py, source, module, "native")?.0;
+    normalize_astichi_ref_external(py, &artifact)?;
     let ast_mod = py.import("ast")?;
     let kwargs = PyDict::new(py);
     kwargs.set_item("include_attributes", false)?;
@@ -319,6 +320,52 @@ pub(crate) fn ast_dump_without_attributes(
         .getattr("dump")?
         .call((artifact,), Some(&kwargs))?
         .extract::<String>()
+}
+
+fn normalize_astichi_ref_external(py: Python<'_>, artifact: &Py<PyAny>) -> PyResult<()> {
+    let ast_mod = py.import("ast")?;
+    let call_class = ast_mod.getattr("Call")?;
+    let name_class = ast_mod.getattr("Name")?;
+    let load_class = ast_mod.getattr("Load")?;
+    let walk = ast_mod.getattr("walk")?.call1((artifact.bind(py),))?;
+    for node in walk.try_iter()? {
+        let node = node?;
+        if !node.is_instance(&call_class)? {
+            continue;
+        }
+        let func = node.getattr("func")?;
+        if func
+            .getattr("id")
+            .ok()
+            .and_then(|value| value.extract::<String>().ok())
+            .as_deref()
+            != Some("astichi_ref")
+        {
+            continue;
+        }
+        let keywords = node.getattr("keywords")?;
+        for keyword in keywords.try_iter()? {
+            let keyword = keyword?;
+            if keyword
+                .getattr("arg")?
+                .extract::<Option<String>>()?
+                .as_deref()
+                != Some("external")
+            {
+                continue;
+            }
+            let value = keyword.getattr("value")?.unbind();
+            let load = load_class.call0()?;
+            let bind_name = name_class.call1(("astichi_bind_external", load))?;
+            let bind_args = PyList::new(py, [value])?;
+            let bind_keywords = PyList::empty(py);
+            let bind_call = call_class.call1((bind_name, bind_args, bind_keywords))?;
+            node.setattr("args", PyList::new(py, [bind_call])?)?;
+            node.setattr("keywords", PyList::empty(py))?;
+            break;
+        }
+    }
+    Ok(())
 }
 
 struct Emitter<'py> {

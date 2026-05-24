@@ -35,6 +35,10 @@ N4a template extraction functions:
 
 - `extract_template_snapshot(engine, source, filename=None, line_number=1)`
 
+N4b extends `extract_template_snapshot(...)` to direct call markers for
+expression/block holes, external/ref bindings, identifier import/pass/export,
+keep, pyimport, and comments.
+
 Build explicitly from the Astichi repo root:
 
 ```bash
