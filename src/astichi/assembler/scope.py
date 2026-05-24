@@ -13,6 +13,13 @@ from astichi.builder.graph import (
     parse_indexed_instance_name,
 )
 from astichi.builder.handles import BuilderHandle, InstanceHandle
+from astichi.lower_engine import (
+    LowerEngine,
+    LowerTemplateBinding,
+    LowerTemplateCache,
+)
+from astichi.lower_engine.handles import OccurrenceId, RecordId
+from astichi.lower_engine.inventory import AssemblyState
 from astichi.model import (
     BasicComposable,
     BlockProductionInventoryPayload,
@@ -237,8 +244,27 @@ class AssemblyScope:
     _satisfied_record_ids: set[InventoryRecordId] = field(
         default_factory=set, init=False
     )
+    _lower_engine: LowerEngine = field(default_factory=LowerEngine, init=False)
+    _lower_cache: LowerTemplateCache = field(init=False)
+    _lower_state: AssemblyState = field(init=False)
+    _lower_occurrence_by_build_prefix: dict[tuple[str, ...], OccurrenceId] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _lower_record_by_inventory_id: dict[InventoryRecordId, RecordId] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _lower_record_ids_by_build_prefix: dict[tuple[str, ...], frozenset[RecordId]] = (
+        field(default_factory=dict, init=False)
+    )
+    _lower_inventory_ids_by_build_prefix: dict[
+        tuple[str, ...], frozenset[InventoryRecordId]
+    ] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self._lower_cache = LowerTemplateCache(self._lower_engine)
+        self._lower_state = self._lower_engine.new_state()
         if self.builder.graph.instances:
             self._refresh_inventory_from_build()
 
@@ -252,7 +278,12 @@ class AssemblyScope:
         handle = self.builder.add(name, composable)
         self._owner_by_build_prefix[(name,)] = name
         self._replace_occurrence_inventory((name,), composable)
+        self._append_lower_occurrence((name,), composable)
         return handle
+
+    def lower_structural_snapshot(self) -> dict[str, object]:
+        """Return the lower-engine structural state for diagnostics/tests."""
+        return self._lower_engine.structural_snapshot(self._lower_state)
 
     @counted_perf_call("assembly_scope_apply")
     def apply(self, candidate: BindingCandidate) -> None:
@@ -304,12 +335,34 @@ class AssemblyScope:
         )
         if _record_is_single_additive_hole_demand(candidate.target_record):
             self._mark_record_satisfied(candidate.target_record.record_id)
+            self._mark_lower_record_satisfied(candidate.target_record.record_id)
+        target_lower_record = self._lower_record_by_inventory_id.get(
+            candidate.target_record.record_id
+        )
+        source_occurrence = self._append_lower_occurrence(
+            build_path + (resource.instance_name,),
+            resource.composable,
+            parent_occurrence_id=self._lower_occurrence_by_build_prefix.get(build_path),
+        )
+        if target_lower_record is not None:
+            self._lower_engine.append_edge(
+                self._lower_state,
+                target_record_id=target_lower_record,
+                source_occurrence_id=source_occurrence,
+                operation_key=_operation_key_for_target(candidate.target_record),
+                order=resource.order,
+            )
         self._replace_occurrence_inventory(
             build_path + (resource.instance_name,),
             resource.composable,
         )
 
     def _apply_external_value(self, candidate: ExternalValueCandidate) -> None:
+        self._append_lower_overlay(
+            candidate.demand_record,
+            kind="external",
+            source_label=candidate.demand_record.name.logical_name(),
+        )
         owner = self._owner_for(candidate.demand_record)
         composable = self._registered_basic(owner)
         rebound = composable.bind(
@@ -319,6 +372,11 @@ class AssemblyScope:
         self._refresh_owner_occurrences(owner, rebound)
 
     def _apply_identifier_name(self, candidate: IdentifierNameCandidate) -> None:
+        self._append_lower_overlay(
+            candidate.demand_record,
+            kind="identifier",
+            source_label=candidate.resource.identifier,
+        )
         owner = self._owner_for(candidate.demand_record)
         composable = self._registered_basic(owner)
         rebound = composable.bind_identifier(
@@ -366,6 +424,7 @@ class AssemblyScope:
         for prefix, prefix_owner in tuple(self._owner_by_build_prefix.items()):
             if prefix_owner == owner:
                 self._replace_occurrence_inventory(prefix, composable)
+                self._append_lower_occurrence(prefix, composable)
 
     @counted_perf_call("replace_occurrence_inventory")
     def _replace_occurrence_inventory(
@@ -403,6 +462,95 @@ class AssemblyScope:
                 self._record_ids_by_build_prefix[prefix] = frozenset(
                     item for item in record_ids if item != record_id
                 )
+
+    def _append_lower_occurrence(
+        self,
+        build_prefix: tuple[str, ...],
+        composable: Composable,
+        *,
+        parent_occurrence_id: OccurrenceId | None = None,
+    ) -> OccurrenceId:
+        if not isinstance(composable, BasicComposable):
+            raise TypeError(
+                "assembler scope lower state requires BasicComposable instances; "
+                f"got {type(composable).__name__}"
+            )
+        binding = composable._lower_template
+        if not isinstance(binding, LowerTemplateBinding):
+            raise TypeError("BasicComposable is missing lower template metadata")
+
+        self._remove_lower_prefix_records(build_prefix)
+        template_id = self._lower_cache.template_id_for(binding)
+        occurrence_id = self._lower_engine.append_occurrence(
+            self._lower_state,
+            template_id,
+            build_path=build_prefix,
+            parent_occurrence_id=parent_occurrence_id,
+        )
+        self._lower_occurrence_by_build_prefix[build_prefix] = occurrence_id
+        lower_record_ids: set[RecordId] = set()
+        inventory_record_ids: set[InventoryRecordId] = set()
+        for index, spec in enumerate(binding.record_specs):
+            if not spec.legacy_record_id:
+                continue
+            record_id = self._lower_engine.record_id(
+                self._lower_state,
+                occurrence_id,
+                index,
+            )
+            lower_record_ids.add(record_id)
+            inventory_record_id = _prefix_inventory_record_id(
+                build_prefix,
+                spec.legacy_record_id,
+            )
+            inventory_record_ids.add(inventory_record_id)
+            self._lower_record_by_inventory_id[inventory_record_id] = record_id
+        self._lower_record_ids_by_build_prefix[build_prefix] = frozenset(
+            lower_record_ids
+        )
+        self._lower_inventory_ids_by_build_prefix[build_prefix] = frozenset(
+            inventory_record_ids
+        )
+        return occurrence_id
+
+    def _remove_lower_prefix_records(self, build_prefix: tuple[str, ...]) -> None:
+        old_lower_records = self._lower_record_ids_by_build_prefix.get(
+            build_prefix,
+            frozenset(),
+        )
+        for record_id in old_lower_records:
+            self._lower_state.dead_records.add(record_id)
+        for inventory_id in self._lower_inventory_ids_by_build_prefix.get(
+            build_prefix,
+            frozenset(),
+        ):
+            self._lower_record_by_inventory_id.pop(inventory_id, None)
+
+    def _mark_lower_record_satisfied(
+        self,
+        inventory_record_id: InventoryRecordId,
+    ) -> None:
+        record_id = self._lower_record_by_inventory_id.get(inventory_record_id)
+        if record_id is not None:
+            self._lower_engine.mark_satisfied(self._lower_state, record_id)
+
+    def _append_lower_overlay(
+        self,
+        demand_record: InventoryRecord,
+        *,
+        kind: str,
+        source_label: str,
+    ) -> None:
+        record_id = self._lower_record_by_inventory_id.get(demand_record.record_id)
+        if record_id is None:
+            return
+        self._lower_engine.append_overlay(
+            self._lower_state,
+            kind=kind,
+            source_label=source_label,
+            target_record_id=record_id,
+        )
+        self._lower_engine.mark_satisfied(self._lower_state, record_id)
 
     def _refresh_inventory_from_build(self) -> None:
         instances = self.builder.graph.instances
@@ -450,6 +598,29 @@ def _ref_path_from_build_parts(parts: tuple[str, ...]) -> tuple[str | int, ...]:
         ref_path.append(stem)
         ref_path.extend(indexes)
     return tuple(ref_path)
+
+
+def _prefix_inventory_record_id(
+    build_prefix: tuple[str, ...],
+    record_id: InventoryRecordId,
+) -> InventoryRecordId:
+    if not build_prefix:
+        return record_id
+    return "/".join(build_prefix + (record_id,))
+
+
+def _operation_key_for_target(record: InventoryRecord) -> str:
+    if record.kind == "hole.expr":
+        return "astichi.operation.replace_expression"
+    if record.kind == "hole.block":
+        return "astichi.operation.splice_body_at_marker"
+    if record.kind == "hole.params":
+        return "astichi.operation.splice_parameters"
+    if record.kind == "hole.elif":
+        return "astichi.operation.append_clause"
+    if record.kind.startswith("hole."):
+        return "astichi.operation.splice_call_arguments"
+    return "astichi.operation.append_body"
 
 
 @counted_perf_call("inventory_projection")

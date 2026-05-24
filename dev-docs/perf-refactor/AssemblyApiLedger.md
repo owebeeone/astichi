@@ -38,8 +38,8 @@ API surface:
 
 | API surface | Current callers | YIDL caller | Classification | Replacement | Removal slice | Coverage |
 | --- | --- | --- | --- | --- | --- | --- |
-| `AssemblyScope.add` | `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append | keep; route in Slice 8 | assembler scope tests and YIDL final goldens |
-| `AssemblyScope.apply` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays | keep; route in Slices 9-10 | assembler scope tests and YIDL final goldens |
+| `AssemblyScope.add` | `tests/test_assembler_scope.py`, docs snippets | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower occurrence append; Slice 6a maintains parallel lower state | keep; make lower state authoritative in Slice 8 | assembler scope tests, YIDL final goldens, structural `scope_lower_occurrence_state` golden |
+| `AssemblyScope.apply` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower apply over candidate handles and overlays; Slice 6a records parallel lower edges/overlays | keep; route in Slices 9-10 | assembler scope tests, YIDL final goldens, structural `scope_lower_occurrence_state` golden |
 | `AssemblyScope.build` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-final` | lower-owned materialization facade | keep; route in Slice 11 | final-output goldens |
 | `AssemblyScope.inventory` | `find_candidates(scope.inventory, ...)`, inventory tests | `yidl/src/yidl/generation/assembly_runtime.py` | `adapter-only` | direct lower candidate query plus debug projection | decide in Slice 8; remove hot-path use by Slice 13 | structural inventory/snapshot goldens |
 | `find_candidates` | assembler scope tests/docs | `yidl/src/yidl/generation/assembly_runtime.py` | `required-hot` | lower index query returning candidate handles | route in Slice 7 | assembler diagnostics tests and structural goldens |

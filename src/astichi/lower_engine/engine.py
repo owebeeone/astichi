@@ -83,6 +83,10 @@ class LowerEngine:
                     semantic_summary=spec.semantic_summary,
                     locator_id=locator_id,
                     surface_id=spec.surface_id,
+                    resource_name=spec.resource_name,
+                    inventory_kind=spec.inventory_kind,
+                    code_owner_parts=spec.code_owner_parts,
+                    legacy_record_id=spec.legacy_record_id,
                 )
             )
         self._templates.append(
@@ -136,6 +140,9 @@ class LowerEngine:
             state.indexes.append(
                 build_path=build_path,
                 surface_key=record.surface_key,
+                resource_name=record.resource_name,
+                inventory_kind=record.inventory_kind,
+                code_owner_parts=record.code_owner_parts,
                 record_id=record_id,
             )
         return occurrence_id

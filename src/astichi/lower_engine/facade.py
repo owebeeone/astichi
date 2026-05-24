@@ -178,6 +178,10 @@ def _template_record_spec(
         materialization_anchor=surface.materialization_anchor,
         authored_summary=_authored_summary(record),
         surface_id=surface_id,
+        resource_name=record.name.logical_name(),
+        inventory_kind=record.kind,
+        code_owner_parts=_code_owner_parts(record),
+        legacy_record_id=record.record_id,
     )
 
 
@@ -291,6 +295,10 @@ def _semantic_summary(record: InventoryRecord) -> str:
         f"{record.kind} name={record.name.logical_name()} "
         f"owner={record.code_owner} build_path={record.build_path}"
     )
+
+
+def _code_owner_parts(record: InventoryRecord) -> tuple[str, ...]:
+    return tuple(node.logical_name() for node in record.code_owner.nodes)
 
 
 def _authored_summary(record: InventoryRecord) -> str:

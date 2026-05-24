@@ -721,10 +721,11 @@
     },
     {
       "build_path": [
+        "Root",
         "Value"
       ],
       "occurrence_id": 1,
-      "parent_occurrence_id": null,
+      "parent_occurrence_id": 0,
       "template_id": 1
     }
   ],
@@ -741,8 +742,8 @@
       "resource_name": "value",
       "semantic_summary": "hole.expr name=value owner=. build_path=.",
       "state": {
-        "satisfied": false,
-        "visible": true
+        "satisfied": true,
+        "visible": false
       },
       "surface_key": "astichi.surface.expression.hole",
       "template_record_id": 0
@@ -802,7 +803,18 @@
       "template_record_id": 1
     }
   ],
-  "edges": [],
+  "edges": [
+    {
+      "edge_id": 0,
+      "operation_key": "astichi.operation.replace_expression",
+      "order": 0,
+      "source_occurrence_id": 1,
+      "target_record_id": [
+        0,
+        0
+      ]
+    }
+  ],
   "overlays": [],
   "materialization": {
     "artifact_requests": [],

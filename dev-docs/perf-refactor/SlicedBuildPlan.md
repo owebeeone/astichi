@@ -299,6 +299,17 @@ Stop if:
 Goal: add root/source occurrences and expose derived records through lower
 indexes.
 
+Implementation split:
+
+- Slice 6a adds parallel lower occurrence state inside `AssemblyScope`, derives
+  record handles from template records, maintains live/satisfied/dead state for
+  appended or refreshed occurrences, updates basic lower indexes, and snapshots
+  a real add/apply scope fixture. Candidate lookup still uses the legacy
+  projected `Inventory`.
+- Slice 6b replaces the debug inventory projection path with a lower-state
+  projection and tightens the index coverage needed by Slice 7 candidate
+  lookup.
+
 Work:
 
 - append occurrences from template ids;

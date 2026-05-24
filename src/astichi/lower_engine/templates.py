@@ -19,6 +19,10 @@ class TemplateRecordSpec:
     materialization_anchor: str
     authored_summary: str
     surface_id: SurfaceId | None = None
+    resource_name: str = ""
+    inventory_kind: str = ""
+    code_owner_parts: tuple[str, ...] = ()
+    legacy_record_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +43,10 @@ class TemplateRecord:
     semantic_summary: str
     locator_id: LocatorId
     surface_id: SurfaceId | None = None
+    resource_name: str = ""
+    inventory_kind: str = ""
+    code_owner_parts: tuple[str, ...] = ()
+    legacy_record_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

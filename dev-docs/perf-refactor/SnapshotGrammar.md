@@ -68,6 +68,9 @@ record:
   occurrence_id
   template_record_id
   surface_key
+  resource_name
+  inventory_kind
+  code_owner
   semantic_summary
   locator_id
   state

@@ -45,10 +45,35 @@ class Overlay:
 class InventoryIndexes:
     by_build_path: dict[tuple[str, ...], list[RecordId]] = field(default_factory=dict)
     by_surface: dict[str, list[RecordId]] = field(default_factory=dict)
+    by_resource_name: dict[str, list[RecordId]] = field(default_factory=dict)
+    by_inventory_kind: dict[str, list[RecordId]] = field(default_factory=dict)
+    by_owner: dict[tuple[str, ...], list[RecordId]] = field(default_factory=dict)
+    by_name_and_kind: dict[tuple[str, str], list[RecordId]] = field(
+        default_factory=dict
+    )
 
-    def append(self, *, build_path: tuple[str, ...], surface_key: str, record_id: RecordId) -> None:
+    def append(
+        self,
+        *,
+        build_path: tuple[str, ...],
+        surface_key: str,
+        resource_name: str,
+        inventory_kind: str,
+        code_owner_parts: tuple[str, ...],
+        record_id: RecordId,
+    ) -> None:
         self.by_build_path.setdefault(build_path, []).append(record_id)
         self.by_surface.setdefault(surface_key, []).append(record_id)
+        if resource_name:
+            self.by_resource_name.setdefault(resource_name, []).append(record_id)
+            if inventory_kind:
+                self.by_name_and_kind.setdefault(
+                    (resource_name, inventory_kind),
+                    [],
+                ).append(record_id)
+        if inventory_kind:
+            self.by_inventory_kind.setdefault(inventory_kind, []).append(record_id)
+        self.by_owner.setdefault(code_owner_parts, []).append(record_id)
 
 
 @dataclass(slots=True)

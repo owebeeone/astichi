@@ -126,9 +126,12 @@ def _record_snapshot(
     )
     resolved_state = _record_state(record_id=record_id, state=state)
     return {
+        "code_owner": list(template_record.code_owner_parts),
+        "inventory_kind": template_record.inventory_kind,
         "locator_id": _locator_index(template_record.locator_id),
         "occurrence_id": _occurrence_index(record_id.occurrence_id),
         "record_id": _record_id_array(record_id),
+        "resource_name": template_record.resource_name,
         "semantic_summary": template_record.semantic_summary,
         "state": {
             "satisfied": resolved_state == "satisfied",

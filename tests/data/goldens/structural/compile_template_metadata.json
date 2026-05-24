@@ -707,12 +707,17 @@
   ],
   "records": [
     {
+      "code_owner": [
+        "make"
+      ],
+      "inventory_kind": "external.bind",
       "locator_id": 0,
       "occurrence_id": 0,
       "record_id": [
         0,
         0
       ],
+      "resource_name": "default",
       "semantic_summary": "external.bind name=default owner=make build_path=.",
       "state": {
         "satisfied": false,
@@ -722,12 +727,17 @@
       "template_record_id": 0
     },
     {
+      "code_owner": [
+        "make"
+      ],
+      "inventory_kind": "hole.expr",
       "locator_id": 1,
       "occurrence_id": 0,
       "record_id": [
         0,
         1
       ],
+      "resource_name": "result",
       "semantic_summary": "hole.expr name=result owner=make build_path=.",
       "state": {
         "satisfied": false,
@@ -737,12 +747,15 @@
       "template_record_id": 1
     },
     {
+      "code_owner": [],
+      "inventory_kind": "production.block",
       "locator_id": 2,
       "occurrence_id": 0,
       "record_id": [
         0,
         2
       ],
+      "resource_name": "__block__",
       "semantic_summary": "production.block name=__block__ owner=. build_path=.",
       "state": {
         "satisfied": false,
