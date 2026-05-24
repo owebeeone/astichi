@@ -1,27 +1,18 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-#[derive(Clone, Copy)]
-pub enum HandleKind {
-    Engine,
-}
+use crate::surface_registry::RegisteredSurfaceBundle;
 
-impl HandleKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            HandleKind::Engine => "engine",
-        }
-    }
-}
+pub const HANDLE_KIND_ENGINE: &str = "engine";
 
 #[pyclass(module = "_astichi_native_engine", skip_from_py_object)]
 pub struct EngineHandle {
     epoch: u64,
     owner_id: u64,
-    kind: HandleKind,
     index: u64,
     generation: u64,
     closed: bool,
+    surface_bundle: Option<RegisteredSurfaceBundle>,
 }
 
 impl EngineHandle {
@@ -29,10 +20,10 @@ impl EngineHandle {
         Self {
             epoch: 1,
             owner_id,
-            kind: HandleKind::Engine,
             index: 0,
             generation: 0,
             closed: false,
+            surface_bundle: None,
         }
     }
 
@@ -54,14 +45,39 @@ impl EngineHandle {
         self.generation += 1;
     }
 
+    pub fn surface_bundle(&self) -> Option<&RegisteredSurfaceBundle> {
+        self.surface_bundle.as_ref()
+    }
+
+    pub fn set_surface_bundle(&mut self, bundle: RegisteredSurfaceBundle) -> PyResult<()> {
+        self.ensure_open()?;
+        if self.surface_bundle.is_some() {
+            return Err(crate::errors::schema_error(
+                "surface bundle is already registered",
+            ));
+        }
+        self.surface_bundle = Some(bundle);
+        Ok(())
+    }
+
     pub fn snapshot_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("engine_epoch", self.epoch)?;
         dict.set_item("owner_id", self.owner_id)?;
-        dict.set_item("kind", self.kind.as_str())?;
+        dict.set_item("kind", HANDLE_KIND_ENGINE)?;
         dict.set_item("index", self.index)?;
         dict.set_item("generation", self.generation)?;
         dict.set_item("closed", self.closed)?;
+        dict.set_item("surface_bundle_registered", self.surface_bundle.is_some())?;
+        if let Some(bundle) = self.surface_bundle.as_ref() {
+            dict.set_item("surface_count", bundle.surface_count())?;
+            dict.set_item("operation_count", bundle.operation_count())?;
+            dict.set_item("pattern_count", bundle.pattern_count())?;
+        } else {
+            dict.set_item("surface_count", 0)?;
+            dict.set_item("operation_count", 0)?;
+            dict.set_item("pattern_count", 0)?;
+        }
         Ok(dict.into_any().unbind())
     }
 }
@@ -75,7 +91,7 @@ impl EngineHandle {
 
     #[getter]
     fn kind(&self) -> &'static str {
-        self.kind.as_str()
+        HANDLE_KIND_ENGINE
     }
 
     #[getter]

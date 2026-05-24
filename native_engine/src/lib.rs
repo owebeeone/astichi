@@ -5,6 +5,7 @@ mod capabilities;
 mod engine;
 mod errors;
 mod handles;
+mod surface_registry;
 
 #[pyfunction]
 fn version() -> &'static str {
@@ -30,5 +31,6 @@ fn _astichi_native_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(capabilities_py, m)?)?;
     m.add_function(wrap_pyfunction!(self_test, m)?)?;
     engine::register_module_functions(m)?;
+    surface_registry::register_module_functions(m)?;
     Ok(())
 }

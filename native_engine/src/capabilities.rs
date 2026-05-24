@@ -13,7 +13,12 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
     dict.set_item("build_profile", "cargo release")?;
     dict.set_item(
         "engine_features",
-        vec!["native.extension.v1", "native.engine_core.v1"],
+        vec![
+            "native.extension.v1",
+            "native.engine_core.v1",
+            "native.surface_registry.v1",
+            "native.pattern_registry.v1",
+        ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;
     dict.set_item("supported_snapshot_schema_versions", vec![1_u32])?;

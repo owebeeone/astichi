@@ -17,6 +17,11 @@ N1 core functions:
 - `engine_snapshot(handle)`
 - `engine_assert_same_owner(left, right)`
 
+N2 registry functions:
+
+- `register_surface_bundle(engine, bundle_snapshot)`
+- `surface_bundle_snapshot(engine)`
+
 Build explicitly from the Astichi repo root:
 
 ```bash

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use crate::handles::{EngineHandle, HandleKind};
+use crate::handles::{EngineHandle, HANDLE_KIND_ENGINE};
 
 static NEXT_OWNER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -55,6 +55,6 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(close, m)?)?;
     m.add_function(wrap_pyfunction!(snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assert_same_owner, m)?)?;
-    m.add("HANDLE_KIND_ENGINE", HandleKind::Engine.as_str())?;
+    m.add("HANDLE_KIND_ENGINE", HANDLE_KIND_ENGINE)?;
     Ok(())
 }
