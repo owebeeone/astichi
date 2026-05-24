@@ -18,6 +18,9 @@ from astichi.lowering.markers import (
     call_name,
     is_call_to_marker,
 )
+from astichi.lowering.payload_prefix import (
+    single_payload_expression_after_boundary_prefix,
+)
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.model.semantics import SemanticSingleton
 
@@ -193,15 +196,11 @@ def validate_call_argument_payload_surface(tree: ast.Module) -> None:
     calls = [node for node in ast.walk(tree) if is_astichi_funcargs_call(node)]
     if not calls:
         return
-    if (
-        len(calls) != 1
-        or len(tree.body) != 1
-        or not isinstance(tree.body[0], ast.Expr)
-        or tree.body[0].value is not calls[0]
-    ):
+    payload_statement = single_payload_expression_after_boundary_prefix(tree.body)
+    if len(calls) != 1 or payload_statement is None or payload_statement.value is not calls[0]:
         raise ValueError(
-            "astichi_funcargs(...) must appear as the only top-level expression "
-            "statement in a call-argument payload snippet"
+            "astichi_funcargs(...) must appear as the only non-prefix top-level "
+            "expression statement in a call-argument payload snippet"
         )
     _validate_funcargs_call(calls[0])
 

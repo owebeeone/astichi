@@ -1136,9 +1136,15 @@ class AssemblyScope:
         source_path = self._source_expression_path(source_id)
         if source_path is None:
             return False
-        replacement = clone_ast(_ast_node_at_path(source_tree, source_path))
-        if not isinstance(replacement, ast.expr):
+        replacement_node = _source_ast_node_at_path(
+            source_tree,
+            source.tree,
+            source_path,
+            ast.expr,
+        )
+        if replacement_node is None:
             return False
+        replacement = clone_ast(replacement_node)
         target_locator = self._lower_engine.locator_for_record(
             self._lower_state,
             operation.target_record_id,
@@ -1303,11 +1309,13 @@ class AssemblyScope:
                 payload_path = self._source_parameter_path(source_id)
                 if payload_path is None:
                     return False
-                payload_node = _ast_node_at_path(source_tree, payload_path)
-                if not isinstance(
-                    payload_node,
+                payload_node = _source_ast_node_at_path(
+                    source_tree,
+                    source.tree,
+                    payload_path,
                     (ast.FunctionDef, ast.AsyncFunctionDef),
-                ):
+                )
+                if payload_node is None:
                     return False
                 payloads.append(clone_ast(payload_node.args))
             function_node.args = _merge_params_into_arguments(
@@ -1365,8 +1373,13 @@ class AssemblyScope:
                 payload_path = self._source_elif_path(source_id)
                 if payload_path is None:
                     return False
-                payload_node = _ast_node_at_path(source_tree, payload_path)
-                if not isinstance(payload_node, ast.FunctionDef):
+                payload_node = _source_ast_node_at_path(
+                    source_tree,
+                    source.tree,
+                    payload_path,
+                    ast.FunctionDef,
+                )
+                if payload_node is None:
                     return False
                 if not _lower_boundary_markers_supported_in_tree(
                     source_tree,
@@ -1464,13 +1477,23 @@ class AssemblyScope:
                         "sequence_starred",
                     }:
                         return False
-                    expression = _ast_node_at_path(source_tree, expression_path)
-                    if not isinstance(expression, ast.expr):
+                    expression = _source_ast_node_at_path(
+                        source_tree,
+                        source.tree,
+                        expression_path,
+                        ast.expr,
+                    )
+                    if expression is None:
                         return False
                     lowered_args.append(clone_ast(expression))
                     continue
-                payload_call = _ast_node_at_path(source_tree, payload_path)
-                if not isinstance(payload_call, ast.Call):
+                payload_call = _source_ast_node_at_path(
+                    source_tree,
+                    source.tree,
+                    payload_path,
+                    ast.Call,
+                )
+                if payload_call is None:
                     return False
                 payload = extract_funcargs_payload(payload_call)
                 if placement.region_name in {"starred", "sequence_starred"}:
@@ -1857,6 +1880,28 @@ def _ast_node_at_path(root: ast.AST, path: str) -> ast.AST:
     for part in path.split("/"):
         node = _ast_child(node, part)
     return node
+
+
+def _source_ast_node_at_path(
+    materialized_root: ast.AST,
+    template_root: ast.AST,
+    path: str,
+    expected_type: type[ast.AST] | tuple[type[ast.AST], ...],
+) -> ast.AST | None:
+    node = _maybe_ast_node_at_path(materialized_root, path)
+    if isinstance(node, expected_type):
+        return node
+    fallback = _maybe_ast_node_at_path(template_root, path)
+    if isinstance(fallback, expected_type):
+        return fallback
+    return None
+
+
+def _maybe_ast_node_at_path(root: ast.AST, path: str) -> ast.AST | None:
+    try:
+        return _ast_node_at_path(root, path)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
 
 
 def _replace_ast_node_at_path(root: ast.AST, path: str, replacement: ast.AST) -> None:

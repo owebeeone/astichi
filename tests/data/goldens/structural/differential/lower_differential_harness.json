@@ -201,7 +201,7 @@
             [
               "demand: build_path=Root owner=run@<astichi>:1 name=body kind=hole.block location=<astichi>:4 locator=body[0]/body[2]/value",
               "resource: composable build_name=Body",
-              "  production: name=__block__ kind=production.block location=<astichi>:1 locator=."
+              "  production: name=__block__ kind=production.block location=<astichi>:2 locator=."
             ]
           ],
           "lower_count": 1,

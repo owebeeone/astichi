@@ -32,6 +32,28 @@ def astichi_params(value, *, debug=False, **kwds):
     ]
 
 
+def test_compile_accepts_boundary_prefix_before_astichi_params_payload() -> None:
+    compiled = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(bar,))
+astichi_keep(foo)
+def astichi_params(name__astichi_arg__=1):
+    pass
+"""
+    )
+
+    assert [
+        (port.name, port.shape, port.placement, port.sources)
+        for port in compiled.supply_ports
+    ] == [
+        ("astichi_params", PARAMETER, "params", frozenset({"params"}))
+    ]
+    assert {port.name for port in compiled.demand_ports} == {"name"}
+    assert [production.name for production in compiled.describe().productions] == [
+        "astichi_params"
+    ]
+
+
 def test_compile_recognizes_async_astichi_params_supply_port() -> None:
     compiled = astichi.compile(
         """
@@ -51,6 +73,21 @@ def test_parameter_payload_rejects_non_empty_body() -> None:
             """
 def astichi_params(value):
     generated = value
+"""
+        )
+
+
+def test_parameter_payload_rejects_extra_non_prefix_statement() -> None:
+    with pytest.raises(
+        ValueError,
+        match="only top-level statement after any boundary-prefix directives",
+    ):
+        astichi.compile(
+            """
+astichi_pyimport(module=foo, names=(bar,))
+def astichi_params(value):
+    pass
+extra = 1
 """
         )
 

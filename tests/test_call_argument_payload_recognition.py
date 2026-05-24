@@ -28,6 +28,21 @@ astichi_funcargs(
     assert "astichi_funcargs" in marker_names
 
 
+def test_compile_accepts_boundary_prefix_before_astichi_funcargs_payload() -> None:
+    compiled = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(bar,))
+astichi_keep(foo)
+astichi_funcargs(name__astichi_arg__, key=b)
+"""
+    )
+
+    assert [production.name for production in compiled.describe().productions] == [
+        "__funcargs__"
+    ]
+    assert {port.name for port in compiled.demand_ports} == {"name", "b"}
+
+
 def test_direct_funcargs_directive_calls_preserve_authored_order() -> None:
     tree = ast.parse(
         """
@@ -58,7 +73,7 @@ astichi_funcargs(
 def test_compile_rejects_non_payload_placement(source: str) -> None:
     with pytest.raises(
         ValueError,
-        match="only top-level expression statement in a call-argument payload snippet",
+        match="only non-prefix top-level expression statement in a call-argument payload snippet",
     ):
         astichi.compile(source)
 

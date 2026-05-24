@@ -74,6 +74,9 @@ from astichi.lowering.markers import (
     set_boundary_explicit_bind_state,
     strip_identifier_suffix,
 )
+from astichi.lowering.payload_prefix import (
+    single_payload_function_after_boundary_prefix,
+)
 from astichi.lowering.external_ref import apply_external_ref_lowering
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.lowering.unroll import iter_target_name, unroll_tree
@@ -1972,21 +1975,20 @@ def _extract_elif_payload_body(
     *,
     source_instance: str,
 ) -> list[ast.stmt]:
-    if len(body) != 1 or not isinstance(body[0], ast.FunctionDef):
+    payload = single_payload_function_after_boundary_prefix(
+        body,
+        ELIF.source_name,
+        include_async=False,
+    )
+    if payload is None:
         raise ValueError(
             format_astichi_error(
                 "materialize",
                 f"source instance {source_instance} has no root `def astichi_elif():` payload",
-                hint="elif targets require a source snippet containing exactly one `def astichi_elif(): ...`",
-            )
-        )
-    payload = body[0]
-    if payload.name != ELIF.source_name:
-        raise ValueError(
-            format_astichi_error(
-                "materialize",
-                f"source instance {source_instance} has no root `def astichi_elif():` payload",
-                hint="elif targets require a source snippet containing exactly one `def astichi_elif(): ...`",
+                hint=(
+                    "elif targets require a source snippet containing exactly one "
+                    "`def astichi_elif(): ...` after any boundary-prefix directives"
+                ),
             )
         )
     return clone_ast(payload.body)

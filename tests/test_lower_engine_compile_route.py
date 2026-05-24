@@ -66,6 +66,77 @@ def make():
     assert actual_text == expected_text
 
 
+def test_compile_funcargs_payload_after_boundary_prefix_uses_payload_locator() -> None:
+    composable = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(bar,))
+astichi_keep(foo)
+astichi_funcargs(name__astichi_arg__, key=b)
+"""
+    )
+    lower_template = composable._lower_template
+    assert isinstance(lower_template, LowerTemplateBinding)
+
+    assert [
+        (
+            spec.inventory_kind,
+            spec.resource_name,
+            spec.ast_path,
+            spec.surface_key,
+        )
+        for spec in lower_template.record_specs
+    ] == [
+        (
+            "identifier.demand",
+            "name",
+            "body[2]/value/args[0]",
+            "astichi.surface.identifier.demand",
+        ),
+        (
+            "production.funcargs",
+            "__funcargs__",
+            "body[2]/value",
+            "astichi.surface.funcargs.production",
+        ),
+    ]
+
+
+def test_compile_params_payload_after_boundary_prefix_uses_payload_locator() -> None:
+    composable = astichi.compile(
+        """
+astichi_pyimport(module=foo, names=(bar,))
+astichi_keep(foo)
+def astichi_params(name__astichi_arg__=1):
+    pass
+"""
+    )
+    lower_template = composable._lower_template
+    assert isinstance(lower_template, LowerTemplateBinding)
+
+    assert [
+        (
+            spec.inventory_kind,
+            spec.resource_name,
+            spec.ast_path,
+            spec.surface_key,
+        )
+        for spec in lower_template.record_specs
+    ] == [
+        (
+            "production.supply",
+            "astichi_params",
+            "body[2]",
+            "astichi.surface.parameter.production",
+        ),
+        (
+            "identifier.demand",
+            "name",
+            "body[2]/args/args[0]",
+            "astichi.surface.identifier.demand",
+        ),
+    ]
+
+
 def test_template_binding_rebinds_into_shared_lower_engine() -> None:
     root = astichi.compile("result = astichi_hole(value)\n")
     value = astichi.compile("1\n")

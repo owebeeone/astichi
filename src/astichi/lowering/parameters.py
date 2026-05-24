@@ -6,6 +6,9 @@ import ast
 import copy
 
 from astichi.lowering.markers import RecognizedMarker, strip_identifier_suffix
+from astichi.lowering.payload_prefix import (
+    single_payload_function_after_boundary_prefix,
+)
 
 PARAMS_PAYLOAD_NAME = "astichi_params"
 
@@ -22,17 +25,20 @@ def validate_parameter_payload_surface(tree: ast.Module) -> None:
     payloads = [node for node in ast.walk(tree) if is_astichi_params_def(node)]
     if not payloads:
         return
+    payload = single_payload_function_after_boundary_prefix(
+        tree.body,
+        PARAMS_PAYLOAD_NAME,
+    )
     if (
         len(payloads) != 1
-        or len(tree.body) != 1
-        or tree.body[0] is not payloads[0]
+        or payload is None
+        or payload is not payloads[0]
     ):
         raise ValueError(
             "def astichi_params(...): pass must be the only top-level statement "
-            "in a parameter payload snippet; astichi_params is reserved in "
-            "authored snippets"
+            "after any boundary-prefix directives in a parameter payload snippet; "
+            "astichi_params is reserved in authored snippets"
         )
-    payload = payloads[0]
     if payload.args.posonlyargs:
         raise ValueError("astichi_params payloads do not support positional-only parameters")
     if not _body_is_empty_equivalent(payload.body):
@@ -88,10 +94,12 @@ def validate_parameter_hole_surface(
 
 
 def extract_params_payload_from_body(body: list[ast.stmt]) -> ast.arguments | None:
-    if len(body) != 1 or not is_astichi_params_def(body[0]):
+    payload = single_payload_function_after_boundary_prefix(
+        body,
+        PARAMS_PAYLOAD_NAME,
+    )
+    if payload is None:
         return None
-    payload = body[0]
-    assert isinstance(payload, (ast.FunctionDef, ast.AsyncFunctionDef))
     return copy.deepcopy(payload.args)
 
 

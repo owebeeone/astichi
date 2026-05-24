@@ -185,9 +185,39 @@ def test_native_template_extract_identifier_suffixes_match_python_reference_when
         "target(a)\n",
         "def build():\n    x = 1\n",
         "def astichi_params(timeout=1):\n    pass\n",
+        "async def astichi_params(timeout=1):\n    pass\n",
         "def astichi_params(name__astichi_arg__=1):\n    pass\n",
+        (
+            "astichi_pyimport(module=foo, names=(bar,))\n"
+            "def astichi_params(timeout=1):\n"
+            "    pass\n"
+        ),
+        (
+            "astichi_keep(foo)\n"
+            "def astichi_params(name__astichi_arg__=1):\n"
+            "    pass\n"
+        ),
+        (
+            "astichi_pyimport(module=foo, names=(bar,))\n"
+            "async def astichi_params(name__astichi_arg__=1):\n"
+            "    pass\n"
+        ),
         "astichi_funcargs(a, key=b)\n",
         "astichi_funcargs(name__astichi_arg__, key__astichi_arg__=b)\n",
+        "astichi_pyimport(module=foo, names=(bar,))\nastichi_funcargs(a, key=b)\n",
+        "astichi_keep(foo)\nastichi_funcargs(name__astichi_arg__)\n",
+        (
+            "astichi_pyimport(module=foo, names=(bar,))\n"
+            "astichi_keep(foo)\n"
+            "astichi_funcargs(a)\n"
+        ),
+        (
+            "astichi_pyimport(module=foo, names=(bar,))\n"
+            "def astichi_elif():\n"
+            "    astichi_import(kind)\n"
+            "    if kind == 'create':\n"
+            "        return kind\n"
+        ),
     ],
 )
 def test_native_template_extract_payload_markers_match_python_reference_when_available(

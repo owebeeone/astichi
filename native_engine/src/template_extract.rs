@@ -8,6 +8,7 @@ use crate::handles::EngineHandle;
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
 const ARG_SUFFIX: &str = "__astichi_arg__";
 const KEEP_SUFFIX: &str = "__astichi_keep__";
+const DEFAULTED_BLOCK_FALLBACK_NAME: &str = "astichi_fallback";
 
 #[derive(Clone)]
 struct SourceMap {
@@ -47,6 +48,11 @@ struct ExtractedRecord {
     code_owner: Vec<String>,
 }
 
+struct RootBodyEntry<'a> {
+    stmt: &'a ast::Stmt,
+    path: String,
+}
+
 #[pyfunction]
 #[pyo3(signature = (engine, source, filename = None, line_number = 1))]
 fn extract_template_snapshot(
@@ -64,6 +70,7 @@ fn extract_template_snapshot(
     reject_deferred_markers(&source)?;
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
     let module = crate::parser_ir::parse_native_module(&source, &filename)?;
+    validate_special_surface_placement(&module, &SourceMap::new(&source))?;
     let mut records = extract_records(&source, &module)?;
     if should_include_block_production(&module) {
         let source_map = SourceMap::new(&source);
@@ -107,36 +114,42 @@ fn validate_deferred_marker_text(_source: &str) -> PyResult<()> {
 fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<ExtractedRecord>> {
     let source_map = SourceMap::new(source);
     let mut records = Vec::new();
-    for (index, stmt) in module.body.iter().enumerate() {
-        stmt_records(
-            stmt,
-            &format!("body[{index}]"),
-            &source_map,
-            &[],
-            &mut records,
-        )?;
+    let entries = root_body_entries(module);
+    for entry in &entries {
+        stmt_records(entry.stmt, &entry.path, &source_map, &[], &mut records)?;
     }
-    if let Some(record) = root_funcargs_production_record(module, &source_map) {
+    if let Some(record) = root_funcargs_production_record(&entries, &source_map) {
         records.push(record);
     }
-    if let Some(record) = implicit_expression_production_record(module, &source_map) {
+    if let Some(record) = implicit_expression_production_record(&entries, &source_map) {
         records.push(record);
     }
     Ok(records)
 }
 
+fn root_body_entries(module: &ast::ModModule) -> Vec<RootBodyEntry<'_>> {
+    module
+        .body
+        .iter()
+        .enumerate()
+        .map(|(index, stmt)| RootBodyEntry {
+            stmt,
+            path: format!("body[{index}]"),
+        })
+        .collect()
+}
+
 fn root_funcargs_production_record(
-    module: &ast::ModModule,
+    entries: &[RootBodyEntry<'_>],
     source_map: &SourceMap,
 ) -> Option<ExtractedRecord> {
-    let ast::Stmt::Expr(stmt) = single_root_statement(module)? else {
-        return None;
-    };
+    let (entry, stmt) = single_payload_expression_after_boundary_prefix(entries)?;
     if !is_call_named(&stmt.value, "astichi_funcargs") {
         return None;
     }
+    let path = format!("{}/value", entry.path);
     Some(record(
-        "body[0]/value",
+        &path,
         &authored_summary("__funcargs__", source_map.line(stmt.range)),
         "production.funcargs",
         "copy-call-arguments",
@@ -147,41 +160,50 @@ fn root_funcargs_production_record(
 }
 
 fn implicit_expression_production_record(
-    module: &ast::ModModule,
+    entries: &[RootBodyEntry<'_>],
     source_map: &SourceMap,
 ) -> Option<ExtractedRecord> {
-    let mut expression: Option<(&ast::Expr, String, usize)> = None;
-    for (index, stmt) in module.body.iter().enumerate() {
-        if is_boundary_prefix_statement(stmt) {
-            continue;
-        }
-        let ast::Stmt::Expr(expr_stmt) = stmt else {
-            return None;
-        };
-        if expression.is_some() {
-            return None;
-        }
-        if is_call_named(&expr_stmt.value, "astichi_insert")
-            || is_call_named(&expr_stmt.value, "astichi_funcargs")
-        {
-            return None;
-        }
-        expression = Some((
-            &expr_stmt.value,
-            format!("body[{index}]/value"),
-            source_map.line(expr_stmt.range),
-        ));
+    let (entry, stmt) = single_payload_expression_after_boundary_prefix(entries)?;
+    if is_call_named(&stmt.value, "astichi_insert")
+        || is_call_named(&stmt.value, "astichi_funcargs")
+    {
+        return None;
     }
-    let (_expr, path, line_number) = expression?;
+    let path = format!("{}/value", entry.path);
+    let line_number = source_map.line(stmt.range);
     Some(expression_production_record(&path, line_number))
 }
 
-fn single_root_statement(module: &ast::ModModule) -> Option<&ast::Stmt> {
-    if module.body.len() == 1 {
-        Some(&module.body[0])
-    } else {
-        None
+fn single_payload_expression_after_boundary_prefix<'a>(
+    entries: &'a [RootBodyEntry<'a>],
+) -> Option<(&'a RootBodyEntry<'a>, &'a ast::StmtExpr)> {
+    let entry = single_payload_statement_after_boundary_prefix(entries)?;
+    let ast::Stmt::Expr(stmt) = entry.stmt else {
+        return None;
+    };
+    Some((entry, stmt))
+}
+
+fn single_payload_statement_after_boundary_prefix<'a>(
+    entries: &'a [RootBodyEntry<'a>],
+) -> Option<&'a RootBodyEntry<'a>> {
+    let mut payload: Option<&RootBodyEntry<'_>> = None;
+    for entry in entries {
+        if is_boundary_prefix_statement(entry.stmt) {
+            continue;
+        }
+        if payload.is_some() {
+            return None;
+        }
+        payload = Some(entry);
     }
+    payload
+}
+
+fn first_non_prefix_entry<'a>(entries: &'a [RootBodyEntry<'a>]) -> Option<&'a RootBodyEntry<'a>> {
+    entries
+        .iter()
+        .find(|entry| !is_boundary_prefix_statement(entry.stmt))
 }
 
 fn is_boundary_prefix_statement(stmt: &ast::Stmt) -> bool {
@@ -197,25 +219,113 @@ fn is_boundary_prefix_statement(stmt: &ast::Stmt) -> bool {
     }
 }
 
-fn should_include_block_production(module: &ast::ModModule) -> bool {
-    if module.body.len() != 1 {
-        return true;
-    }
-    match &module.body[0] {
-        ast::Stmt::FunctionDef(node) => node.name.as_str() != "astichi_params",
-        ast::Stmt::Expr(node) => !is_call_named(&node.value, "astichi_funcargs"),
-        _ => true,
-    }
-}
-
-fn block_production_line_number(
+fn validate_special_surface_placement(
     module: &ast::ModModule,
     source_map: &SourceMap,
-    fallback: u32,
-) -> usize {
-    let Some(stmt) = module.body.first() else {
-        return fallback as usize;
+) -> PyResult<()> {
+    validate_pyimport_prefix(&module.body, source_map)?;
+    validate_elif_positions(&module.body, source_map)
+}
+
+fn validate_pyimport_prefix(body: &[ast::Stmt], source_map: &SourceMap) -> PyResult<()> {
+    let mut prefix_open = true;
+    for stmt in body {
+        if is_pyimport_statement(stmt) {
+            if !prefix_open {
+                return Err(crate::errors::schema_error(&format!(
+                    "astichi_pyimport(...) at line {} must appear in the contiguous top-of-Astichi-scope prefix",
+                    statement_line(stmt, source_map)
+                )));
+            }
+        } else if !is_boundary_prefix_statement(stmt) {
+            prefix_open = false;
+        }
+        match stmt {
+            ast::Stmt::FunctionDef(node) => validate_pyimport_prefix(&node.body, source_map)?,
+            ast::Stmt::AsyncFunctionDef(node) => validate_pyimport_prefix(&node.body, source_map)?,
+            ast::Stmt::ClassDef(node) => validate_pyimport_prefix(&node.body, source_map)?,
+            ast::Stmt::With(node) => validate_pyimport_prefix(&node.body, source_map)?,
+            ast::Stmt::If(node) => {
+                validate_pyimport_prefix(&node.body, source_map)?;
+                validate_pyimport_prefix(&node.orelse, source_map)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn is_pyimport_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::Expr(expr_stmt) = stmt else {
+        return false;
     };
+    is_call_named(&expr_stmt.value, "astichi_pyimport")
+}
+
+fn validate_elif_positions(body: &[ast::Stmt], source_map: &SourceMap) -> PyResult<()> {
+    for stmt in body {
+        validate_elif_statement(stmt, false, source_map)?;
+    }
+    Ok(())
+}
+
+fn validate_elif_statement(
+    stmt: &ast::Stmt,
+    valid_elif_position: bool,
+    source_map: &SourceMap,
+) -> PyResult<()> {
+    let ast::Stmt::If(node) = stmt else {
+        match stmt {
+            ast::Stmt::FunctionDef(node) => validate_elif_positions(&node.body, source_map)?,
+            ast::Stmt::AsyncFunctionDef(node) => validate_elif_positions(&node.body, source_map)?,
+            ast::Stmt::ClassDef(node) => validate_elif_positions(&node.body, source_map)?,
+            ast::Stmt::With(node) => validate_elif_positions(&node.body, source_map)?,
+            _ => {}
+        }
+        return Ok(());
+    };
+    if is_call_named(&node.test, "astichi_elif") {
+        if !valid_elif_position {
+            return Err(crate::errors::schema_error(&format!(
+                "astichi_elif(...) at line {} is valid only in real elif position",
+                source_map.line(node.range)
+            )));
+        }
+        validate_elif_empty_body(&node.body, source_map)?;
+    }
+    for child in &node.body {
+        validate_elif_statement(child, false, source_map)?;
+    }
+    for (index, child) in node.orelse.iter().enumerate() {
+        validate_elif_statement(child, index == 0, source_map)?;
+    }
+    Ok(())
+}
+
+fn validate_elif_empty_body(body: &[ast::Stmt], source_map: &SourceMap) -> PyResult<()> {
+    for stmt in body {
+        if matches!(stmt, ast::Stmt::Pass(_)) {
+            continue;
+        }
+        if is_comment_statement(stmt) {
+            continue;
+        }
+        return Err(crate::errors::schema_error(&format!(
+            "astichi_elif marker body at line {} must be empty-equivalent",
+            statement_line(stmt, source_map)
+        )));
+    }
+    Ok(())
+}
+
+fn is_comment_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    is_call_named(&expr_stmt.value, "astichi_comment")
+}
+
+fn statement_line(stmt: &ast::Stmt, source_map: &SourceMap) -> usize {
     match stmt {
         ast::Stmt::FunctionDef(node) => source_map.line(node.range),
         ast::Stmt::AsyncFunctionDef(node) => source_map.line(node.range),
@@ -226,8 +336,41 @@ fn block_production_line_number(
         ast::Stmt::Return(node) => source_map.line(node.range),
         ast::Stmt::Import(node) => source_map.line(node.range),
         ast::Stmt::ImportFrom(node) => source_map.line(node.range),
-        _ => fallback as usize,
+        ast::Stmt::With(node) => source_map.line(node.range),
+        ast::Stmt::If(node) => source_map.line(node.range),
+        _ => 1,
     }
+}
+
+fn should_include_block_production(module: &ast::ModModule) -> bool {
+    let entries = root_body_entries(module);
+    if let Some(entry) = single_payload_statement_after_boundary_prefix(&entries) {
+        match entry.stmt {
+            ast::Stmt::Expr(stmt) if is_call_named(&stmt.value, "astichi_funcargs") => {
+                return false;
+            }
+            ast::Stmt::FunctionDef(node) if node.name.as_str() == "astichi_params" => {
+                return false;
+            }
+            ast::Stmt::AsyncFunctionDef(node) if node.name.as_str() == "astichi_params" => {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn block_production_line_number(
+    module: &ast::ModModule,
+    source_map: &SourceMap,
+    fallback: u32,
+) -> usize {
+    let entries = root_body_entries(module);
+    let Some(entry) = first_non_prefix_entry(&entries).or_else(|| entries.first()) else {
+        return fallback as usize;
+    };
+    statement_line(entry.stmt, source_map)
 }
 
 fn child_owner(owner: &[String], name: &str) -> Vec<String> {
@@ -297,9 +440,78 @@ fn stmt_records(
             }
             Ok(())
         }
+        ast::Stmt::With(node) => {
+            defaulted_block_hole_record(node, path, source_map, owner, records)?;
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::If(node) => {
+            if is_call_named(&node.test, "astichi_elif") {
+                let ast::Expr::Call(call) = node.test.as_ref() else {
+                    unreachable!("is_call_named already matched Call")
+                };
+                let resource_name = first_name_arg(call, "astichi_elif")?;
+                records.push(record_with_owner(
+                    &(path.to_string() + "/test"),
+                    &authored_summary(&resource_name, source_map.line(call.range)),
+                    "hole.elif",
+                    "append-clause",
+                    "hole.elif",
+                    &resource_name,
+                    "astichi.surface.elif.target",
+                    owner.to_vec(),
+                ));
+            } else {
+                expr_records(
+                    &node.test,
+                    &(path.to_string() + "/test"),
+                    source_map,
+                    false,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.orelse.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/orelse[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
         ast::Stmt::FunctionDef(node) => {
             let function_owner = child_owner(owner, node.name.as_str());
-            if node.name.as_str() == "astichi_params" {
+            if node.name.as_str() == "astichi_elif" {
+                records.push(record(
+                    path,
+                    &authored_summary("astichi_elif", source_map.line(node.range)),
+                    "production.elif",
+                    "copy-clause",
+                    "production.elif",
+                    "astichi_elif",
+                    "astichi.surface.elif.production",
+                ));
+            } else if node.name.as_str() == "astichi_params" {
                 records.push(record(
                     path,
                     &authored_summary("astichi_params", source_map.line(node.range)),
@@ -317,8 +529,70 @@ fn stmt_records(
                     records,
                 );
                 return Ok(());
+            } else if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
             }
-            if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
+            decorator_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &function_owner,
+                records,
+            )?;
+            function_argument_suffix_records(
+                &node.args,
+                path,
+                &function_owner,
+                source_map,
+                records,
+            );
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    &function_owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            let function_owner = child_owner(owner, node.name.as_str());
+            if node.name.as_str() == "astichi_elif" {
+                records.push(record(
+                    path,
+                    &authored_summary("astichi_elif", source_map.line(node.range)),
+                    "production.elif",
+                    "copy-clause",
+                    "production.elif",
+                    "astichi_elif",
+                    "astichi.surface.elif.production",
+                ));
+            } else if node.name.as_str() == "astichi_params" {
+                records.push(record(
+                    path,
+                    &authored_summary("astichi_params", source_map.line(node.range)),
+                    "production.supply",
+                    "copy-parameters",
+                    "production.supply",
+                    "astichi_params",
+                    "astichi.surface.parameter.production",
+                ));
+                function_argument_suffix_records(
+                    &node.args,
+                    path,
+                    &function_owner,
+                    source_map,
+                    records,
+                );
+                return Ok(());
+            } else if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
                 records.push(identifier_demand_record(
                     path,
                     &resource_name,
@@ -653,6 +927,49 @@ fn alias_suffix_records(
             ));
         }
     }
+}
+
+fn defaulted_block_hole_record(
+    node: &ast::StmtWith,
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    let Some(item) = node.items.first() else {
+        return Ok(());
+    };
+    let ast::Expr::Call(call) = &item.context_expr else {
+        return Ok(());
+    };
+    if call_name(&call.func) != Some("astichi_hole") {
+        return Ok(());
+    }
+    let Some(optional_vars) = item.optional_vars.as_ref() else {
+        return Err(crate::errors::schema_error(
+            "defaulted block holes require `as astichi_fallback`",
+        ));
+    };
+    if !matches!(
+        optional_vars.as_ref(),
+        ast::Expr::Name(name) if name.id.as_str() == DEFAULTED_BLOCK_FALLBACK_NAME
+    ) {
+        return Err(crate::errors::schema_error(
+            "defaulted block holes require `as astichi_fallback`",
+        ));
+    }
+    let resource_name = first_name_arg(call, "astichi_hole")?;
+    records.push(record_with_owner(
+        path,
+        &authored_summary(&resource_name, source_map.line(node.range)),
+        "hole.block",
+        "splice-body-at-marker",
+        "hole.block",
+        &resource_name,
+        "astichi.surface.block.hole",
+        owner.to_vec(),
+    ));
+    Ok(())
 }
 
 fn direct_call_record(

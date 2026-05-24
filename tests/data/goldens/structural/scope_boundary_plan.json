@@ -720,7 +720,7 @@
     },
     {
       "ast_path": ".",
-      "authored_summary": "__block__ at line 1",
+      "authored_summary": "__block__ at line 2",
       "locator_id": 5,
       "materialization_anchor": "copy-block",
       "parent_locator_id": null,

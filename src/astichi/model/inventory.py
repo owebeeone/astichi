@@ -15,8 +15,12 @@ from astichi.lowering import (
     is_astichi_funcargs_call,
 )
 from astichi.lowering.call_argument_payloads import FuncArgPayload
-from astichi.lowering.markers import ALL_MARKERS, strip_identifier_suffix
+from astichi.lowering.markers import strip_identifier_suffix
 from astichi.lowering.parameters import has_params_payload
+from astichi.lowering.payload_prefix import (
+    first_non_prefix_statement,
+    single_payload_expression_after_boundary_prefix,
+)
 from astichi.model.ports import DemandPort, SupplyPort
 from astichi.model.descriptors import ClauseEmptyPolicy, REJECT_EMPTY
 from astichi.path_resolution import effective_root_body
@@ -587,16 +591,17 @@ def _add_production_records(
     supply_ports: tuple[SupplyPort, ...],
 ) -> None:
     root_body = effective_root_body(tree.body)
-    if _is_funcargs_payload_body(root_body):
-        payload = _extract_funcargs_payload_from_body(root_body)
+    funcargs_statement = _funcargs_payload_after_boundary_prefix(root_body)
+    if funcargs_statement is not None:
+        payload = extract_funcargs_payload(funcargs_statement.value)
         if payload is not None:
             _add_static_production_record(
                 inventory,
                 name="__funcargs__",
                 kind="production.funcargs",
-                locator=index.locator_for(root_body[0].value),
+                locator=index.locator_for(funcargs_statement.value),
                 payload=FuncargsProductionInventoryPayload(payload),
-                source_node=root_body[0].value,
+                source_node=funcargs_statement.value,
             )
         return
     if has_params_payload(root_body):
@@ -617,7 +622,7 @@ def _add_production_records(
         kind="production.block",
         locator=NodeLocator(),
         payload=BlockProductionInventoryPayload(),
-        source_node=_first_body_node(root_body),
+        source_node=first_non_prefix_statement(root_body),
     )
 
 
@@ -641,12 +646,6 @@ def _add_static_production_record(
     )
 
 
-def _first_body_node(body: list[ast.stmt]) -> ast.AST | None:
-    if not body:
-        return None
-    return body[0]
-
-
 def _source_location_for(node: ast.AST | None) -> SourceLocation | None:
     if node is None:
         return None
@@ -657,55 +656,27 @@ def _source_location_for(node: ast.AST | None) -> SourceLocation | None:
     return SourceLocation(file_name=file_name, line_number=line_number)
 
 
-def _is_funcargs_payload_body(body: list[ast.stmt]) -> bool:
-    return (
-        len(body) == 1
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Call)
-        and is_astichi_funcargs_call(body[0].value)
-    )
-
-
-def _extract_funcargs_payload_from_body(body: list[ast.stmt]) -> FuncArgPayload | None:
-    if _is_funcargs_payload_body(body):
-        return extract_funcargs_payload(body[0].value)
-    return None
-
-
 def _implicit_expression_after_boundary_prefix(body: list[ast.stmt]) -> ast.expr | None:
-    boundary_prefix_names = frozenset(
-        marker.source_name
-        for marker in ALL_MARKERS
-        if marker.is_expression_prefix_directive()
-    )
-    expression_seen = False
-    expression: ast.expr | None = None
-    for statement in body:
-        if _is_boundary_prefix_statement(statement, boundary_prefix_names):
-            continue
-        if expression_seen:
-            return None
-        if isinstance(statement, ast.Expr):
-            expression_seen = True
-            expression = statement.value
-            continue
+    statement = single_payload_expression_after_boundary_prefix(body)
+    if statement is None:
         return None
+    expression = statement.value
     if is_astichi_insert_call(expression):
+        return None
+    if isinstance(expression, ast.Call) and is_astichi_funcargs_call(expression):
         return None
     return expression
 
 
-def _is_boundary_prefix_statement(
-    statement: ast.stmt, boundary_prefix_names: frozenset[str]
-) -> bool:
-    if not isinstance(statement, ast.Expr):
-        return False
-    call = statement.value
-    if not isinstance(call, ast.Call):
-        return False
-    if not isinstance(call.func, ast.Name):
-        return False
-    return call.func.id in boundary_prefix_names
+def _funcargs_payload_after_boundary_prefix(body: list[ast.stmt]) -> ast.Expr | None:
+    statement = single_payload_expression_after_boundary_prefix(body)
+    if (
+        statement is not None
+        and isinstance(statement.value, ast.Call)
+        and is_astichi_funcargs_call(statement.value)
+    ):
+        return statement
+    return None
 
 
 def _strip_astichi_suffix(name: str) -> str:

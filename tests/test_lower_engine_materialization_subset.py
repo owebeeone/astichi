@@ -460,6 +460,7 @@ def dispatch(kind):
     )
     create = astichi.compile(
         """
+astichi_keep(kind)
 def astichi_elif():
     astichi_import(kind)
     if kind == "create":
