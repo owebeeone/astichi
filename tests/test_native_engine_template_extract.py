@@ -77,7 +77,7 @@ def test_native_template_extract_rejects_marker_source_when_available() -> None:
     if module is None:
         pytest.skip("native engine extension is not built")
 
-    with pytest.raises(ValueError, match="metadata and payload extraction"):
+    with pytest.raises(ValueError, match="metadata extraction"):
         module.extract_template_snapshot(
             _engine_with_current_bundle(module),
             "@astichi_insert(slot)\ndef build():\n    pass\n",
@@ -170,6 +170,37 @@ def test_native_template_extract_identifier_suffixes_match_python_reference_when
         _engine_with_current_bundle(module),
         source,
         "identifier_suffix.py",
+        1,
+    )
+    expected = astichi.compile(source)._lower_template.structural_snapshot()
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "1\n",
+        "name\n",
+        "target(a)\n",
+        "def build():\n    x = 1\n",
+        "def astichi_params(timeout=1):\n    pass\n",
+        "def astichi_params(name__astichi_arg__=1):\n    pass\n",
+        "astichi_funcargs(a, key=b)\n",
+        "astichi_funcargs(name__astichi_arg__, key__astichi_arg__=b)\n",
+    ],
+)
+def test_native_template_extract_payload_markers_match_python_reference_when_available(
+    source: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    actual = module.extract_template_snapshot(
+        _engine_with_current_bundle(module),
+        source,
+        "payload_marker.py",
         1,
     )
     expected = astichi.compile(source)._lower_template.structural_snapshot()

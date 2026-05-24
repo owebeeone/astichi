@@ -65,7 +65,9 @@ fn extract_template_snapshot(
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
     let module = crate::parser_ir::parse_native_module(&source, &filename)?;
     let mut records = extract_records(&source, &module)?;
-    records.push(block_production_record(line_number));
+    if should_include_block_production(&module) {
+        records.push(block_production_record(line_number));
+    }
 
     let source_summary = "compile line=".to_string()
         + &line_number.to_string()
@@ -89,9 +91,9 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn reject_deferred_markers(source: &str) -> PyResult<()> {
-    if source.contains("astichi_insert") || source.contains("astichi_params") {
+    if source.contains("astichi_insert") {
         return Err(crate::errors::schema_error(
-            "native metadata and payload extraction starts after N4b",
+            "native metadata extraction starts after N4d",
         ));
     }
     Ok(())
@@ -112,6 +114,17 @@ fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<Extrac
     Ok(records)
 }
 
+fn should_include_block_production(module: &ast::ModModule) -> bool {
+    if module.body.len() != 1 {
+        return true;
+    }
+    match &module.body[0] {
+        ast::Stmt::FunctionDef(node) => node.name.as_str() != "astichi_params",
+        ast::Stmt::Expr(node) => !is_call_named(&node.value, "astichi_funcargs"),
+        _ => true,
+    }
+}
+
 fn stmt_records(
     stmt: &ast::Stmt,
     path: &str,
@@ -120,13 +133,22 @@ fn stmt_records(
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
     match stmt {
-        ast::Stmt::Expr(node) => expr_records(
-            &node.value,
-            &(path.to_string() + "/value"),
-            source_map,
-            true,
-            records,
-        ),
+        ast::Stmt::Expr(node) => {
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                true,
+                records,
+            )?;
+            if should_add_expression_production(&node.value) {
+                records.push(expression_production_record(
+                    &(path.to_string() + "/value"),
+                    source_map.line(node.range),
+                ));
+            }
+            Ok(())
+        }
         ast::Stmt::Assign(node) => expr_records(
             &node.value,
             &(path.to_string() + "/value"),
@@ -166,6 +188,25 @@ fn stmt_records(
             Ok(())
         }
         ast::Stmt::FunctionDef(node) => {
+            if node.name.as_str() == "astichi_params" {
+                records.push(record(
+                    path,
+                    &authored_summary("astichi_params", source_map.line(node.range)),
+                    "production.supply",
+                    "copy-parameters",
+                    "production.supply",
+                    "astichi_params",
+                    "astichi.surface.parameter.production",
+                ));
+                function_argument_suffix_records(
+                    &node.args,
+                    path,
+                    "astichi_params",
+                    source_map,
+                    records,
+                );
+                return Ok(());
+            }
             if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
                 records.push(identifier_demand_record(
                     path,
@@ -257,8 +298,12 @@ fn expr_records(
 ) -> PyResult<()> {
     match expr {
         ast::Expr::Call(node) => {
-            if let Some(name) = call_name(&node.func) {
-                direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
+            let name = call_name(&node.func);
+            let defer_direct_record = name == Some("astichi_funcargs");
+            if let Some(name) = name {
+                if !defer_direct_record {
+                    direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
+                }
             }
             for (index, arg) in node.args.iter().enumerate() {
                 expr_records(
@@ -287,6 +332,11 @@ fn expr_records(
                     false,
                     records,
                 )?;
+            }
+            if let Some(name) = name {
+                if defer_direct_record {
+                    direct_call_record(name, node, path, source_map, in_expr_stmt, records)?;
+                }
             }
             Ok(())
         }
@@ -367,6 +417,34 @@ fn call_name(expr: &ast::Expr) -> Option<&str> {
     match expr {
         ast::Expr::Name(node) => Some(node.id.as_str()),
         _ => None,
+    }
+}
+
+fn is_call_named(expr: &ast::Expr, name: &str) -> bool {
+    match expr {
+        ast::Expr::Call(node) => call_name(&node.func) == Some(name),
+        _ => false,
+    }
+}
+
+fn should_add_expression_production(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(node) => match call_name(&node.func) {
+            Some(
+                "astichi_hole"
+                | "astichi_bind_external"
+                | "astichi_ref"
+                | "astichi_export"
+                | "astichi_import"
+                | "astichi_pass"
+                | "astichi_comment"
+                | "astichi_funcargs"
+                | "astichi_keep"
+                | "astichi_pyimport",
+            ) => false,
+            _ => true,
+        },
+        _ => true,
     }
 }
 
@@ -557,14 +635,21 @@ fn direct_call_record(
             Ok(())
         }
         "astichi_comment" => {
+            records.push(expression_production_record(
+                path,
+                source_map.line(node.range),
+            ));
+            Ok(())
+        }
+        "astichi_funcargs" => {
             records.push(record(
                 path,
-                &authored_summary("__expr__", source_map.line(node.range)),
-                "production.expression",
-                "copy-expression",
-                "production.expression",
-                "__expr__",
-                "astichi.surface.expression.production",
+                &authored_summary("__funcargs__", source_map.line(node.range)),
+                "production.funcargs",
+                "copy-call-arguments",
+                "production.funcargs",
+                "__funcargs__",
+                "astichi.surface.funcargs.production",
             ));
             Ok(())
         }
@@ -644,6 +729,18 @@ fn block_production_record(line_number: u32) -> ExtractedRecord {
         "production.block",
         "__block__",
         "astichi.surface.block.production",
+    )
+}
+
+fn expression_production_record(path: &str, line_number: usize) -> ExtractedRecord {
+    record(
+        path,
+        &authored_summary("__expr__", line_number),
+        "production.expression",
+        "copy-expression",
+        "production.expression",
+        "__expr__",
+        "astichi.surface.expression.production",
     )
 }
 
