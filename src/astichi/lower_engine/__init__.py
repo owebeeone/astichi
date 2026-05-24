@@ -35,6 +35,15 @@ from astichi.lower_engine.materialization import (
     MaterializationPlan,
     build_materialization_plan,
 )
+from astichi.lower_engine.native import (
+    EngineSelectionEvent,
+    NativeExtensionUnavailableError,
+    load_native_extension,
+    native_capabilities,
+    native_self_test,
+    requested_lower_engine,
+    select_lower_engine,
+)
 from astichi.lower_engine.registry import (
     BundleSchemaMismatchError,
     CompatibilityDecision,
@@ -56,6 +65,7 @@ __all__ = [
     "CompatibilityDecision",
     "CompatibilityRuleSpec",
     "EdgeId",
+    "EngineSelectionEvent",
     "HygieneOperation",
     "LocatorId",
     "LowerEngine",
@@ -64,6 +74,7 @@ __all__ = [
     "LowerTemplateCache",
     "MaterializationOperation",
     "MaterializationPlan",
+    "NativeExtensionUnavailableError",
     "OccurrenceId",
     "OperationId",
     "OperationSpec",
@@ -90,7 +101,12 @@ __all__ = [
     "current_plus_future_surface_bundle_spec",
     "current_surface_bundle_spec",
     "ensure_current_surface_bundle",
+    "load_native_extension",
+    "native_capabilities",
+    "native_self_test",
+    "requested_lower_engine",
     "register_lower_template_binding",
     "register_inventory_template",
     "render_composable_source",
+    "select_lower_engine",
 ]

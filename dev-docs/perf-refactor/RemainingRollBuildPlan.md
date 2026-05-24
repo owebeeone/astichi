@@ -723,6 +723,11 @@ Tag: `perf-refactor/slice-14b`.
 
 Goal: add a loadable native extension shell without routing behavior to it.
 
+Status: closed by the `native_engine/` skeleton and
+`astichi.lower_engine.native` discovery facade. Native selection is disabled by
+default, explicit build artifacts are ignored, and tests skip cleanly when the
+extension has not been built.
+
 Work:
 
 - Add the production native package skeleton and build metadata.

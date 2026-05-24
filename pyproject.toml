@@ -33,7 +33,7 @@ exclude-newer = "1 week"
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/astichi", "tests", "dev-docs", "native_probe", "scratch", "LICENSE", "README.md"]
+include = ["src/astichi", "tests", "dev-docs", "native_probe", "native_engine", "scratch", "LICENSE", "README.md"]
 
 # Run: uv run --with pytest pytest -q
 # Focused: uv run --with pytest pytest <test-path> -q
