@@ -610,7 +610,9 @@ indexes directly for composable, external-value, and identifier resources while
 returning the current candidate objects for compatibility. The legacy
 standalone `find_candidates(scope.inventory, ...)` remains available until
 YIDL and remaining tests are moved to the scope method. Lower state is not yet
-the source of final materialization.
+the source of final materialization. `scope.inventory` now reads through the
+lower debug projection rather than the legacy `_inventory` cache; callers that
+use it are intentionally on the slow compatibility path.
 
 The lower engine also has an internal surface registry shell. It registers a
 canonical surface bundle, assigns engine-owned dynamic handles for surfaces,

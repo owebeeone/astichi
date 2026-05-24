@@ -275,7 +275,7 @@ class AssemblyScope:
     @property
     def inventory(self) -> Inventory:
         """Return the current built inventory view for this scope."""
-        return self._inventory
+        return self.project_lower_inventory()
 
     def add(self, name: str, composable: Composable) -> InstanceHandle:
         """Register a root composable in this scope."""

@@ -473,6 +473,12 @@ Stop if:
 
 Goal: make lower state authoritative after root add.
 
+Implementation note:
+
+- Slice 8 routes `scope.inventory` through the lower debug projection. Legacy
+  `_inventory` maintenance remains temporarily as a verification/adapter cache
+  until the apply/materialization slices remove it from the hot path.
+
 Work:
 
 - initialize lower state in `AssemblyScope`;
