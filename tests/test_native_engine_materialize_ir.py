@@ -79,6 +79,67 @@ def test_native_materialization_workspace_replaces_statement_with_pass_when_avai
     ]
 
 
+def test_native_materialization_workspace_applies_expression_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "result = astichi_hole(value)\n",
+        "workspace.py",
+        1,
+    )
+    expression_template = module.register_template_package_v2_source(
+        engine,
+        "40 + 2\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    expression = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        expression_template,
+        ("Root", "Expression"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        expression,
+        "astichi.operation.replace_expression",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    assert module.materialization_workspace_resolve_locator(engine, workspace, 0)[
+        "resolved_kind"
+    ] == "Call"
+    module.materialization_workspace_apply_expression_edge(
+        engine,
+        workspace,
+        state,
+        edge,
+    )
+
+    assert module.materialization_workspace_resolve_locator(engine, workspace, 0) == {
+        "ast_path": "body[0]/value",
+        "locator_id": 0,
+        "resolved_kind": "BinOp",
+        "template_id": 0,
+    }
+
+
 def test_native_materialization_workspace_bad_locator_diagnostic_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:

@@ -79,7 +79,7 @@ impl NativeTemplate {
         &self.locators
     }
 
-    fn records(&self) -> &[NativeTemplateRecord] {
+    pub(crate) fn records(&self) -> &[NativeTemplateRecord] {
         &self.records
     }
 
@@ -100,6 +100,35 @@ impl NativeTemplate {
             .get(locator_id)
             .map(|locator| locator.ast_path.as_str())
             .ok_or_else(|| crate::errors::stale_handle_error("unknown native locator"))
+    }
+
+    pub(crate) fn locator_ast_path_for_record(
+        &self,
+        template_record_index: usize,
+    ) -> PyResult<&str> {
+        let record = self.records.get(template_record_index).ok_or_else(|| {
+            crate::errors::stale_handle_error("unknown native template record handle")
+        })?;
+        self.locator_ast_path(record.locator_id)
+    }
+
+    pub(crate) fn unique_locator_ast_path_for_surface(&self, surface_key: &str) -> PyResult<&str> {
+        let mut matches = self
+            .records
+            .iter()
+            .filter(|record| record.surface_key == surface_key)
+            .map(|record| record.locator_id);
+        let Some(locator_id) = matches.next() else {
+            return Err(crate::errors::schema_error(&format!(
+                "native template has no `{surface_key}` record"
+            )));
+        };
+        if matches.next().is_some() {
+            return Err(crate::errors::schema_error(&format!(
+                "native template has multiple `{surface_key}` records"
+            )));
+        }
+        self.locator_ast_path(locator_id)
     }
 }
 
@@ -144,10 +173,16 @@ impl NativeAssemblyState {
         }
     }
 
-    fn occurrence(&self, index: usize) -> PyResult<&NativeOccurrence> {
+    pub(crate) fn occurrence(&self, index: usize) -> PyResult<&NativeOccurrence> {
         self.occurrences
             .get(index)
             .ok_or_else(|| crate::errors::stale_handle_error("unknown native occurrence handle"))
+    }
+
+    pub(crate) fn edge(&self, index: usize) -> PyResult<&NativeEdge> {
+        self.edges
+            .get(index)
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native edge handle"))
     }
 
     fn append_occurrence(
@@ -211,19 +246,39 @@ impl NativeAssemblyState {
 }
 
 #[derive(Clone)]
-struct NativeOccurrence {
+pub(crate) struct NativeOccurrence {
     template_index: usize,
     build_path: Vec<String>,
     parent_occurrence_index: Option<usize>,
     live: bool,
 }
 
+impl NativeOccurrence {
+    pub(crate) fn template_index(&self) -> usize {
+        self.template_index
+    }
+}
+
 #[derive(Clone)]
-struct NativeEdge {
+pub(crate) struct NativeEdge {
     target_record: RecordKey,
     source_occurrence_index: usize,
     operation_key: String,
     order: usize,
+}
+
+impl NativeEdge {
+    pub(crate) fn target_record(&self) -> RecordKey {
+        self.target_record
+    }
+
+    pub(crate) fn source_occurrence_index(&self) -> usize {
+        self.source_occurrence_index
+    }
+
+    pub(crate) fn operation_key(&self) -> &str {
+        &self.operation_key
+    }
 }
 
 #[derive(Clone)]
@@ -284,9 +339,19 @@ impl NativeIndexes {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct RecordKey {
+pub(crate) struct RecordKey {
     occurrence_index: usize,
     template_record_index: usize,
+}
+
+impl RecordKey {
+    pub(crate) fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) fn template_record_index(&self) -> usize {
+        self.template_record_index
+    }
 }
 
 #[pyclass(module = "_astichi_native_engine", skip_from_py_object)]
@@ -328,6 +393,14 @@ impl NativeAssemblyStateHandle {
             index,
             generation: 0,
         }
+    }
+
+    pub(crate) fn owner_id(&self) -> u64 {
+        self.owner_id
+    }
+
+    pub(crate) fn state_index(&self) -> usize {
+        self.index
     }
 }
 
@@ -392,6 +465,18 @@ impl NativeEdgeHandle {
             index,
             generation: 0,
         }
+    }
+
+    pub(crate) fn owner_id(&self) -> u64 {
+        self.owner_id
+    }
+
+    pub(crate) fn edge_state_index(&self) -> usize {
+        self.state_index
+    }
+
+    pub(crate) fn edge_index(&self) -> usize {
+        self.index
     }
 }
 

@@ -3,7 +3,7 @@ use pyo3::types::{PyDict, PyModule};
 use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
-use crate::occurrence_store::NativeTemplateHandle;
+use crate::occurrence_store::{NativeAssemblyStateHandle, NativeEdgeHandle, NativeTemplateHandle};
 
 const HANDLE_KIND_WORKSPACE: &str = "materialization-workspace";
 
@@ -140,6 +140,57 @@ fn materialization_workspace_replace_statement_with_pass(
     replace_statement_at_path(workspace_ref.module_mut(), &statement_path, pass)
 }
 
+#[pyfunction(name = "materialization_workspace_apply_expression_edge")]
+fn materialization_workspace_apply_expression_edge(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    edge: PyRef<'_, NativeEdgeHandle>,
+) -> PyResult<()> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    ensure_owner(engine.owner_id(), edge.owner_id())?;
+    if edge.edge_state_index() != state.state_index() {
+        return Err(crate::errors::stale_handle_error(
+            "edge belongs to another native assembly state",
+        ));
+    }
+    let (target_path, replacement) = {
+        let workspace_ref = engine.workspace(workspace.index)?;
+        let state_ref = engine.state(state.state_index())?;
+        let edge_ref = state_ref.edge(edge.edge_index())?;
+        if edge_ref.operation_key() != "astichi.operation.replace_expression" {
+            return Err(crate::errors::schema_error(&format!(
+                "native expression materializer cannot apply `{}`",
+                edge_ref.operation_key()
+            )));
+        }
+        let target_key = edge_ref.target_record();
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index())?;
+        if target_occurrence.template_index() != workspace_ref.template_index {
+            return Err(crate::errors::schema_error(
+                "workspace template does not match expression edge target occurrence",
+            ));
+        }
+        let target_template = engine.template(target_occurrence.template_index())?;
+        let target_path = target_template
+            .locator_ast_path_for_record(target_key.template_record_index())?
+            .to_string();
+        let source_occurrence = state_ref.occurrence(edge_ref.source_occurrence_index())?;
+        let source_template = engine.template(source_occurrence.template_index())?;
+        let source_module = source_template.module().ok_or_else(|| {
+            crate::errors::schema_error("native source template does not carry native parser IR")
+        })?;
+        let source_path = source_template
+            .unique_locator_ast_path_for_surface("astichi.surface.expression.production")?;
+        let replacement = clone_expr_at_path(source_module, source_path)?;
+        (target_path, replacement)
+    };
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    replace_expr_at_path(workspace_ref.module_mut(), &target_path, replacement)
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeMaterializationWorkspaceHandle>()?;
     m.add_function(wrap_pyfunction!(materialization_workspace_create, m)?)?;
@@ -150,6 +201,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(
         materialization_workspace_replace_statement_with_pass,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_apply_expression_edge,
         m
     )?)?;
     m.add(
@@ -362,6 +417,317 @@ fn indexed_expr<'a>(items: &'a [ast::Expr], segment: &PathSegment) -> PyResult<&
     items.get(index).ok_or_else(|| {
         crate::errors::schema_error("native locator expression index is out of range")
     })
+}
+
+fn clone_expr_at_path(module: &ast::ModModule, path: &str) -> PyResult<ast::Expr> {
+    let segments = parse_ast_path(path)?;
+    clone_expr_from_stmt_list(&module.body, &segments)
+}
+
+fn clone_expr_from_stmt_list(body: &[ast::Stmt], segments: &[PathSegment]) -> PyResult<ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        if body.len() == 1 {
+            if let ast::Stmt::Expr(node) = &body[0] {
+                return Ok((*node.value).clone());
+            }
+        }
+        return Err(crate::errors::schema_error(
+            "expression path must resolve to an expression node",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native expression path expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body expression segment requires an index"))?;
+    let stmt = body.get(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    clone_expr_from_stmt(stmt, rest)
+}
+
+fn clone_expr_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "expression path must include a statement expression field",
+        ));
+    };
+    match stmt {
+        ast::Stmt::Expr(node) if first.field == "value" => clone_expr_from_expr(&node.value, rest),
+        ast::Stmt::Assign(node) if first.field == "value" => {
+            clone_expr_from_expr(&node.value, rest)
+        }
+        ast::Stmt::Assign(node) if first.field == "targets" => {
+            let target = indexed_expr(&node.targets, first)?;
+            clone_expr_from_expr(target, rest)
+        }
+        ast::Stmt::Return(node) if first.field == "value" => {
+            let value = node
+                .value
+                .as_ref()
+                .ok_or_else(|| crate::errors::schema_error("return expression value is missing"))?;
+            clone_expr_from_expr(value, rest)
+        }
+        ast::Stmt::FunctionDef(node) if first.field == "body" => {
+            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
+            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::ClassDef(node) if first.field == "body" => {
+            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::If(node) if first.field == "body" => {
+            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::If(node) if first.field == "orelse" => {
+            clone_indexed_expr_from_stmt_list(&node.orelse, first, rest)
+        }
+        ast::Stmt::For(node) if first.field == "body" => {
+            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::For(node) if first.field == "orelse" => {
+            clone_indexed_expr_from_stmt_list(&node.orelse, first, rest)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression path cannot enter statement field `{}` on {}",
+            first.field,
+            stmt_kind(stmt)
+        ))),
+    }
+}
+
+fn clone_indexed_expr_from_stmt_list(
+    body: &[ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+) -> PyResult<ast::Expr> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} expression segment requires an index",
+            segment.field
+        ))
+    })?;
+    let stmt = body.get(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    clone_expr_from_stmt(stmt, rest)
+}
+
+fn clone_expr_from_expr(expr: &ast::Expr, segments: &[PathSegment]) -> PyResult<ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Ok(expr.clone());
+    };
+    match expr {
+        ast::Expr::Call(node) if first.field == "func" => clone_expr_from_expr(&node.func, rest),
+        ast::Expr::Call(node) if first.field == "args" => {
+            let arg = indexed_expr(&node.args, first)?;
+            clone_expr_from_expr(arg, rest)
+        }
+        ast::Expr::Attribute(node) if first.field == "value" => {
+            clone_expr_from_expr(&node.value, rest)
+        }
+        ast::Expr::BinOp(node) if first.field == "left" => clone_expr_from_expr(&node.left, rest),
+        ast::Expr::BinOp(node) if first.field == "right" => clone_expr_from_expr(&node.right, rest),
+        ast::Expr::Tuple(node) if first.field == "elts" => {
+            let item = indexed_expr(&node.elts, first)?;
+            clone_expr_from_expr(item, rest)
+        }
+        ast::Expr::List(node) if first.field == "elts" => {
+            let item = indexed_expr(&node.elts, first)?;
+            clone_expr_from_expr(item, rest)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression path cannot enter field `{}` on {}",
+            first.field,
+            expr_kind(expr)
+        ))),
+    }
+}
+
+fn replace_expr_at_path(
+    module: &mut ast::ModModule,
+    path: &str,
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let segments = parse_ast_path(path)?;
+    replace_expr_in_stmt_list(&mut module.body, &segments, replacement)
+}
+
+fn replace_expr_in_stmt_list(
+    body: &mut [ast::Stmt],
+    segments: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "expression replacement requires an expression path",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native expression replacement expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body expression segment requires an index"))?;
+    let stmt = body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    replace_expr_in_stmt(stmt, rest, replacement)
+}
+
+fn replace_expr_in_stmt(
+    stmt: &mut ast::Stmt,
+    segments: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "expression replacement path must include a statement expression field",
+        ));
+    };
+    match stmt {
+        ast::Stmt::Expr(node) if first.field == "value" => {
+            replace_boxed_expr(&mut node.value, rest, replacement)
+        }
+        ast::Stmt::Assign(node) if first.field == "value" => {
+            replace_boxed_expr(&mut node.value, rest, replacement)
+        }
+        ast::Stmt::Assign(node) if first.field == "targets" => {
+            replace_indexed_expr(&mut node.targets, first, rest, replacement)
+        }
+        ast::Stmt::Return(node) if first.field == "value" => {
+            let value = node
+                .value
+                .as_mut()
+                .ok_or_else(|| crate::errors::schema_error("return expression value is missing"))?;
+            replace_boxed_expr(value, rest, replacement)
+        }
+        ast::Stmt::FunctionDef(node) if first.field == "body" => {
+            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
+            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
+        }
+        ast::Stmt::ClassDef(node) if first.field == "body" => {
+            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
+        }
+        ast::Stmt::If(node) if first.field == "body" => {
+            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
+        }
+        ast::Stmt::If(node) if first.field == "orelse" => {
+            replace_nested_expr_in_stmt_list(&mut node.orelse, first, rest, replacement)
+        }
+        ast::Stmt::For(node) if first.field == "body" => {
+            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
+        }
+        ast::Stmt::For(node) if first.field == "orelse" => {
+            replace_nested_expr_in_stmt_list(&mut node.orelse, first, rest, replacement)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression replacement cannot enter statement field `{}` on {}",
+            first.field,
+            stmt_kind(stmt)
+        ))),
+    }
+}
+
+fn replace_nested_expr_in_stmt_list(
+    body: &mut [ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} expression segment requires an index",
+            segment.field
+        ))
+    })?;
+    let stmt = body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    replace_expr_in_stmt(stmt, rest, replacement)
+}
+
+fn replace_boxed_expr(
+    slot: &mut Box<ast::Expr>,
+    rest: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    if rest.is_empty() {
+        *slot = Box::new(replacement);
+        return Ok(());
+    }
+    replace_expr_in_expr(slot.as_mut(), rest, replacement)
+}
+
+fn replace_indexed_expr(
+    items: &mut [ast::Expr],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} expression segment requires an index",
+            segment.field
+        ))
+    })?;
+    let item = items
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native expression index is out of range"))?;
+    if rest.is_empty() {
+        *item = replacement;
+        return Ok(());
+    }
+    replace_expr_in_expr(item, rest, replacement)
+}
+
+fn replace_expr_in_expr(
+    expr: &mut ast::Expr,
+    segments: &[PathSegment],
+    replacement: ast::Expr,
+) -> PyResult<()> {
+    let Some((first, rest)) = segments.split_first() else {
+        *expr = replacement;
+        return Ok(());
+    };
+    match expr {
+        ast::Expr::Call(node) if first.field == "func" => {
+            replace_boxed_expr(&mut node.func, rest, replacement)
+        }
+        ast::Expr::Call(node) if first.field == "args" => {
+            replace_indexed_expr(&mut node.args, first, rest, replacement)
+        }
+        ast::Expr::Attribute(node) if first.field == "value" => {
+            replace_boxed_expr(&mut node.value, rest, replacement)
+        }
+        ast::Expr::BinOp(node) if first.field == "left" => {
+            replace_boxed_expr(&mut node.left, rest, replacement)
+        }
+        ast::Expr::BinOp(node) if first.field == "right" => {
+            replace_boxed_expr(&mut node.right, rest, replacement)
+        }
+        ast::Expr::Tuple(node) if first.field == "elts" => {
+            replace_indexed_expr(&mut node.elts, first, rest, replacement)
+        }
+        ast::Expr::List(node) if first.field == "elts" => {
+            replace_indexed_expr(&mut node.elts, first, rest, replacement)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression replacement cannot enter field `{}` on {}",
+            first.field,
+            expr_kind(expr)
+        ))),
+    }
 }
 
 fn replace_statement_at_path(

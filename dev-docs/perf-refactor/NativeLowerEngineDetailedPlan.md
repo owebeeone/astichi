@@ -1117,21 +1117,43 @@ Status: implemented for source-backed template IR cloning, locator resolution
 diagnostics, root/module locator resolution, and a statement replacement
 primitive over cloned native IR.
 
-### N10b: Native Expression And External/Ref Materializer
+### N10b1: Native Expression Materializer
 
-Goal: materialize expression replacement and external/ref overlays.
+Goal: materialize expression replacement over native IR.
 
 Work:
 
 - implement expression replacement for expression holes;
-- lower external slots into artifact placeholders or copied values according
-  to the existing facade policy;
-- lower `astichi_ref(...)` value and sentinel forms;
 - strip consumed expression markers.
 
 Acceptance:
 
-- expression/external/ref materialized goldens match Python reference;
+- expression materialized snapshots match Python reference for the supported
+  subset;
+- native expression replacement operates on source-backed native template IR;
+- no Python AST mutation is used on the native path.
+
+Status: implemented for applying a native `replace_expression` edge to a cloned
+native materialization workspace. The copied source expression remains native IR
+until the explicit artifact boundary.
+
+### N10b2: Native External/Ref Overlay Materializer
+
+Goal: materialize external overlays and `astichi_ref(...)` marker forms over
+native IR.
+
+Work:
+
+- lower external slots into artifact placeholders or copied values according
+  to the existing facade policy;
+- lower `astichi_ref(...)` value and sentinel forms;
+- strip consumed external/ref markers;
+- keep external Python object ownership in the Python facade while native owns
+  the marker rewrite decisions.
+
+Acceptance:
+
+- external/ref materialized snapshots match Python reference;
 - executable subset tests pass once copied through the artifact boundary;
 - no Python AST mutation is used on the native path.
 
