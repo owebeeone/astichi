@@ -29,6 +29,8 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.candidate_query.v1",
             "native.overlay_store.v1",
             "native.materialization_operation_stream.v1",
+            "native.materialization_overlay_stream.v1",
+            "native.hygiene_gate.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

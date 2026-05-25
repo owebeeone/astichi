@@ -911,21 +911,44 @@ Acceptance:
 - no per-operation Python callback is needed;
 - unsupported operation ids fail before artifact construction.
 
-### N9b: Native Hygiene, Import, Overlay, And Unresolved Streams
+### N9b1: Native Overlay And Unresolved Gate Streams
 
-Goal: generate the remaining materialization and hygiene streams natively.
+Goal: generate native overlay operations and the unresolved-state gate from
+native lower state.
 
 Work:
 
 - emit external/ref lowering operations from native overlays;
-- emit identifier rewrite and keep-name hygiene decisions;
-- emit managed import placement/collision decisions;
 - emit unresolved-marker diagnostics from native state.
 
 Acceptance:
 
-- materialization-plan structural goldens match Python reference;
+- materialization-plan structural goldens match Python reference for insertion
+  plus overlay cases that do not need marker-local hygiene;
 - unresolved native state fails before artifact construction;
+- overlay stream construction does not need Python builder-state mutation.
+
+### N9b2: Native Marker Metadata, Import, And Hygiene Streams
+
+Goal: make marker-local hygiene and managed import planning native-owned.
+
+This is split from N9b1 because the native template store initially contains
+template records and locators, but not the marker/local-binding metadata needed
+to reproduce Python's managed-import and collision-hygiene plan entries.
+
+Work:
+
+- store native template marker metadata for `astichi_keep`, `astichi_import`,
+  `astichi_export`, `astichi_pass`, and `astichi_pyimport`;
+- store enough local-binding metadata to reproduce rename-if-collides decisions;
+- emit keep-name, strip-marker, managed-import, and rename-if-collides hygiene
+  operations natively;
+- preserve the same deterministic hygiene ordering as the Python oracle.
+
+Acceptance:
+
+- materialization-plan structural goldens match Python reference for managed
+  import, boundary marker, keep collision, and boundary-elif cases;
 - hygiene/materialization planning no longer needs Python builder-state
   mutation.
 

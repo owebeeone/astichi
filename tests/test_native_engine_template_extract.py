@@ -104,6 +104,9 @@ def test_native_template_extract_rejects_syntax_error_when_available() -> None:
     "source",
     [
         "result = astichi_hole(value)\n",
+        "result = func(astichi_hole(args))\n",
+        "result = func(*astichi_hole(args))\n",
+        "result = func(**astichi_hole(kwargs))\n",
         "astichi_hole(body)\n",
         "value = astichi_bind_external(default)\n",
         "value = astichi_ref(external=thing)\n",

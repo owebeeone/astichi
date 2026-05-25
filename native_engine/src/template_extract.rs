@@ -2050,19 +2050,6 @@ fn direct_call_record(
                 context,
                 owner.to_vec(),
             ));
-            if matches!(
-                context,
-                ExprRecordContext::CallArgument
-                    | ExprRecordContext::PositionalVariadic
-                    | ExprRecordContext::NamedVariadic
-            ) {
-                records.push(expression_production_supply_record(
-                    path,
-                    &resource_name,
-                    source_map.line(node.range),
-                    owner.to_vec(),
-                ));
-            }
             Ok(())
         }
         "astichi_bind_external" => {

@@ -1054,42 +1054,60 @@ fn materialization_plan_snapshot(
     state: &NativeAssemblyState,
     root_occurrence_index: Option<usize>,
 ) -> PyResult<Py<PyAny>> {
+    validate_materialization_operation_keys(engine, state)?;
     let item = PyDict::new(py);
     item.set_item("artifact_requests", vec!["python_ast"])?;
     let debug_views = PyDict::new(py);
     debug_views.set_item("edge_count", state.edges.len())?;
     debug_views.set_item("overlay_count", state.overlays.len())?;
     item.set_item("debug_views", debug_views)?;
-    item.set_item("hygiene_stream", PyList::empty(py))?;
+    item.set_item(
+        "hygiene_stream",
+        hygiene_operation_stream(py, state, root_occurrence_index)?,
+    )?;
     item.set_item(
         "operation_stream",
-        edge_operation_stream(py, engine, state)?,
+        materialization_operation_stream(py, state)?,
     )?;
     item.set_item("root_occurrence_id", root_occurrence_index)?;
     Ok(item.into_any().unbind())
 }
 
-fn edge_operation_stream(
-    py: Python<'_>,
+fn validate_materialization_operation_keys(
     engine: &EngineHandle,
     state: &NativeAssemblyState,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<()> {
     let surface_bundle = engine
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
-    let missing: BTreeSet<String> = state
-        .edges
-        .iter()
-        .filter(|edge| !surface_bundle.has_operation_key(&edge.operation_key))
-        .map(|edge| edge.operation_key.clone())
-        .collect();
+    let mut missing: BTreeSet<String> = BTreeSet::new();
+    for edge in &state.edges {
+        if !surface_bundle.has_operation_key(&edge.operation_key) {
+            missing.insert(edge.operation_key.clone());
+        }
+    }
+    for overlay in &state.overlays {
+        let operation_key = overlay_operation_key(&overlay.kind);
+        if !surface_bundle.has_operation_key(&operation_key) {
+            missing.insert(operation_key);
+        }
+    }
+    if !surface_bundle.has_operation_key("astichi.operation.gate_no_unresolved") {
+        missing.insert("astichi.operation.gate_no_unresolved".to_string());
+    }
     if !missing.is_empty() {
         return Err(crate::errors::schema_error(&format!(
             "unregistered materialization operation keys: {:?}",
             missing.into_iter().collect::<Vec<_>>()
         )));
     }
+    Ok(())
+}
 
+fn materialization_operation_stream(
+    py: Python<'_>,
+    state: &NativeAssemblyState,
+) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for (edge_index, edge) in state.edges.iter().enumerate() {
         let item = PyDict::new(py);
@@ -1110,7 +1128,55 @@ fn edge_operation_stream(
         )?;
         list.append(item)?;
     }
+    for (overlay_index, overlay) in state.overlays.iter().enumerate() {
+        let item = PyDict::new(py);
+        let captures = PyDict::new(py);
+        captures.set_item("overlay_id", overlay_index)?;
+        captures.set_item("overlay_kind", &overlay.kind)?;
+        captures.set_item("source_label", &overlay.source_label)?;
+        captures.set_item("target_state", record_state(state, overlay.target_record)?)?;
+        item.set_item("captures", captures)?;
+        item.set_item("operation_key", overlay_operation_key(&overlay.kind))?;
+        item.set_item("order", 0)?;
+        item.set_item("overlay_id", overlay_index)?;
+        item.set_item("source_occurrence_id", py.None())?;
+        item.set_item(
+            "target_record_id",
+            vec![
+                overlay.target_record.occurrence_index,
+                overlay.target_record.template_record_index,
+            ],
+        )?;
+        list.append(item)?;
+    }
     Ok(list.into_any().unbind())
+}
+
+fn hygiene_operation_stream(
+    py: Python<'_>,
+    state: &NativeAssemblyState,
+    root_occurrence_index: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
+    let item = PyDict::new(py);
+    let captures = PyDict::new(py);
+    captures.set_item("live_record_count", live_record_count(state)?)?;
+    captures.set_item("root_occurrence_id", root_occurrence_index)?;
+    captures.set_item("satisfied_record_count", state.satisfied_records.len())?;
+    item.set_item("captures", captures)?;
+    item.set_item("operation_key", "astichi.operation.gate_no_unresolved")?;
+    item.set_item("record_id", py.None())?;
+    item.set_item("target_scope_id", 0)?;
+    list.append(item)?;
+    Ok(list.into_any().unbind())
+}
+
+fn overlay_operation_key(kind: &str) -> String {
+    match kind {
+        "external" => "astichi.operation.lower_external_ref".to_string(),
+        "identifier" => "astichi.operation.rewrite_identifier".to_string(),
+        _ => format!("astichi.operation.overlay.{kind}"),
+    }
 }
 
 fn default_root_occurrence_index(state: &NativeAssemblyState) -> Option<usize> {
@@ -1125,6 +1191,18 @@ fn default_root_occurrence_index(state: &NativeAssemblyState) -> Option<usize> {
                 None
             }
         })
+}
+
+fn live_record_count(state: &NativeAssemblyState) -> PyResult<usize> {
+    let mut count = 0;
+    for records in state.indexes.by_build_path.values() {
+        for record_key in records {
+            if record_state(state, *record_key)? == "live" {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }
 
 fn record_state(state: &NativeAssemblyState, record_key: RecordKey) -> PyResult<&'static str> {

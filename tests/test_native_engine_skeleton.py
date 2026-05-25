@@ -185,6 +185,8 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.candidate_query.v1",
         "native.overlay_store.v1",
         "native.materialization_operation_stream.v1",
+        "native.materialization_overlay_stream.v1",
+        "native.hygiene_gate.v1",
     ]
     assert capabilities["supported_bundle_schema_versions"] == [1]
     assert native_self_test() is True

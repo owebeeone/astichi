@@ -579,6 +579,11 @@ def test_native_scope_external_and_identifier_lookup_use_native_query(
             "target_record_id": [0, 1],
         },
     ]
+    native_plan = scope.native_lower_materialization_snapshot()
+    python_plan = scope.lower_structural_snapshot(
+        materialization_plan=scope.lower_materialization_plan()
+    )["materialization"]
+    assert native_plan == python_plan
     assert identifier_counts["native_candidate_query_identifier"] == 1
     assert external_counts["native_candidate_query_external"] == 1
     assert apply_counts["native_scope_append_overlay"] == 1
@@ -753,8 +758,8 @@ def test_native_scope_materialization_edge_stream_matches_python_when_available(
         operation_key
     ]
     assert native_plan["artifact_requests"] == ["python_ast"]
-    assert native_plan["debug_views"]["edge_count"] == 1
-    assert native_plan["hygiene_stream"] == []
+    assert native_plan["debug_views"] == python_plan["debug_views"]
+    assert native_plan["hygiene_stream"] == python_plan["hygiene_stream"]
     assert native_plan["root_occurrence_id"] == python_plan["root_occurrence_id"] == 0
 
 
