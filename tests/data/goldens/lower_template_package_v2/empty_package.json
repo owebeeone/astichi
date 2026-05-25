@@ -1,0 +1,17 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "empty_template",
+  "source_summary": "pass",
+  "string_table": [
+    "",
+    "empty_template",
+    "pass"
+  ],
+  "path_table": [],
+  "ast_path_table": [],
+  "binding_sets": [],
+  "locators": [],
+  "records": [],
+  "scopes": []
+}

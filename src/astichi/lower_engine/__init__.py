@@ -47,6 +47,14 @@ from astichi.lower_engine.native import (
     requested_lower_engine,
     select_lower_engine,
 )
+from astichi.lower_engine.package_v2 import (
+    LowerTemplatePackageV2,
+    PackageSchemaMismatchError,
+    PackageSnapshotFormatError,
+    read_package_snapshot,
+    round_trip_package_snapshot_text,
+    write_package_snapshot,
+)
 from astichi.lower_engine.registry import (
     BundleSchemaMismatchError,
     CompatibilityDecision,
@@ -75,6 +83,7 @@ __all__ = [
     "LowerEngineError",
     "LowerTemplateBinding",
     "LowerTemplateCache",
+    "LowerTemplatePackageV2",
     "NativeTemplateCache",
     "MaterializationOperation",
     "MaterializationPlan",
@@ -83,6 +92,8 @@ __all__ = [
     "OperationId",
     "OperationSpec",
     "OverlayId",
+    "PackageSchemaMismatchError",
+    "PackageSnapshotFormatError",
     "PatternId",
     "PatternSpec",
     "RecordId",
@@ -109,10 +120,13 @@ __all__ = [
     "load_native_extension",
     "native_capabilities",
     "native_self_test",
+    "read_package_snapshot",
     "requested_lower_engine",
     "register_lower_template_binding",
     "register_inventory_template",
     "register_native_template_source",
     "render_composable_source",
+    "round_trip_package_snapshot_text",
     "select_lower_engine",
+    "write_package_snapshot",
 ]

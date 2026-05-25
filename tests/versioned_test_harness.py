@@ -12,7 +12,11 @@ import tomllib
 
 
 _SOURCE_OUTPUT_PHASES = ("pre_materialized", "materialized")
-_GOLDEN_PHASES = (*_SOURCE_OUTPUT_PHASES, "structural")
+_GOLDEN_PHASES = (
+    *_SOURCE_OUTPUT_PHASES,
+    "structural",
+    "lower_template_package_v2",
+)
 
 
 def runtime_tag(runtime_version: tuple[int, int]) -> str:

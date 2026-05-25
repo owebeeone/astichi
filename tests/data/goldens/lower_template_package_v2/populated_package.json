@@ -1,0 +1,81 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "astichi.current",
+  "template_key": "expression_template",
+  "source_summary": "result = astichi_hole(value)",
+  "string_table": [
+    "astichi.current",
+    "expression_template",
+    "result = astichi_hole(value)",
+    "expression.hole",
+    "astichi_hole(value)",
+    "replace-expression",
+    "insert.expression",
+    "value",
+    "Root",
+    "expression hole value",
+    "module",
+    "result"
+  ],
+  "path_table": [
+    [
+      "Root"
+    ]
+  ],
+  "ast_path_table": [
+    "body[0].value",
+    ""
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "result"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    }
+  ],
+  "locators": [
+    {
+      "ast_path": "body[0].value",
+      "authored_summary": "astichi_hole(value)",
+      "locator_id": 0,
+      "materialization_anchor": "replace-expression",
+      "parent_locator_id": null,
+      "role_key": "expression.hole"
+    }
+  ],
+  "records": [
+    {
+      "flags": [],
+      "inventory_kind": "expression.hole",
+      "locator_id": 0,
+      "operation_key": "insert.expression",
+      "owner_path": [
+        "Root"
+      ],
+      "resource_name": "value",
+      "semantic_summary": "expression hole value",
+      "surface_key": "expression.hole",
+      "template_record_id": 0
+    }
+  ],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "result"
+      ],
+      "owner_path": [
+        "Root"
+      ],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    }
+  ]
+}
