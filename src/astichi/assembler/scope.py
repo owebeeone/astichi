@@ -27,6 +27,7 @@ from astichi.lower_engine.handles import OccurrenceId, OverlayId, RecordId
 from astichi.lower_engine.inventory import AssemblyState
 from astichi.lower_engine.materialization import MaterializationOperation
 from astichi.lowering.parameters import param_hole_name
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.model import (
     BasicComposable,
     BlockProductionInventoryPayload,
@@ -2264,6 +2265,12 @@ def _strip_lower_boundary_markers(tree: ast.Module) -> None:
                 return replacement
             return self.generic_visit(node)
 
+        def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+            replacement = _lower_pass_sentinel_replacement(node)
+            if replacement is not None:
+                return replacement
+            return self.generic_visit(node)
+
     _Stripper().visit(tree)
     ast.fix_missing_locations(tree)
 
@@ -2375,6 +2382,21 @@ def _lower_boundary_replacement(node: ast.Call) -> ast.expr | None:
     return replacement
 
 
+def _lower_pass_sentinel_replacement(node: ast.Attribute) -> ast.expr | None:
+    sentinel = match_transparent_sentinel(
+        node,
+        is_marker_call=_is_lower_pass_call,
+    )
+    if sentinel is None:
+        return None
+    name = _lower_boundary_call_name(sentinel.call)
+    if name is None:
+        return None
+    replacement = ast.Name(id=name, ctx=sentinel.ctx)
+    ast.copy_location(replacement, node)
+    return replacement
+
+
 def _lower_boundary_call_name(node: ast.Call) -> str | None:
     if not _is_lower_boundary_call(node):
         return None
@@ -2388,6 +2410,13 @@ def _is_lower_boundary_call(node: ast.AST) -> bool:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id in {"astichi_export", "astichi_import", "astichi_pass"}
+    )
+
+
+def _is_lower_pass_call(node: ast.Call) -> bool:
+    return (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "astichi_pass"
     )
 
 

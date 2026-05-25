@@ -45,6 +45,24 @@ def test_scope_apply_rejects_unsupported_candidate_type() -> None:
     )
 
 
+def test_lower_build_strips_pass_sentinel_store_target() -> None:
+    root = astichi.compile(
+        """
+if astichi_pass(field_name__astichi_arg__, outer_bind=True) is _HAS_DEFAULT_FACTORY:
+    astichi_pass(field_name__astichi_arg__, outer_bind=True)._ = default_factory()
+"""
+    ).bind_identifier(field_name="children_state")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    source = scope.build().emit(provenance=False)
+
+    assert source == (
+        "if children_state is _HAS_DEFAULT_FACTORY:\n"
+        "    children_state = default_factory()\n"
+    )
+
+
 def test_scope_applies_resource_candidates_to_builder_graph() -> None:
     root = astichi.compile(
         """
