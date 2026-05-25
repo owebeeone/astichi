@@ -526,7 +526,8 @@ impl<'py> Emitter<'py> {
                 let target = self.expr(&node.target)?;
                 let annotation = self.expr(&node.annotation)?;
                 let value = self.optional_expr(node.value.as_ref())?;
-                let obj = self.call_ast("AnnAssign", (target, annotation, value, node.simple))?;
+                let simple = if node.simple { 1 } else { 0 };
+                let obj = self.call_ast("AnnAssign", (target, annotation, value, simple))?;
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }

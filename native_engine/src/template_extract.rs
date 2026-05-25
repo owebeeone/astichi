@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule};
 use rustpython_parser::ast;
@@ -9,6 +11,7 @@ const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
 const ARG_SUFFIX: &str = "__astichi_arg__";
 const KEEP_SUFFIX: &str = "__astichi_keep__";
 const PARAM_HOLE_SUFFIX: &str = "__astichi_param_hole__";
+const ASSIGN_BIND_PREFIX: &str = "__astichi_assign__";
 const DIRECTIVE_PLACEHOLDER_PREFIX: &str = "__astichi_ph_";
 const DIRECTIVE_PLACEHOLDER_SUFFIX: &str = "__";
 const DEFAULTED_BLOCK_FALLBACK_NAME: &str = "astichi_fallback";
@@ -16,6 +19,8 @@ const DEFAULTED_BLOCK_FALLBACK_NAME: &str = "astichi_fallback";
 #[derive(Clone)]
 struct SourceMap {
     line_starts: Vec<usize>,
+    import_names: BTreeSet<String>,
+    export_names: BTreeSet<String>,
 }
 
 impl SourceMap {
@@ -26,7 +31,19 @@ impl SourceMap {
                 line_starts.push(idx + 1);
             }
         }
-        Self { line_starts }
+        Self {
+            line_starts,
+            import_names: BTreeSet::new(),
+            export_names: BTreeSet::new(),
+        }
+    }
+
+    fn for_module(source: &str, module: &ast::ModModule) -> Self {
+        let mut source_map = Self::new(source);
+        let marker_names = collect_direct_import_export_names(module);
+        source_map.import_names = marker_names.import_names;
+        source_map.export_names = marker_names.export_names;
+        source_map
     }
 
     fn line(&self, range: TextRange) -> usize {
@@ -56,10 +73,16 @@ struct RootBodyEntry<'a> {
     path: String,
 }
 
+struct DirectImportExportNames {
+    import_names: BTreeSet<String>,
+    export_names: BTreeSet<String>,
+}
+
 #[derive(Clone, Copy)]
 enum ExprRecordContext {
     Statement,
     Expression,
+    CallArgument,
     PositionalVariadic,
     NamedVariadic,
 }
@@ -123,7 +146,7 @@ fn validate_deferred_marker_text(_source: &str) -> PyResult<()> {
 }
 
 fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<ExtractedRecord>> {
-    let source_map = SourceMap::new(source);
+    let source_map = SourceMap::for_module(source, module);
     let mut records = Vec::new();
     let entries = root_body_entries(module);
     for entry in &entries {
@@ -148,6 +171,235 @@ fn root_body_entries(module: &ast::ModModule) -> Vec<RootBodyEntry<'_>> {
             path: format!("body[{index}]"),
         })
         .collect()
+}
+
+fn collect_direct_import_export_names(module: &ast::ModModule) -> DirectImportExportNames {
+    let mut names = DirectImportExportNames {
+        import_names: BTreeSet::new(),
+        export_names: BTreeSet::new(),
+    };
+    for stmt in &module.body {
+        collect_direct_import_export_names_stmt(stmt, &mut names);
+    }
+    names
+}
+
+fn collect_direct_import_export_names_stmt(stmt: &ast::Stmt, names: &mut DirectImportExportNames) {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            for decorator in &node.decorator_list {
+                collect_direct_import_export_names_expr(decorator, names);
+            }
+            for stmt in &node.body {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            for decorator in &node.decorator_list {
+                collect_direct_import_export_names_expr(decorator, names);
+            }
+            for stmt in &node.body {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+        }
+        ast::Stmt::ClassDef(node) => {
+            for base in &node.bases {
+                collect_direct_import_export_names_expr(base, names);
+            }
+            for keyword in &node.keywords {
+                collect_direct_import_export_names_expr(&keyword.value, names);
+            }
+            for decorator in &node.decorator_list {
+                collect_direct_import_export_names_expr(decorator, names);
+            }
+            for stmt in &node.body {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+        }
+        ast::Stmt::Expr(node) => collect_direct_import_export_names_expr(&node.value, names),
+        ast::Stmt::Assign(node) => {
+            for target in &node.targets {
+                collect_direct_import_export_names_expr(target, names);
+            }
+            collect_direct_import_export_names_expr(&node.value, names);
+        }
+        ast::Stmt::AnnAssign(node) => {
+            collect_direct_import_export_names_expr(&node.target, names);
+            collect_direct_import_export_names_expr(&node.annotation, names);
+            if let Some(value) = node.value.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Stmt::AugAssign(node) => {
+            collect_direct_import_export_names_expr(&node.target, names);
+            collect_direct_import_export_names_expr(&node.value, names);
+        }
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Stmt::With(node) => {
+            for item in &node.items {
+                collect_direct_import_export_names_expr(&item.context_expr, names);
+                if let Some(value) = item.optional_vars.as_ref() {
+                    collect_direct_import_export_names_expr(value, names);
+                }
+            }
+            for stmt in &node.body {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+        }
+        ast::Stmt::If(node) => {
+            collect_direct_import_export_names_expr(&node.test, names);
+            for stmt in &node.body {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+            for stmt in &node.orelse {
+                collect_direct_import_export_names_stmt(stmt, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_direct_import_export_names_expr(expr: &ast::Expr, names: &mut DirectImportExportNames) {
+    match expr {
+        ast::Expr::Call(node) => {
+            if let Some(marker_name @ ("astichi_import" | "astichi_export")) = call_name(&node.func)
+            {
+                if let Some(resource_name) = first_name_arg_unchecked(node) {
+                    if marker_name == "astichi_import" {
+                        names.import_names.insert(resource_name);
+                    } else {
+                        names.export_names.insert(resource_name);
+                    }
+                }
+            }
+            collect_direct_import_export_names_expr(&node.func, names);
+            for arg in &node.args {
+                collect_direct_import_export_names_expr(arg, names);
+            }
+            for keyword in &node.keywords {
+                collect_direct_import_export_names_expr(&keyword.value, names);
+            }
+        }
+        ast::Expr::BoolOp(node) => {
+            for value in &node.values {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::NamedExpr(node) => {
+            collect_direct_import_export_names_expr(&node.target, names);
+            collect_direct_import_export_names_expr(&node.value, names);
+        }
+        ast::Expr::BinOp(node) => {
+            collect_direct_import_export_names_expr(&node.left, names);
+            collect_direct_import_export_names_expr(&node.right, names);
+        }
+        ast::Expr::UnaryOp(node) => collect_direct_import_export_names_expr(&node.operand, names),
+        ast::Expr::Lambda(node) => collect_direct_import_export_names_expr(&node.body, names),
+        ast::Expr::IfExp(node) => {
+            collect_direct_import_export_names_expr(&node.test, names);
+            collect_direct_import_export_names_expr(&node.body, names);
+            collect_direct_import_export_names_expr(&node.orelse, names);
+        }
+        ast::Expr::Dict(node) => {
+            for key in node.keys.iter().flatten() {
+                collect_direct_import_export_names_expr(key, names);
+            }
+            for value in &node.values {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::Set(node) => {
+            for value in &node.elts {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::List(node) => {
+            for value in &node.elts {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::Tuple(node) => {
+            for value in &node.elts {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::Attribute(node) => collect_direct_import_export_names_expr(&node.value, names),
+        ast::Expr::Subscript(node) => {
+            collect_direct_import_export_names_expr(&node.value, names);
+            collect_direct_import_export_names_expr(&node.slice, names);
+        }
+        ast::Expr::Starred(node) => collect_direct_import_export_names_expr(&node.value, names),
+        ast::Expr::Compare(node) => {
+            collect_direct_import_export_names_expr(&node.left, names);
+            for value in &node.comparators {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::FormattedValue(node) => {
+            collect_direct_import_export_names_expr(&node.value, names);
+            if let Some(value) = node.format_spec.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::JoinedStr(node) => {
+            for value in &node.values {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::Slice(node) => {
+            if let Some(value) = node.lower.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+            if let Some(value) = node.upper.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+            if let Some(value) = node.step.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::ListComp(node) => {
+            collect_direct_import_export_names_expr(&node.elt, names);
+            collect_direct_import_export_names_comprehensions(&node.generators, names);
+        }
+        ast::Expr::SetComp(node) => {
+            collect_direct_import_export_names_expr(&node.elt, names);
+            collect_direct_import_export_names_comprehensions(&node.generators, names);
+        }
+        ast::Expr::DictComp(node) => {
+            collect_direct_import_export_names_expr(&node.key, names);
+            collect_direct_import_export_names_expr(&node.value, names);
+            collect_direct_import_export_names_comprehensions(&node.generators, names);
+        }
+        ast::Expr::GeneratorExp(node) => {
+            collect_direct_import_export_names_expr(&node.elt, names);
+            collect_direct_import_export_names_comprehensions(&node.generators, names);
+        }
+        ast::Expr::Await(node) => collect_direct_import_export_names_expr(&node.value, names),
+        ast::Expr::Yield(node) => {
+            if let Some(value) = node.value.as_ref() {
+                collect_direct_import_export_names_expr(value, names);
+            }
+        }
+        ast::Expr::YieldFrom(node) => collect_direct_import_export_names_expr(&node.value, names),
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => {}
+    }
+}
+
+fn collect_direct_import_export_names_comprehensions(
+    comprehensions: &[ast::Comprehension],
+    names: &mut DirectImportExportNames,
+) {
+    for comprehension in comprehensions {
+        collect_direct_import_export_names_expr(&comprehension.target, names);
+        collect_direct_import_export_names_expr(&comprehension.iter, names);
+        for condition in &comprehension.ifs {
+            collect_direct_import_export_names_expr(condition, names);
+        }
+    }
 }
 
 fn root_funcargs_production_record(
@@ -260,10 +512,27 @@ fn validate_pyimport_prefix(body: &[ast::Stmt], source_map: &SourceMap) -> PyRes
                 validate_pyimport_prefix(&node.body, source_map)?;
                 validate_pyimport_prefix(&node.orelse, source_map)?;
             }
+            ast::Stmt::Try(node) => {
+                validate_pyimport_prefix(&node.body, source_map)?;
+                validate_pyimport_prefix(&node.orelse, source_map)?;
+                validate_pyimport_prefix(&node.finalbody, source_map)?;
+                for handler in &node.handlers {
+                    validate_pyimport_prefix_in_except_handler(handler, source_map)?;
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn validate_pyimport_prefix_in_except_handler(
+    handler: &ast::ExceptHandler,
+    source_map: &SourceMap,
+) -> PyResult<()> {
+    match handler {
+        ast::ExceptHandler::ExceptHandler(node) => validate_pyimport_prefix(&node.body, source_map),
+    }
 }
 
 fn is_pyimport_statement(stmt: &ast::Stmt) -> bool {
@@ -312,6 +581,14 @@ fn validate_elif_statement(
             ast::Stmt::AsyncFunctionDef(node) => validate_elif_positions(&node.body, source_map)?,
             ast::Stmt::ClassDef(node) => validate_elif_positions(&node.body, source_map)?,
             ast::Stmt::With(node) => validate_elif_positions(&node.body, source_map)?,
+            ast::Stmt::Try(node) => {
+                validate_elif_positions(&node.body, source_map)?;
+                validate_elif_positions(&node.orelse, source_map)?;
+                validate_elif_positions(&node.finalbody, source_map)?;
+                for handler in &node.handlers {
+                    validate_elif_positions_in_except_handler(handler, source_map)?;
+                }
+            }
             _ => {}
         }
         return Ok(());
@@ -332,6 +609,15 @@ fn validate_elif_statement(
         validate_elif_statement(child, index == 0, source_map)?;
     }
     Ok(())
+}
+
+fn validate_elif_positions_in_except_handler(
+    handler: &ast::ExceptHandler,
+    source_map: &SourceMap,
+) -> PyResult<()> {
+    match handler {
+        ast::ExceptHandler::ExceptHandler(node) => validate_elif_positions(&node.body, source_map),
+    }
 }
 
 fn validate_elif_empty_body(body: &[ast::Stmt], source_map: &SourceMap) -> PyResult<()> {
@@ -370,6 +656,7 @@ fn statement_line(stmt: &ast::Stmt, source_map: &SourceMap) -> usize {
         ast::Stmt::ImportFrom(node) => source_map.line(node.range),
         ast::Stmt::With(node) => source_map.line(node.range),
         ast::Stmt::If(node) => source_map.line(node.range),
+        ast::Stmt::Try(node) => source_map.line(node.range),
         _ => 1,
     }
 }
@@ -398,11 +685,36 @@ fn block_production_line_number(
     source_map: &SourceMap,
     fallback: u32,
 ) -> usize {
+    if let Some(line_number) = root_shell_block_line_number(module, source_map) {
+        return line_number;
+    }
     let entries = root_body_entries(module);
     let Some(entry) = first_non_prefix_entry(&entries).or_else(|| entries.first()) else {
         return fallback as usize;
     };
     statement_line(entry.stmt, source_map)
+}
+
+fn root_shell_block_line_number(module: &ast::ModModule, source_map: &SourceMap) -> Option<usize> {
+    let mut matched_body: Option<&[ast::Stmt]> = None;
+    for stmt in &module.body {
+        let ast::Stmt::FunctionDef(node) = stmt else {
+            continue;
+        };
+        if !node.name.as_str().starts_with("__astichi_root__") {
+            continue;
+        }
+        if matched_body.is_some() {
+            return None;
+        }
+        matched_body = Some(&node.body);
+    }
+    let body = matched_body?;
+    let stmt = body
+        .iter()
+        .find(|stmt| !is_boundary_prefix_statement(stmt))
+        .or_else(|| body.first())?;
+    Some(statement_line(stmt, source_map))
 }
 
 fn child_owner(owner: &[String], name: &str) -> Vec<String> {
@@ -562,6 +874,45 @@ fn stmt_records(
                 stmt_records(
                     stmt,
                     &format!("{path}/orelse[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Try(node) => {
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, handler) in node.handlers.iter().enumerate() {
+                except_handler_records(
+                    handler,
+                    &format!("{path}/handlers[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.orelse.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/orelse[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.finalbody.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/finalbody[{index}]"),
                     source_map,
                     owner,
                     records,
@@ -791,6 +1142,39 @@ fn stmt_records(
     }
 }
 
+fn except_handler_records(
+    handler: &ast::ExceptHandler,
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    match handler {
+        ast::ExceptHandler::ExceptHandler(node) => {
+            if let Some(type_) = node.type_.as_ref() {
+                expr_records(
+                    type_,
+                    &(path.to_string() + "/type"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
 fn expr_records(
     expr: &ast::Expr,
     path: &str,
@@ -817,7 +1201,7 @@ fn expr_records(
                 let arg_context = if matches!(arg, ast::Expr::Starred(_)) {
                     ExprRecordContext::PositionalVariadic
                 } else {
-                    ExprRecordContext::Expression
+                    ExprRecordContext::CallArgument
                 };
                 expr_records(
                     arg,
@@ -842,7 +1226,7 @@ fn expr_records(
                 let keyword_context = if keyword.arg.is_none() {
                     ExprRecordContext::NamedVariadic
                 } else {
-                    ExprRecordContext::Expression
+                    ExprRecordContext::CallArgument
                 };
                 expr_records(
                     &keyword.value,
@@ -1295,6 +1679,10 @@ fn directive_placeholder_index(name: &str) -> Option<usize> {
     raw_index.parse().ok()
 }
 
+fn is_assign_bind_identifier(name: &str) -> bool {
+    name.starts_with(ASSIGN_BIND_PREFIX)
+}
+
 fn contains_directive_call(expr: &ast::Expr) -> bool {
     match expr {
         ast::Expr::Call(node) => {
@@ -1655,42 +2043,26 @@ fn direct_call_record(
     match name {
         "astichi_hole" => {
             let resource_name = first_name_arg(node, name)?;
-            let (role_key, materialization_anchor, inventory_kind, surface_key) = match context {
-                ExprRecordContext::Statement => (
-                    "hole.block",
-                    "splice-body-at-marker",
-                    "hole.block",
-                    "astichi.surface.block.hole",
-                ),
-                ExprRecordContext::PositionalVariadic => (
-                    "hole.positional_variadic",
-                    "splice-call-arguments",
-                    "hole.positional_variadic",
-                    "astichi.surface.funcargs.hole",
-                ),
-                ExprRecordContext::NamedVariadic => (
-                    "hole.named_variadic",
-                    "splice-call-arguments",
-                    "hole.named_variadic",
-                    "astichi.surface.funcargs.hole",
-                ),
-                ExprRecordContext::Expression => (
-                    "hole.expr",
-                    "replace-expression",
-                    "hole.expr",
-                    "astichi.surface.expression.hole",
-                ),
-            };
-            records.push(record_with_owner(
+            records.push(hole_record_for_context(
                 path,
-                &authored_summary(&resource_name, source_map.line(node.range)),
-                role_key,
-                materialization_anchor,
-                inventory_kind,
                 &resource_name,
-                surface_key,
+                source_map.line(node.range),
+                context,
                 owner.to_vec(),
             ));
+            if matches!(
+                context,
+                ExprRecordContext::CallArgument
+                    | ExprRecordContext::PositionalVariadic
+                    | ExprRecordContext::NamedVariadic
+            ) {
+                records.push(expression_production_supply_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            }
             Ok(())
         }
         "astichi_bind_external" => {
@@ -1716,14 +2088,18 @@ fn direct_call_record(
         }
         "astichi_export" => {
             let resource_name = first_name_arg(node, name)?;
-            records.push(record_with_owner(
+            if is_assign_bind_identifier(&resource_name) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            }
+            records.push(identifier_supply_record(
                 path,
-                &authored_summary(&resource_name, source_map.line(node.range)),
-                "identifier.supply",
-                "rewrite-identifier",
-                "identifier.supply",
                 &resource_name,
-                "astichi.surface.identifier.supply",
+                source_map.line(node.range),
                 owner.to_vec(),
             ));
             Ok(())
@@ -1740,26 +2116,79 @@ fn direct_call_record(
                 "astichi.surface.identifier.demand",
                 owner.to_vec(),
             ));
+            if is_assign_bind_identifier(&resource_name)
+                && (name == "astichi_import"
+                    || has_identifier_supply_record(records, &resource_name))
+            {
+                records.push(identifier_supply_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            }
             Ok(())
         }
         "astichi_insert" => {
             validate_insert_call(node, InsertContext::Expression)?;
             let resource_name = first_name_arg(node, name)?;
-            records.push(record_with_owner(
+            if matches!(
+                context,
+                ExprRecordContext::CallArgument
+                    | ExprRecordContext::PositionalVariadic
+                    | ExprRecordContext::NamedVariadic
+            ) {
+                records.push(hole_record_for_context(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    context,
+                    owner.to_vec(),
+                ));
+            }
+            records.push(expression_production_supply_record(
                 path,
-                &authored_summary(&resource_name, source_map.line(node.range)),
-                "production.supply",
-                "copy-expression",
-                "production.supply",
                 &resource_name,
-                "astichi.surface.expression.production",
+                source_map.line(node.range),
                 owner.to_vec(),
             ));
             Ok(())
         }
         "astichi_comment" => Ok(()),
         "astichi_funcargs" => validate_funcargs_call(node),
-        "astichi_keep" | "astichi_pyimport" => Ok(()),
+        "astichi_keep" => {
+            let resource_name = first_name_arg(node, name)?;
+            if !matches!(context, ExprRecordContext::Statement) {
+                return Ok(());
+            }
+            if is_assign_bind_identifier(&resource_name) {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            }
+            if source_map.export_names.contains(&resource_name) {
+                records.push(identifier_supply_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            } else if !is_assign_bind_identifier(&resource_name)
+                && source_map.import_names.contains(&resource_name)
+            {
+                records.push(identifier_demand_record(
+                    path,
+                    &resource_name,
+                    source_map.line(node.range),
+                    owner.to_vec(),
+                ));
+            }
+            Ok(())
+        }
+        "astichi_pyimport" => Ok(()),
         other if other.starts_with("astichi_") => Err(crate::errors::schema_error(&format!(
             "unsupported native direct call marker: {other}"
         ))),
@@ -1994,6 +2423,13 @@ fn first_name_arg(node: &ast::ExprCall, marker: &str) -> PyResult<String> {
     }
 }
 
+fn first_name_arg_unchecked(node: &ast::ExprCall) -> Option<String> {
+    match node.args.first()? {
+        ast::Expr::Name(name) => Some(name.id.to_string()),
+        _ => None,
+    }
+}
+
 fn external_keyword_name(node: &ast::ExprCall) -> PyResult<Option<String>> {
     for keyword in &node.keywords {
         if keyword.arg.as_ref().map(|arg| arg.as_str()) != Some("external") {
@@ -2043,6 +2479,93 @@ fn identifier_demand_record(
         "astichi.surface.identifier.demand",
         owner,
     )
+}
+
+fn identifier_supply_record(
+    path: &str,
+    resource_name: &str,
+    line_number: usize,
+    owner: Vec<String>,
+) -> ExtractedRecord {
+    record_with_owner(
+        path,
+        &authored_summary(resource_name, line_number),
+        "identifier.supply",
+        "rewrite-identifier",
+        "identifier.supply",
+        resource_name,
+        "astichi.surface.identifier.supply",
+        owner,
+    )
+}
+
+fn expression_production_supply_record(
+    path: &str,
+    resource_name: &str,
+    line_number: usize,
+    owner: Vec<String>,
+) -> ExtractedRecord {
+    record_with_owner(
+        path,
+        &authored_summary(resource_name, line_number),
+        "production.supply",
+        "copy-expression",
+        "production.supply",
+        resource_name,
+        "astichi.surface.expression.production",
+        owner,
+    )
+}
+
+fn hole_record_for_context(
+    path: &str,
+    resource_name: &str,
+    line_number: usize,
+    context: ExprRecordContext,
+    owner: Vec<String>,
+) -> ExtractedRecord {
+    let (role_key, materialization_anchor, inventory_kind, surface_key) = match context {
+        ExprRecordContext::Statement => (
+            "hole.block",
+            "splice-body-at-marker",
+            "hole.block",
+            "astichi.surface.block.hole",
+        ),
+        ExprRecordContext::PositionalVariadic => (
+            "hole.positional_variadic",
+            "splice-call-arguments",
+            "hole.positional_variadic",
+            "astichi.surface.funcargs.hole",
+        ),
+        ExprRecordContext::NamedVariadic => (
+            "hole.named_variadic",
+            "splice-call-arguments",
+            "hole.named_variadic",
+            "astichi.surface.funcargs.hole",
+        ),
+        ExprRecordContext::Expression | ExprRecordContext::CallArgument => (
+            "hole.expr",
+            "replace-expression",
+            "hole.expr",
+            "astichi.surface.expression.hole",
+        ),
+    };
+    record_with_owner(
+        path,
+        &authored_summary(resource_name, line_number),
+        role_key,
+        materialization_anchor,
+        inventory_kind,
+        resource_name,
+        surface_key,
+        owner,
+    )
+}
+
+fn has_identifier_supply_record(records: &[ExtractedRecord], resource_name: &str) -> bool {
+    records.iter().any(|record| {
+        record.inventory_kind == "identifier.supply" && record.resource_name == resource_name
+    })
 }
 
 fn block_production_record(line_number: usize) -> ExtractedRecord {
