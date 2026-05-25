@@ -21,7 +21,10 @@ from astichi.lower_engine import (
     LowerTemplateBinding,
     LowerTemplateCache,
     MaterializationPlan,
+    NativeTemplateCache,
     TemplateRecordSpec,
+    load_native_extension,
+    requested_lower_engine,
 )
 from astichi.lower_engine.handles import OccurrenceId, OverlayId, RecordId
 from astichi.lower_engine.inventory import AssemblyState
@@ -315,10 +318,22 @@ class AssemblyScope:
         default_factory=list,
         init=False,
     )
+    _native_module: object | None = field(default=None, init=False)
+    _native_engine_handle: object | None = field(default=None, init=False)
+    _native_template_cache: NativeTemplateCache | None = field(
+        default=None,
+        init=False,
+    )
+    _native_state_handle: object | None = field(default=None, init=False)
+    _native_occurrence_by_build_prefix: dict[tuple[str, ...], object] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._lower_cache = LowerTemplateCache(self._lower_engine)
         self._lower_state = self._lower_engine.new_state()
+        self._initialize_native_scope_backend()
         if self.builder.graph.instances:
             self._refresh_inventory_from_build()
 
@@ -350,6 +365,22 @@ class AssemblyScope:
             self._lower_state,
             materialization_plan=materialization_plan,
         )
+
+    def native_lower_structural_snapshot(self) -> dict[str, object]:
+        """Return the explicit-native scope structural state."""
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            raise RuntimeError("native scope backend is not enabled")
+        snapshot = self._native_module.assembly_state_snapshot(
+            self._native_engine_handle,
+            self._native_state_handle,
+        )
+        if not isinstance(snapshot, dict):
+            raise TypeError("native scope structural snapshot must be a dict")
+        return snapshot
 
     @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:
@@ -575,6 +606,21 @@ class AssemblyScope:
             if prefix_owner == owner:
                 self._append_lower_occurrence(prefix, composable)
 
+    def _initialize_native_scope_backend(self) -> None:
+        requested = requested_lower_engine()
+        if requested not in {"native", "native-rust", "native-cpp"}:
+            return
+        module = load_native_extension(required=True)
+        assert module is not None
+        engine_handle = module.engine_create()
+        self._native_module = module
+        self._native_engine_handle = engine_handle
+        self._native_template_cache = NativeTemplateCache(
+            module=module,
+            engine_handle=engine_handle,
+        )
+        self._native_state_handle = module.assembly_state_create(engine_handle)
+
     @counted_perf_call("replace_occurrence_inventory")
     def _replace_occurrence_inventory(
         self,
@@ -663,7 +709,55 @@ class AssemblyScope:
         self._lower_inventory_ids_by_build_prefix[build_prefix] = frozenset(
             inventory_record_ids
         )
+        self._append_native_occurrence(
+            build_prefix,
+            binding,
+            parent_occurrence_id=parent_occurrence_id,
+        )
         return occurrence_id
+
+    def _append_native_occurrence(
+        self,
+        build_prefix: tuple[str, ...],
+        binding: LowerTemplateBinding,
+        *,
+        parent_occurrence_id: OccurrenceId | None,
+    ) -> object | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_template_cache is None
+            or self._native_state_handle is None
+        ):
+            return None
+        if binding.native_snapshot is None:
+            raise TypeError(
+                "explicit native scope add requires native template metadata"
+            )
+        template_handle = self._native_template_cache.template_handle_for(binding)
+        parent_native_occurrence = None
+        if parent_occurrence_id is not None:
+            parent_build_prefix = build_prefix[:-1]
+            parent_native_occurrence = self._native_occurrence_by_build_prefix.get(
+                parent_build_prefix
+            )
+            if parent_native_occurrence is None:
+                raise RuntimeError(
+                    "native parent occurrence is missing for build path "
+                    f"{parent_build_prefix!r}"
+                )
+        occurrence = self._native_module.assembly_state_append_occurrence(
+            self._native_engine_handle,
+            self._native_state_handle,
+            template_handle,
+            build_prefix,
+            parent_native_occurrence,
+        )
+        self._native_occurrence_by_build_prefix[build_prefix] = occurrence
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_scope_append_occurrence")
+        return occurrence
 
     def _remove_lower_prefix_records(self, build_prefix: tuple[str, ...]) -> None:
         old_lower_records = self._lower_record_ids_by_build_prefix.get(

@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 
 import astichi
-from astichi.assembler import AssemblyScope
+from astichi.assembler import AssemblyScope, as_composable, require_one
 from astichi.lower_engine import LowerEngine, current_surface_bundle_spec
 from astichi.lower_engine.native import load_native_extension, native_capabilities
+from astichi.perf_counters import collect_perf_counters
 from astichi.structural_snapshot import write_structural_snapshot
 
 
@@ -108,6 +109,70 @@ def test_native_occurrence_store_rejects_cross_engine_handles_when_available() -
 
     with pytest.raises(RuntimeError, match="belongs to another native engine"):
         module.assembly_state_append_occurrence(second, state, template, ("Root",))
+
+
+def test_native_scope_add_routes_root_occurrence_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+
+    with collect_perf_counters() as counters:
+        scope.add("Root", astichi.compile("result = astichi_hole(value)\n"))
+
+    actual = scope.native_lower_structural_snapshot()
+    expected = scope.lower_structural_snapshot()
+    counts = counters.snapshot()["counts"]
+
+    assert actual == expected
+    assert counts["native_scope_append_occurrence"] == 1
+    assert counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_apply_appends_child_occurrence_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("answer = astichi_hole(value)\n")
+    expression = astichi.compile("40 + 2\n")
+    scope.add("Root", root)
+    candidate = require_one(
+        scope.find_candidates(
+            as_composable(expression, build_name="Expression"),
+            name="value",
+            build_match=("Root",),
+        )
+    )
+
+    with collect_perf_counters() as counters:
+        scope.apply(candidate)
+
+    snapshot = scope.native_lower_structural_snapshot()
+    counts = counters.snapshot()["counts"]
+
+    assert snapshot["occurrences"] == [
+        {
+            "build_path": ["Root"],
+            "occurrence_id": 0,
+            "parent_occurrence_id": None,
+            "template_id": 0,
+        },
+        {
+            "build_path": ["Root", "Expression"],
+            "occurrence_id": 1,
+            "parent_occurrence_id": 0,
+            "template_id": 1,
+        },
+    ]
+    assert counts["native_scope_append_occurrence"] == 1
+    assert counts.get("debug_inventory_projection", 0) == 0
 
 
 def _register_template_source(module: object, handle: object, source: str) -> object:
