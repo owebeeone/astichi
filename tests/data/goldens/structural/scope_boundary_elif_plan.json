@@ -865,13 +865,15 @@
         },
         "operation_key": "astichi.operation.strip_marker",
         "record_id": null,
-        "target_scope_id": 0
+        "target_scope_id": 1
       },
       {
         "captures": {
           "live_record_count": 5,
           "root_occurrence_id": 0,
-          "satisfied_record_count": 0
+          "satisfied_record_count": 0,
+          "unresolved_capable_record_count": 2,
+          "unresolved_live_record_count": 2
         },
         "operation_key": "astichi.operation.gate_no_unresolved",
         "record_id": null,

@@ -22,6 +22,7 @@ from astichi.lower_engine.inventory import (
     Overlay,
 )
 from astichi.lower_engine.materialization import (
+    HygieneOperation,
     MaterializationOperation,
     MaterializationPlan,
     build_materialization_plan,
@@ -43,6 +44,14 @@ from astichi.lower_engine.templates import (
 )
 
 _OWNER_IDS = count()
+
+
+def _is_unresolved_capable_inventory_kind(inventory_kind: str) -> bool:
+    return (
+        inventory_kind.startswith("hole.")
+        or inventory_kind.endswith(".demand")
+        or inventory_kind == "external.bind"
+    )
 
 
 class LowerEngine:
@@ -407,19 +416,135 @@ class LowerEngine:
             root_occurrence_id=root_occurrence_id,
             registered_operation_keys=operation_keys,
         )
+        plan = self._with_package_gate_captures(state, plan)
         fallback_operations = self._defaulted_block_fallback_operations(state)
-        if not fallback_operations:
+        if fallback_operations:
+            plan = MaterializationPlan(
+                root_occurrence_id=plan.root_occurrence_id,
+                operation_stream=plan.operation_stream + fallback_operations,
+                hygiene_stream=plan.hygiene_stream,
+                debug_views={
+                    **plan.debug_views,
+                    "fallback_operation_count": len(fallback_operations),
+                },
+                artifact_requests=plan.artifact_requests,
+            )
+        return self._append_package_marker_hygiene(state, plan)
+
+    def _with_package_gate_captures(
+        self,
+        state: AssemblyState,
+        plan: MaterializationPlan,
+    ) -> MaterializationPlan:
+        unresolved_capable = self._unresolved_capable_records(state)
+        unresolved_live = tuple(
+            record_id
+            for record_id in unresolved_capable
+            if self._record_state(state, record_id) == "live"
+        )
+        hygiene = tuple(
+            (
+                HygieneOperation(
+                    operation_key=operation.operation_key,
+                    target_scope_id=operation.target_scope_id,
+                    record_id=operation.record_id,
+                    captures={
+                        **operation.captures,
+                        "unresolved_capable_record_count": len(
+                            unresolved_capable
+                        ),
+                        "unresolved_live_record_count": len(unresolved_live),
+                    },
+                )
+                if operation.operation_key == "astichi.operation.gate_no_unresolved"
+                else operation
+            )
+            for operation in plan.hygiene_stream
+        )
+        return MaterializationPlan(
+            root_occurrence_id=plan.root_occurrence_id,
+            operation_stream=plan.operation_stream,
+            hygiene_stream=hygiene,
+            debug_views=plan.debug_views,
+            artifact_requests=plan.artifact_requests,
+        )
+
+    def _append_package_marker_hygiene(
+        self,
+        state: AssemblyState,
+        plan: MaterializationPlan,
+    ) -> MaterializationPlan:
+        hygiene: list[HygieneOperation] = []
+        for occurrence in state.occurrences:
+            if not occurrence.live:
+                continue
+            package = self._template(occurrence.template_id).package_v2
+            for marker in package.markers:
+                source_name = package.marker_source_name(marker)
+                if source_name not in {
+                    "astichi_export",
+                    "astichi_import",
+                    "astichi_keep",
+                    "astichi_pass",
+                }:
+                    continue
+                hygiene.append(
+                    HygieneOperation(
+                        operation_key=(
+                            "astichi.operation.keep_name"
+                            if source_name == "astichi_keep"
+                            else "astichi.operation.strip_marker"
+                        ),
+                        target_scope_id=marker.scope_id,
+                        captures={
+                            "marker": source_name,
+                            "name": package.marker_resource_name(marker),
+                            "occurrence_id": occurrence.occurrence_id.index,
+                        },
+                    )
+                )
+        if not hygiene:
             return plan
         return MaterializationPlan(
             root_occurrence_id=plan.root_occurrence_id,
-            operation_stream=plan.operation_stream + fallback_operations,
-            hygiene_stream=plan.hygiene_stream,
+            operation_stream=plan.operation_stream,
+            hygiene_stream=tuple(hygiene) + plan.hygiene_stream,
             debug_views={
                 **plan.debug_views,
-                "fallback_operation_count": len(fallback_operations),
+                "boundary_marker_count": len(hygiene),
             },
             artifact_requests=plan.artifact_requests,
         )
+
+    def _unresolved_capable_records(
+        self,
+        state: AssemblyState,
+    ) -> tuple[RecordId, ...]:
+        record_ids: list[RecordId] = []
+        for occurrence in state.occurrences:
+            template = self._template(occurrence.template_id)
+            package = template.package_v2
+            for row in package.records:
+                if not _is_unresolved_capable_inventory_kind(
+                    package.record_inventory_kind(row)
+                ):
+                    continue
+                template_record = template.records[row.template_record_id]
+                record_ids.append(
+                    RecordId(
+                        occurrence_id=occurrence.occurrence_id,
+                        template_record_id=template_record.template_record_id,
+                    )
+                )
+        return tuple(record_ids)
+
+    def _record_state(self, state: AssemblyState, record_id: RecordId) -> str:
+        occurrence = state.occurrences[record_id.occurrence_id.index]
+        if not occurrence.live or record_id in state.dead_records:
+            return "dead"
+        if record_id in state.satisfied_records:
+            return "satisfied"
+        return "live"
 
     def _defaulted_block_fallback_operations(
         self,

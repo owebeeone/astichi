@@ -916,7 +916,9 @@
         "captures": {
           "live_record_count": 6,
           "root_occurrence_id": 0,
-          "satisfied_record_count": 0
+          "satisfied_record_count": 0,
+          "unresolved_capable_record_count": 3,
+          "unresolved_live_record_count": 3
         },
         "operation_key": "astichi.operation.gate_no_unresolved",
         "record_id": null,

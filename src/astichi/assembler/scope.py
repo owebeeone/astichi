@@ -402,7 +402,43 @@ class AssemblyScope:
         )
         if not isinstance(snapshot, dict):
             raise TypeError("native materialization snapshot must be a dict")
+        self._merge_package_gate_captures_into_native_snapshot(snapshot)
         return snapshot
+
+    def _merge_package_gate_captures_into_native_snapshot(
+        self,
+        snapshot: dict[str, object],
+    ) -> None:
+        """Bridge package-v2 gate captures until native owns package rows."""
+        package_plan = self._lower_engine.build_materialization_plan(self._lower_state)
+        package_gate = next(
+            (
+                operation
+                for operation in package_plan.hygiene_stream
+                if operation.operation_key == "astichi.operation.gate_no_unresolved"
+            ),
+            None,
+        )
+        if package_gate is None:
+            return
+        stream = snapshot.get("hygiene_stream")
+        if not isinstance(stream, list):
+            return
+        for operation in stream:
+            if not isinstance(operation, dict):
+                continue
+            if operation.get("operation_key") != "astichi.operation.gate_no_unresolved":
+                continue
+            captures = operation.get("captures")
+            if not isinstance(captures, dict):
+                continue
+            captures.update(
+                {
+                    key: value
+                    for key, value in package_gate.captures.items()
+                    if key.startswith("unresolved_")
+                }
+            )
 
     @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:
@@ -1234,41 +1270,16 @@ class AssemblyScope:
                     },
                 )
             )
-        for occurrence_id, composable in self._lower_composable_by_occurrence.items():
-            if not self._lower_engine.occurrence(self._lower_state, occurrence_id).live:
-                continue
-            for marker in composable.markers:
-                if marker.source_name not in {
-                    "astichi_export",
-                    "astichi_import",
-                    "astichi_keep",
-                    "astichi_pass",
-                }:
-                    continue
-                hygiene.append(
-                    HygieneOperation(
-                        operation_key=(
-                            "astichi.operation.keep_name"
-                            if marker.source_name == "astichi_keep"
-                            else "astichi.operation.strip_marker"
-                        ),
-                        target_scope_id=0,
-                        captures={
-                            "marker": marker.source_name,
-                            "name": marker.name_id,
-                            "occurrence_id": occurrence_id.index,
-                        },
-                    )
-                )
         if not hygiene:
             return plan
+        existing_count = int(plan.debug_views.get("boundary_marker_count", 0))
         return MaterializationPlan(
             root_occurrence_id=plan.root_occurrence_id,
             operation_stream=plan.operation_stream,
             hygiene_stream=tuple(hygiene) + plan.hygiene_stream,
             debug_views={
                 **plan.debug_views,
-                "boundary_marker_count": len(hygiene),
+                "boundary_marker_count": existing_count + len(hygiene),
             },
             artifact_requests=plan.artifact_requests,
         )

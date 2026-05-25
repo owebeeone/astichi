@@ -671,6 +671,18 @@ class LowerTemplatePackageV2:
             return False
         return True
 
+    def marker_source_name(self, row: MarkerRow) -> str:
+        """Return the source marker spelling for a marker row."""
+        return self._string(row.source_name_id)
+
+    def marker_resource_name(self, row: MarkerRow) -> str:
+        """Return the name-bearing resource for a marker row, if any."""
+        return self._optional_string(row.resource_name_id)
+
+    def record_inventory_kind(self, row: RecordRow) -> str:
+        """Return the inventory kind for a template record row."""
+        return self._string(row.inventory_kind_id)
+
     def structural_template_snapshot(self, *, template_id: int = 0) -> dict[str, object]:
         """Render the v1 structural template row from package data."""
         return {
