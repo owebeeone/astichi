@@ -471,6 +471,9 @@ by inventory production records:
 - implicit expression snippets expose expression productions
 - `astichi_funcargs(...)` payloads expose expression-family productions and
   compatibility is region-aware for `*` and `**` targets
+- payload-local `astichi_import(...)` / `astichi_export(...)` directives inside
+  `astichi_funcargs(...)` use reserved keyword carriers
+  `__astichi_ph_{N}__=...`; `_=` is not supported
 - `astichi_params(...)` payloads expose parameter productions
 - `astichi_export(...)` exposes identifier supply descriptors, not additive
   productions

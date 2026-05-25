@@ -13,8 +13,8 @@ def test_compile_accepts_top_level_astichi_funcargs_payload() -> None:
         """
 astichi_funcargs(
     1,
-    _=astichi_import(source),
-    _=astichi_export(result),
+    __astichi_ph_0__=astichi_import(source),
+    __astichi_ph_1__=astichi_export(result),
 )
 """
     )
@@ -47,8 +47,8 @@ def test_direct_funcargs_directive_calls_preserve_authored_order() -> None:
     tree = ast.parse(
         """
 astichi_funcargs(
-    _=astichi_export(out),
-    _=astichi_import(dep),
+    __astichi_ph_0__=astichi_export(out),
+    __astichi_ph_1__=astichi_import(dep),
 )
 """
     )
@@ -78,20 +78,20 @@ def test_compile_rejects_non_payload_placement(source: str) -> None:
         astichi.compile(source)
 
 
-def test_compile_rejects_astichi_pass_in_special_carrier() -> None:
+def test_compile_rejects_astichi_pass_in_directive_placeholder() -> None:
     with pytest.raises(
         ValueError,
-        match=r"astichi_pass\(\.\.\.\) is not valid in _=",
+        match="directive placeholders may only carry direct astichi_import",
     ):
-        astichi.compile("astichi_funcargs(_=astichi_pass(total))\n")
+        astichi.compile("astichi_funcargs(__astichi_ph_0__=astichi_pass(total))\n")
 
 
-def test_compile_rejects_sentinel_wrapped_astichi_pass_in_special_carrier() -> None:
+def test_compile_rejects_sentinel_wrapped_astichi_pass_in_directive_placeholder() -> None:
     with pytest.raises(
         ValueError,
-        match=r"astichi_pass\(\.\.\.\) is not valid in _=",
+        match="directive placeholders may only carry direct astichi_import",
     ):
-        astichi.compile("astichi_funcargs(_=astichi_pass(total)._)\n")
+        astichi.compile("astichi_funcargs(__astichi_ph_0__=astichi_pass(total)._)\n")
 
 
 @pytest.mark.parametrize(
@@ -106,7 +106,7 @@ def test_compile_rejects_import_export_outside_direct_special_carrier(
 ) -> None:
     with pytest.raises(
         ValueError,
-        match=r"astichi_import\(\.\.\.\) / astichi_export\(\.\.\.\) are only valid as direct _= carriers",
+        match=r"astichi_import\(\.\.\.\) / astichi_export\(\.\.\.\) are only valid as direct __astichi_ph_\{N\}__= carriers",
     ):
         astichi.compile(source)
 
@@ -114,29 +114,27 @@ def test_compile_rejects_import_export_outside_direct_special_carrier(
 def test_compile_rejects_wrapped_special_carrier_forms() -> None:
     with pytest.raises(
         ValueError,
-        match="wrapped forms are not supported",
+        match="directive placeholders may only carry direct astichi_import",
     ):
         astichi.compile(
-            "astichi_funcargs(_=(astichi_import(source), astichi_export(result)))\n"
+            "astichi_funcargs(__astichi_ph_0__=(astichi_import(source), astichi_export(result)))\n"
         )
 
 
-def test_compile_allows_ordinary_underscore_keyword_argument() -> None:
-    compiled = astichi.compile("astichi_funcargs(_=value)\n")
-
-    assert {port.name for port in compiled.demand_ports} == {"value"}
-    assert {port.name for port in compiled.supply_ports} == set()
+def test_compile_rejects_legacy_underscore_keyword_carrier() -> None:
+    with pytest.raises(ValueError, match="keyword `_` is reserved"):
+        astichi.compile("astichi_funcargs(_=value)\n")
 
 
 @pytest.mark.parametrize(
     ("source", "match"),
     [
         (
-            "astichi_funcargs(_=astichi_import())\n",
+            "astichi_funcargs(__astichi_ph_0__=astichi_import())\n",
             r"astichi_import expects 1 positional arguments",
         ),
         (
-            "astichi_funcargs(_=astichi_export(source.attr))\n",
+            "astichi_funcargs(__astichi_ph_0__=astichi_export(source.attr))\n",
             r"astichi_export requires a bare identifier-like first argument",
         ),
         (
@@ -153,4 +151,21 @@ def test_compile_rejects_malformed_payload_marker_shapes(
     source: str, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
+        astichi.compile(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "astichi_funcargs(__astichi_ph_1__=astichi_import(source))\n",
+        (
+            "astichi_funcargs("
+            "__astichi_ph_0__=astichi_import(source), "
+            "__astichi_ph_2__=astichi_export(out)"
+            ")\n"
+        ),
+    ],
+)
+def test_compile_rejects_non_contiguous_directive_placeholders(source: str) -> None:
+    with pytest.raises(ValueError, match="contiguous and ordered"):
         astichi.compile(source)

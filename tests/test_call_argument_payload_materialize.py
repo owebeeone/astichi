@@ -99,8 +99,8 @@ result = func(astichi_hole(args))
             """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """
         )
@@ -131,8 +131,8 @@ def test_build_funcargs_compile_arg_names_rewrite_payload_local_import() -> None
         """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """,
         arg_names={"seed": "source_value"},
@@ -180,8 +180,8 @@ result = func(astichi_hole(args))
             """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """
         )
@@ -218,7 +218,7 @@ result = func(astichi_hole(args))
             """
 astichi_funcargs(
     (out := astichi_pass(seed)),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_export(out),
 )
 """
         )
@@ -267,8 +267,8 @@ result = (result_plain, result_kw["msg"], out_plain, out_kw)
             """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """
         )
@@ -278,8 +278,8 @@ astichi_funcargs(
             """
 astichi_funcargs(
     msg=(out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """
         )
@@ -354,7 +354,7 @@ def test_compile_rejects_bind_external_name_collision_with_payload_directive() -
             """
 astichi_funcargs(
     astichi_bind_external(seed),
-    _=astichi_import(seed),
+    __astichi_ph_0__=astichi_import(seed),
 )
 """
         )

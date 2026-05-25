@@ -290,7 +290,7 @@ refactor is underway.
 | `astichi.pattern.funcargs.starred_item` | `*expr` inside `astichi_funcargs(...)` | `PayloadExpressionPattern` item | Starred call-argument payload item |
 | `astichi.pattern.funcargs.keyword_item` | `name=expr` inside `astichi_funcargs(...)` | `PayloadExpressionPattern` item | Keyword call-argument payload item |
 | `astichi.pattern.funcargs.doublestar_item` | `**expr` inside `astichi_funcargs(...)` | `PayloadExpressionPattern` item | Double-star call-argument payload item |
-| `astichi.pattern.funcargs.directive_item` | `_ = astichi_import/export(name)` inside `astichi_funcargs(...)` | `PayloadExpressionPattern` item | Payload-local boundary directive |
+| `astichi.pattern.funcargs.directive_item` | `__astichi_ph_{N}__=astichi_import/export(name)` inside `astichi_funcargs(...)` | `PayloadExpressionPattern` item | Payload-local boundary directive |
 | `astichi.pattern.def.params_payload` | `def/async def astichi_params(...): pass` or `...` | `PayloadFunctionPattern` | Parameter production |
 | `astichi.pattern.arg.param_hole_suffix` | function parameter `name__astichi_param_hole__` | `IdentifierSuffixPattern` | Parameter insertion target |
 | `astichi.pattern.suffix.arg_identifier.name` | `Name` spelling `name__astichi_arg__` | `IdentifierSuffixPattern` | Identifier demand occurrence |

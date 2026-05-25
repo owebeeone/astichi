@@ -697,6 +697,10 @@ Goal: close native pattern extraction for all current gold-source fixtures.
 
 Work:
 
+- replace the old AST-only `_=astichi_import/export(...)` funcargs directive
+  carrier with the parseable reserved keyword carrier
+  `__astichi_ph_{N}__=astichi_import/export(...)`, and reject `_=` inside
+  `astichi_funcargs(...)`;
 - run native extraction against every `tests/data/gold_src/*.py` fixture;
 - compare native template snapshots against the Python reference;
 - add/update structural goldens only where the new native snapshot grammar

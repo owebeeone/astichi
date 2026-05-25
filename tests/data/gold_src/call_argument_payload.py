@@ -143,8 +143,8 @@ astichi_funcargs(msg="solo")
             """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """,
             file_name="gold_src/call_argument_payload.py",
@@ -158,7 +158,7 @@ astichi_funcargs(
             """
 astichi_funcargs(
     (out := astichi_pass(seed)),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_export(out),
 )
 """,
             file_name="gold_src/call_argument_payload.py",
@@ -172,8 +172,8 @@ astichi_funcargs(
             """
 astichi_funcargs(
     msg=(out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """,
             file_name="gold_src/call_argument_payload.py",
@@ -187,8 +187,8 @@ astichi_funcargs(
             """
 astichi_funcargs(
     (out := seed),
-    _=astichi_import(seed),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(seed),
+    __astichi_ph_1__=astichi_export(out),
 )
 """,
             file_name="gold_src/call_argument_payload.py",
@@ -199,7 +199,7 @@ astichi_funcargs(
             """
 astichi_funcargs(
     (out := astichi_pass(seed)),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_export(out),
 )
 """,
             file_name="gold_src/call_argument_payload.py",

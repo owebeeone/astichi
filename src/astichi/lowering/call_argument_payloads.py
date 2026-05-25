@@ -14,17 +14,17 @@ from astichi.lowering.markers import (
     FUNCARGS,
     IMPORT,
     MarkerSpec,
-    PASS,
     call_name,
     is_call_to_marker,
 )
 from astichi.lowering.payload_prefix import (
     single_payload_expression_after_boundary_prefix,
 )
-from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.model.semantics import SemanticSingleton
 
 _DIRECTIVE_SPECS: tuple[MarkerSpec, ...] = (IMPORT, EXPORT)
+_DIRECTIVE_PLACEHOLDER_PREFIX = "__astichi_ph_"
+_DIRECTIVE_PLACEHOLDER_SUFFIX = "__"
 
 
 @dataclass(frozen=True)
@@ -125,10 +125,14 @@ def is_astichi_funcargs_call(node: ast.AST) -> bool:
 
 
 def direct_funcargs_directive_calls(call: ast.Call) -> tuple[ast.Call, ...]:
-    """Return direct special ``_=astichi_import/export(...)`` carriers in order."""
+    """Return direct special placeholder import/export carriers in order."""
     directives: list[ast.Call] = []
     for keyword in call.keywords:
-        if keyword.arg != "_" or not isinstance(keyword.value, ast.Call):
+        if (
+            keyword.arg is None
+            or _directive_placeholder_index(keyword.arg) is None
+            or not isinstance(keyword.value, ast.Call)
+        ):
             continue
         spec = _directive_spec(keyword.value)
         if spec is not None:
@@ -158,6 +162,7 @@ def extract_funcargs_payload(call: ast.Call) -> FuncArgPayload:
     """Extract one authored ``astichi_funcargs(...)`` call into a payload model."""
     if not is_astichi_funcargs_call(call):
         raise TypeError("extract_funcargs_payload expects an astichi_funcargs(...) call")
+    _validate_funcargs_call(call)
     items: list[FuncArgPayloadItem] = []
     for arg in call.args:
         if isinstance(arg, ast.Starred):
@@ -165,7 +170,7 @@ def extract_funcargs_payload(call: ast.Call) -> FuncArgPayload:
             continue
         items.append(PositionalFuncArgItem(expr=copy.deepcopy(arg)))
     for keyword in call.keywords:
-        if keyword.arg == "_":
+        if keyword.arg is not None and _directive_placeholder_index(keyword.arg) is not None:
             directive_spec = _directive_spec(keyword.value)
         else:
             directive_spec = None
@@ -206,6 +211,7 @@ def validate_call_argument_payload_surface(tree: ast.Module) -> None:
 
 
 def _validate_funcargs_call(call: ast.Call) -> None:
+    _validate_directive_placeholders(call)
     directive_names = {
         _validated_name_arg(directive, _require_directive_spec(directive))
         for directive in direct_funcargs_directive_calls(call)
@@ -224,31 +230,65 @@ def _validate_funcargs_call(call: ast.Call) -> None:
         if _contains_non_value_directive(arg):
             raise ValueError(
                 "astichi_import(...) / astichi_export(...) are only valid as "
-                "direct _= carriers inside astichi_funcargs(...)"
+                "direct __astichi_ph_{N}__= carriers inside astichi_funcargs(...)"
             )
     for keyword in call.keywords:
         value = keyword.value
-        if keyword.arg == "_":
-            if _is_direct_directive_call(value):
-                continue
-            if _is_direct_or_sentinel_pass_surface(value):
-                raise ValueError(
-                    "astichi_pass(...) is not valid in _= inside "
-                    "astichi_funcargs(...); use it in a real argument "
-                    "expression instead"
-                )
-            if _contains_non_value_directive(value):
-                raise ValueError(
-                    "astichi_import(...) / astichi_export(...) must be direct "
-                    "_= carriers inside astichi_funcargs(...); wrapped forms "
-                    "are not supported"
-                )
+        if keyword.arg is not None and _directive_placeholder_index(keyword.arg) is not None:
             continue
         if _contains_non_value_directive(value):
             raise ValueError(
                 "astichi_import(...) / astichi_export(...) are only valid as "
-                "direct _= carriers inside astichi_funcargs(...)"
+                "direct __astichi_ph_{N}__= carriers inside astichi_funcargs(...)"
             )
+
+
+def _validate_directive_placeholders(call: ast.Call) -> None:
+    indexes: list[int] = []
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            continue
+        if keyword.arg == "_":
+            raise ValueError(
+                "keyword `_` is reserved inside astichi_funcargs(...); use "
+                "__astichi_ph_{N}__=astichi_import/export(...) for payload-local "
+                "directives"
+            )
+        if keyword.arg.startswith(_DIRECTIVE_PLACEHOLDER_PREFIX):
+            index = _directive_placeholder_index(keyword.arg)
+            if index is None:
+                raise ValueError(
+                    "astichi_funcargs directive placeholder names must match "
+                    "__astichi_ph_{N}__"
+                )
+            if not _is_direct_directive_call(keyword.value):
+                raise ValueError(
+                    "astichi_funcargs directive placeholders may only carry direct "
+                    "astichi_import(...) or astichi_export(...) calls"
+                )
+            indexes.append(index)
+    expected = list(range(len(indexes)))
+    if indexes != expected:
+        raise ValueError(
+            "astichi_funcargs directive placeholders must be contiguous and ordered "
+            "from __astichi_ph_0__"
+        )
+
+
+def _directive_placeholder_index(name: str) -> int | None:
+    if not (
+        name.startswith(_DIRECTIVE_PLACEHOLDER_PREFIX)
+        and name.endswith(_DIRECTIVE_PLACEHOLDER_SUFFIX)
+    ):
+        return None
+    raw_index = name[
+        len(_DIRECTIVE_PLACEHOLDER_PREFIX) : -len(_DIRECTIVE_PLACEHOLDER_SUFFIX)
+    ]
+    if not raw_index or not raw_index.isdecimal():
+        return None
+    if len(raw_index) > 1 and raw_index.startswith("0"):
+        return None
+    return int(raw_index)
 
 
 def _contains_non_value_directive(node: ast.AST) -> bool:
@@ -277,18 +317,6 @@ def _require_directive_spec(node: ast.AST) -> MarkerSpec:
     if spec is None:
         raise TypeError("expected a direct astichi_import/export directive call")
     return spec
-
-
-def _is_direct_or_sentinel_pass_surface(node: ast.AST) -> bool:
-    if call_name(node) == PASS.source_name:
-        return True
-    return (
-        match_transparent_sentinel(
-            node,
-            is_marker_call=lambda call: is_call_to_marker(call, PASS),
-        )
-        is not None
-    )
 
 
 def _validated_name_arg(call: ast.Call, spec: MarkerSpec) -> str:

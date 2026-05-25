@@ -28,8 +28,8 @@ astichi_funcargs(
     *more,
     named=value,
     **mapping,
-    _=astichi_import(dep),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_import(dep),
+    __astichi_ph_1__=astichi_export(out),
 )
 """
     )
@@ -72,14 +72,12 @@ astichi_funcargs(
     assert sixth.name == "out"
 
 
-def test_extract_funcargs_payload_treats_ordinary_underscore_keyword_as_keyword_item() -> None:
+def test_extract_funcargs_payload_rejects_legacy_underscore_keyword() -> None:
     call = _parse_funcargs("astichi_funcargs(_=value)\n")
 
-    payload = extract_funcargs_payload(call)
-
-    assert len(payload.items) == 1
-    only = payload.items[0]
-    assert isinstance(only, KeywordFuncArgItem)
-    assert only.name == "_"
-    assert isinstance(only.expr, ast.Name)
-    assert only.expr.id == "value"
+    try:
+        extract_funcargs_payload(call)
+    except ValueError as exc:
+        assert "keyword `_` is reserved" in str(exc)
+    else:
+        raise AssertionError("legacy `_=` funcargs keyword should be rejected")
