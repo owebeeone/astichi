@@ -105,6 +105,12 @@ impl RegisteredSurfaceBundle {
         self.patterns.len()
     }
 
+    pub fn has_operation_key(&self, operation_key: &str) -> bool {
+        self.operations
+            .iter()
+            .any(|operation| operation.operation_key == operation_key)
+    }
+
     pub fn accepts_live_records(
         &self,
         target_surface_key: &str,

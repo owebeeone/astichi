@@ -387,6 +387,23 @@ class AssemblyScope:
             raise TypeError("native scope structural snapshot must be a dict")
         return snapshot
 
+    def native_lower_materialization_snapshot(self) -> dict[str, object]:
+        """Return the explicit-native materialization-plan snapshot."""
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            raise RuntimeError("native scope backend is not enabled")
+        snapshot = self._native_module.assembly_state_materialization_plan_snapshot(
+            self._native_engine_handle,
+            self._native_state_handle,
+            None,
+        )
+        if not isinstance(snapshot, dict):
+            raise TypeError("native materialization snapshot must be a dict")
+        return snapshot
+
     @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:
         """Project the visible lower state back to the slow debug inventory."""

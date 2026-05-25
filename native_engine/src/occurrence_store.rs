@@ -567,6 +567,26 @@ fn assembly_state_index_snapshot(
     index_snapshot(py, &state_ref.indexes)
 }
 
+#[pyfunction(name = "assembly_state_materialization_plan_snapshot")]
+fn assembly_state_materialization_plan_snapshot(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    root_occurrence_index: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    let state_ref = engine.state(state.index)?;
+    let root = match root_occurrence_index {
+        Some(index) => {
+            state_ref.occurrence(index)?;
+            Some(index)
+        }
+        None => default_root_occurrence_index(state_ref),
+    };
+    materialization_plan_snapshot(py, &engine, state_ref, root)
+}
+
 #[pyfunction(name = "assembly_state_query_composable_candidates")]
 fn assembly_state_query_composable_candidates(
     py: Python<'_>,
@@ -779,6 +799,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(assembly_state_append_overlay, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_index_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        assembly_state_materialization_plan_snapshot,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(
         assembly_state_query_composable_candidates,
         m
@@ -1022,6 +1046,96 @@ fn materialization(py: Python<'_>) -> PyResult<Py<PyAny>> {
     item.set_item("operation_stream", PyList::empty(py))?;
     item.set_item("root_occurrence_id", py.None())?;
     Ok(item.into_any().unbind())
+}
+
+fn materialization_plan_snapshot(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    root_occurrence_index: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    let item = PyDict::new(py);
+    item.set_item("artifact_requests", vec!["python_ast"])?;
+    let debug_views = PyDict::new(py);
+    debug_views.set_item("edge_count", state.edges.len())?;
+    debug_views.set_item("overlay_count", state.overlays.len())?;
+    item.set_item("debug_views", debug_views)?;
+    item.set_item("hygiene_stream", PyList::empty(py))?;
+    item.set_item(
+        "operation_stream",
+        edge_operation_stream(py, engine, state)?,
+    )?;
+    item.set_item("root_occurrence_id", root_occurrence_index)?;
+    Ok(item.into_any().unbind())
+}
+
+fn edge_operation_stream(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+) -> PyResult<Py<PyAny>> {
+    let surface_bundle = engine
+        .surface_bundle()
+        .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
+    let missing: BTreeSet<String> = state
+        .edges
+        .iter()
+        .filter(|edge| !surface_bundle.has_operation_key(&edge.operation_key))
+        .map(|edge| edge.operation_key.clone())
+        .collect();
+    if !missing.is_empty() {
+        return Err(crate::errors::schema_error(&format!(
+            "unregistered materialization operation keys: {:?}",
+            missing.into_iter().collect::<Vec<_>>()
+        )));
+    }
+
+    let list = PyList::empty(py);
+    for (edge_index, edge) in state.edges.iter().enumerate() {
+        let item = PyDict::new(py);
+        let captures = PyDict::new(py);
+        captures.set_item("edge_id", edge_index)?;
+        captures.set_item("target_state", record_state(state, edge.target_record)?)?;
+        item.set_item("captures", captures)?;
+        item.set_item("operation_key", &edge.operation_key)?;
+        item.set_item("order", edge.order)?;
+        item.set_item("overlay_id", py.None())?;
+        item.set_item("source_occurrence_id", edge.source_occurrence_index)?;
+        item.set_item(
+            "target_record_id",
+            vec![
+                edge.target_record.occurrence_index,
+                edge.target_record.template_record_index,
+            ],
+        )?;
+        list.append(item)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
+fn default_root_occurrence_index(state: &NativeAssemblyState) -> Option<usize> {
+    state
+        .occurrences
+        .iter()
+        .enumerate()
+        .find_map(|(index, occurrence)| {
+            if occurrence.parent_occurrence_index.is_none() && occurrence.live {
+                Some(index)
+            } else {
+                None
+            }
+        })
+}
+
+fn record_state(state: &NativeAssemblyState, record_key: RecordKey) -> PyResult<&'static str> {
+    let occurrence = state.occurrence(record_key.occurrence_index)?;
+    if !occurrence.live || state.dead_records.contains(&record_key) {
+        return Ok("dead");
+    }
+    if state.satisfied_records.contains(&record_key) {
+        return Ok("satisfied");
+    }
+    Ok("live")
 }
 
 fn index_snapshot(py: Python<'_>, indexes: &NativeIndexes) -> PyResult<Py<PyAny>> {

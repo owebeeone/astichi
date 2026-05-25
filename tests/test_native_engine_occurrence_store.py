@@ -163,6 +163,49 @@ def test_native_occurrence_store_appends_edge_and_satisfied_state_when_available
     }
 
 
+def test_native_materialization_stream_rejects_unknown_operation_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "result = astichi_hole(value)\n",
+    )
+    value_template = _register_template_source(module, handle, "40 + 2\n")
+    state = module.assembly_state_create(handle)
+    root_occurrence = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        root_template,
+        ("Root",),
+    )
+    value_occurrence = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        value_template,
+        ("Root", "Value"),
+        root_occurrence,
+    )
+    record = module.assembly_state_record_handle(handle, state, root_occurrence, 0)
+    module.assembly_state_append_edge(
+        handle,
+        state,
+        record,
+        value_occurrence,
+        "astichi.operation.missing",
+        0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="unregistered materialization operation keys",
+    ):
+        module.assembly_state_materialization_plan_snapshot(handle, state, None)
+
+
 def test_native_occurrence_store_appends_external_overlay_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
@@ -599,6 +642,120 @@ def test_native_scope_apply_appends_child_occurrence_when_available(
     assert counts["native_scope_append_edge"] == 1
     assert counts["native_scope_mark_satisfied"] == 1
     assert counts.get("debug_inventory_projection", 0) == 0
+
+
+@pytest.mark.parametrize(
+    (
+        "root_source",
+        "source",
+        "build_name",
+        "candidate_kwargs",
+        "operation_key",
+    ),
+    [
+        pytest.param(
+            "answer = astichi_hole(value)\n",
+            "40 + 2\n",
+            "Expression",
+            {"name": "value", "build_match": ("Root",)},
+            "astichi.operation.replace_expression",
+            id="expression",
+        ),
+        pytest.param(
+            "def run():\n    astichi_hole(body)\n",
+            "item = 1\n",
+            "Body",
+            {
+                "name": "body",
+                "build_match": ("Root",),
+                "owner_match": ("run",),
+            },
+            "astichi.operation.splice_body_at_marker",
+            id="block",
+        ),
+        pytest.param(
+            "def run(value__astichi_param_hole__):\n    pass\n",
+            "def astichi_params(item):\n    pass\n",
+            "Params",
+            {
+                "name": "value",
+                "build_match": ("Root",),
+                "owner_match": ("run",),
+            },
+            "astichi.operation.splice_parameters",
+            id="parameter",
+        ),
+        pytest.param(
+            "result = func(*astichi_hole(args))\n",
+            "astichi_funcargs(1)\n",
+            "Args",
+            {"name": "args", "build_match": ("Root",)},
+            "astichi.operation.splice_call_arguments",
+            id="call-arguments",
+        ),
+        pytest.param(
+            (
+                "def dispatch(kind):\n"
+                "    if kind == \"base\":\n"
+                "        return \"base\"\n"
+                "    elif astichi_elif(branches):\n"
+                "        pass\n"
+                "    else:\n"
+                "        return \"fallback\"\n"
+            ),
+            (
+                "def astichi_elif():\n"
+                "    if kind == \"create\":\n"
+                "        return \"created\"\n"
+            ),
+            "Create",
+            {
+                "name": "branches",
+                "build_match": ("Root",),
+                "owner_match": ("dispatch",),
+            },
+            "astichi.operation.append_clause",
+            id="elif",
+        ),
+    ],
+)
+def test_native_scope_materialization_edge_stream_matches_python_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+    root_source: str,
+    source: str,
+    build_name: str,
+    candidate_kwargs: dict[str, object],
+    operation_key: str,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile(root_source))
+    source_composable = astichi.compile(source)
+    scope.apply(
+        require_one(
+            scope.find_candidates(
+                as_composable(source_composable, build_name=build_name),
+                **candidate_kwargs,
+            )
+        )
+    )
+
+    native_plan = scope.native_lower_materialization_snapshot()
+    python_plan = scope.lower_structural_snapshot(
+        materialization_plan=scope.lower_materialization_plan()
+    )["materialization"]
+
+    assert native_plan["operation_stream"] == python_plan["operation_stream"]
+    assert [operation["operation_key"] for operation in native_plan["operation_stream"]] == [
+        operation_key
+    ]
+    assert native_plan["artifact_requests"] == ["python_ast"]
+    assert native_plan["debug_views"]["edge_count"] == 1
+    assert native_plan["hygiene_stream"] == []
+    assert native_plan["root_occurrence_id"] == python_plan["root_occurrence_id"] == 0
 
 
 def _register_template_source(module: object, handle: object, source: str) -> object:
