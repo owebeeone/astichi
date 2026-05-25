@@ -1,0 +1,188 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "marker_order_template",
+  "source_summary": "marker order source",
+  "string_table": [
+    "",
+    "marker_order_template",
+    "marker order source",
+    "module",
+    "Box",
+    "class",
+    "make",
+    "function",
+    "self",
+    "keep",
+    "astichi_keep",
+    "top",
+    "box",
+    "method",
+    "ref",
+    "astichi_ref"
+  ],
+  "path_table": [
+    [],
+    [
+      "Box"
+    ],
+    [
+      "Box",
+      "make"
+    ]
+  ],
+  "ast_path_table": [
+    "",
+    "body[1]",
+    "body[1]/body[1]",
+    "body[0]/value",
+    "body[0]",
+    "body[1]/body[0]/value",
+    "body[1]/body[0]",
+    "body[1]/body[1]/body[0]/value",
+    "body[1]/body[1]/body[0]",
+    "body[1]/body[1]/body[1]/value",
+    "body[1]/body[1]/body[1]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "Box"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    },
+    {
+      "binding_set_id": 2,
+      "names": [
+        "make"
+      ]
+    },
+    {
+      "binding_set_id": 3,
+      "names": [
+        "self"
+      ]
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "Box"
+      ],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[1]",
+      "local_bindings": [
+        "make"
+      ],
+      "owner_path": [
+        "Box"
+      ],
+      "parent_scope_id": 0,
+      "scope_id": 1,
+      "scope_kind": "class"
+    },
+    {
+      "arguments": [
+        "self"
+      ],
+      "ast_path": "body[1]/body[1]",
+      "local_bindings": [
+        "self"
+      ],
+      "owner_path": [
+        "Box",
+        "make"
+      ],
+      "parent_scope_id": 1,
+      "scope_id": 2,
+      "scope_kind": "function"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/value",
+      "flags": [
+        "call_context",
+        "is_metadata_marker"
+      ],
+      "marker_id": 0,
+      "marker_kind": "keep",
+      "operation_key": "astichi_keep",
+      "owner_path": [],
+      "resource_name": "top",
+      "scope_id": 0,
+      "source_name": "astichi_keep",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[1]/body[0]/value",
+      "flags": [
+        "call_context",
+        "is_metadata_marker"
+      ],
+      "marker_id": 1,
+      "marker_kind": "keep",
+      "operation_key": "astichi_keep",
+      "owner_path": [
+        "Box"
+      ],
+      "resource_name": "box",
+      "scope_id": 1,
+      "source_name": "astichi_keep",
+      "source_order": 1,
+      "statement_path": "body[1]/body[0]"
+    },
+    {
+      "ast_path": "body[1]/body[1]/body[0]/value",
+      "flags": [
+        "call_context",
+        "is_metadata_marker"
+      ],
+      "marker_id": 2,
+      "marker_kind": "keep",
+      "operation_key": "astichi_keep",
+      "owner_path": [
+        "Box",
+        "make"
+      ],
+      "resource_name": "method",
+      "scope_id": 2,
+      "source_name": "astichi_keep",
+      "source_order": 2,
+      "statement_path": "body[1]/body[1]/body[0]"
+    },
+    {
+      "ast_path": "body[1]/body[1]/body[1]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 3,
+      "marker_kind": "ref",
+      "operation_key": "astichi_ref",
+      "owner_path": [
+        "Box",
+        "make"
+      ],
+      "resource_name": "",
+      "scope_id": 2,
+      "source_name": "astichi_ref",
+      "source_order": 3,
+      "statement_path": "body[1]/body[1]/body[1]"
+    }
+  ]
+}

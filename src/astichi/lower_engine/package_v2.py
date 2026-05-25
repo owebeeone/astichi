@@ -23,6 +23,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "locators",
     "records",
     "scopes",
+    "markers",
 )
 
 _LIST_SECTIONS = frozenset(
@@ -34,6 +35,7 @@ _LIST_SECTIONS = frozenset(
         "locators",
         "records",
         "scopes",
+        "markers",
     }
 )
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -102,6 +104,21 @@ class ScopeRow:
 
 
 @dataclass(frozen=True, slots=True)
+class MarkerRow:
+    marker_id: int
+    source_order: int
+    marker_kind_id: int
+    source_name_id: int
+    operation_key_id: int
+    scope_id: int
+    owner_path_id: int
+    ast_path_id: int
+    statement_path_id: int | None
+    resource_name_id: int | None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PackageBindingIndex:
     bindings_by_scope_id: dict[int, frozenset[str]]
     arguments_by_scope_id: dict[int, frozenset[str]]
@@ -137,7 +154,10 @@ class LowerTemplatePackageV2:
         self.locators: list[LocatorRow] = []
         self.records: list[RecordRow] = []
         self.scopes: list[ScopeRow] = []
+        self.markers: list[MarkerRow] = []
         self._binding_index: PackageBindingIndex | None = None
+        self._marker_ids_by_kind: dict[str, tuple[int, ...]] | None = None
+        self._marker_ids_by_scope_id: dict[int, tuple[int, ...]] | None = None
 
     def intern_string(self, value: str) -> int:
         """Return a package-local string id, assigning it if needed."""
@@ -283,6 +303,47 @@ class LowerTemplatePackageV2:
         self._binding_index = None
         return scope_id
 
+    def add_marker(
+        self,
+        *,
+        marker_kind: str,
+        source_name: str,
+        ast_path: str,
+        statement_path: str | None,
+        owner_path: tuple[str, ...],
+        scope_id: int,
+        source_order: int,
+        resource_name: str = "",
+        operation_key: str = "",
+        flags: tuple[str, ...] = (),
+    ) -> int:
+        """Append a marker row and return its id."""
+        marker_id = len(self.markers)
+        self.markers.append(
+            MarkerRow(
+                marker_id=marker_id,
+                source_order=source_order,
+                marker_kind_id=self.intern_string(marker_kind),
+                source_name_id=self.intern_string(source_name),
+                operation_key_id=self.intern_string(operation_key),
+                scope_id=scope_id,
+                owner_path_id=self.intern_path(owner_path),
+                ast_path_id=self.intern_ast_path(ast_path),
+                statement_path_id=(
+                    None
+                    if statement_path is None
+                    else self.intern_ast_path(statement_path)
+                ),
+                resource_name_id=(
+                    None if resource_name == "" else self.intern_string(resource_name)
+                ),
+                flags=tuple(flags),
+            )
+        )
+        self._marker_ids_by_kind = None
+        self._marker_ids_by_scope_id = None
+        return marker_id
+
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
         """Return record rows owned by one package-local owner path."""
         path_id = self._path_index.get(owner_path)
@@ -317,6 +378,14 @@ class LowerTemplatePackageV2:
         if not self.scopes:
             return frozenset()
         return self.binding_names_for_scope_id(self.scopes[0].scope_id)
+
+    def marker_ids_by_kind(self, marker_kind: str) -> tuple[int, ...]:
+        """Return marker ids with one marker kind."""
+        return self._markers_by_kind().get(marker_kind, ())
+
+    def marker_ids_by_scope_id(self, scope_id: int) -> tuple[int, ...]:
+        """Return marker ids owned by one scope id."""
+        return self._markers_by_scope_id().get(scope_id, ())
 
     def structural_template_snapshot(self, *, template_id: int = 0) -> dict[str, object]:
         """Render the v1 structural template row from package data."""
@@ -386,6 +455,7 @@ class LowerTemplatePackageV2:
             "locators": [self._locator_snapshot(row) for row in self.locators],
             "records": [self._record_snapshot(row) for row in self.records],
             "scopes": [self._scope_snapshot(row) for row in self.scopes],
+            "markers": [self._marker_snapshot(row) for row in self.markers],
         }
 
     def ast_path_segments(self, ast_path_id: int) -> tuple[AstPathSegment, ...]:
@@ -429,6 +499,31 @@ class LowerTemplatePackageV2:
                 best_depth = depth
         return best_scope_id
 
+    def _markers_by_kind(self) -> dict[str, tuple[int, ...]]:
+        if self._marker_ids_by_kind is None:
+            marker_ids_by_kind: dict[str, list[int]] = {}
+            for row in self.markers:
+                marker_kind = self._string(row.marker_kind_id)
+                marker_ids_by_kind.setdefault(marker_kind, []).append(row.marker_id)
+            self._marker_ids_by_kind = {
+                marker_kind: tuple(marker_ids)
+                for marker_kind, marker_ids in marker_ids_by_kind.items()
+            }
+        return self._marker_ids_by_kind
+
+    def _markers_by_scope_id(self) -> dict[int, tuple[int, ...]]:
+        if self._marker_ids_by_scope_id is None:
+            marker_ids_by_scope_id: dict[int, list[int]] = {}
+            for row in self.markers:
+                marker_ids_by_scope_id.setdefault(row.scope_id, []).append(
+                    row.marker_id
+                )
+            self._marker_ids_by_scope_id = {
+                scope_id: tuple(marker_ids)
+                for scope_id, marker_ids in marker_ids_by_scope_id.items()
+            }
+        return self._marker_ids_by_scope_id
+
     def _binding_set_snapshot(self, row: BindingSetRow) -> dict[str, object]:
         return {
             "binding_set_id": row.binding_set_id,
@@ -467,6 +562,25 @@ class LowerTemplatePackageV2:
             "parent_scope_id": row.parent_scope_id,
             "scope_id": row.scope_id,
             "scope_kind": self._string(row.scope_kind_id),
+        }
+
+    def _marker_snapshot(self, row: MarkerRow) -> dict[str, object]:
+        return {
+            "ast_path": self._ast_path_text(row.ast_path_id),
+            "flags": list(row.flags),
+            "marker_id": row.marker_id,
+            "marker_kind": self._string(row.marker_kind_id),
+            "operation_key": self._string(row.operation_key_id),
+            "owner_path": list(self._path(row.owner_path_id)),
+            "resource_name": self._optional_string(row.resource_name_id),
+            "scope_id": row.scope_id,
+            "source_name": self._string(row.source_name_id),
+            "source_order": row.source_order,
+            "statement_path": (
+                None
+                if row.statement_path_id is None
+                else self._ast_path_text(row.statement_path_id)
+            ),
         }
 
     def _binding_set_names(self, binding_set_id: int) -> list[str]:

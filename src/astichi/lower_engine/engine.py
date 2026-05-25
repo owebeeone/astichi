@@ -32,6 +32,7 @@ from astichi.lower_engine.snapshots import structural_snapshot
 from astichi.lower_engine.templates import (
     SourceLocator,
     Template,
+    TemplateMarkerSpec,
     TemplateRecord,
     TemplateRecordSpec,
     TemplateScopeSpec,
@@ -57,6 +58,7 @@ class LowerEngine:
         source_summary: str,
         records: tuple[TemplateRecordSpec, ...],
         scopes: tuple[TemplateScopeSpec, ...] = (),
+        markers: tuple[TemplateMarkerSpec, ...] = (),
     ) -> TemplateId:
         """Register immutable template metadata and return its handle."""
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
@@ -130,6 +132,19 @@ class LowerEngine:
                 local_bindings=spec.local_bindings,
                 arguments=spec.arguments,
                 parent_scope_id=spec.parent_scope_id,
+            )
+        for spec in markers:
+            package.add_marker(
+                marker_kind=spec.marker_kind,
+                source_name=spec.source_name,
+                ast_path=spec.ast_path,
+                statement_path=spec.statement_path,
+                owner_path=spec.owner_path,
+                scope_id=spec.scope_id,
+                source_order=spec.source_order,
+                resource_name=spec.resource_name,
+                operation_key=spec.operation_key,
+                flags=spec.flags,
             )
         self._templates.append(
             Template(

@@ -6,7 +6,8 @@ import ast
 from collections.abc import Iterable
 
 from astichi.asttools import import_statement_binding_names
-from astichi.lower_engine.templates import TemplateScopeSpec
+from astichi.lowering import RecognizedMarker, recognize_markers
+from astichi.lower_engine.templates import TemplateMarkerSpec, TemplateScopeSpec
 
 
 def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
@@ -102,6 +103,35 @@ def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
     return tuple(scopes)
 
 
+def extract_marker_specs(
+    tree: ast.Module,
+    scope_specs: tuple[TemplateScopeSpec, ...],
+) -> tuple[TemplateMarkerSpec, ...]:
+    """Extract source-ordered generic marker specs from a Python module AST."""
+    ast_paths, statement_paths = _build_ast_path_maps(tree)
+    marker_specs: list[TemplateMarkerSpec] = []
+    for source_order, marker in enumerate(recognize_markers(tree)):
+        ast_path = ast_paths.get(id(marker.node), "")
+        statement_path = statement_paths.get(id(marker.node))
+        scope_id = _scope_id_for_ast_path(scope_specs, ast_path)
+        scope = scope_specs[scope_id]
+        marker_specs.append(
+            TemplateMarkerSpec(
+                marker_kind=_marker_kind(marker),
+                source_name=marker.source_name,
+                ast_path=ast_path,
+                statement_path=statement_path,
+                owner_path=scope.owner_path,
+                scope_id=scope_id,
+                source_order=source_order,
+                resource_name=marker.name_id or "",
+                operation_key=marker.source_name,
+                flags=_marker_flags(marker, ast_path, statement_path),
+            )
+        )
+    return tuple(marker_specs)
+
+
 def _iter_ast_children(
     *,
     field_name: str,
@@ -121,6 +151,88 @@ def _join_ast_path(parent_path: str, part: str) -> str:
     if parent_path == "":
         return part
     return f"{parent_path}/{part}"
+
+
+def _build_ast_path_maps(
+    tree: ast.AST,
+) -> tuple[dict[int, str], dict[int, str | None]]:
+    ast_paths: dict[int, str] = {}
+    statement_paths: dict[int, str | None] = {}
+
+    def visit(
+        node: ast.AST,
+        *,
+        ast_path: str,
+        statement_path: str | None,
+    ) -> None:
+        resolved_statement_path = ast_path if isinstance(node, ast.stmt) else statement_path
+        ast_paths[id(node)] = ast_path
+        statement_paths[id(node)] = resolved_statement_path
+        for field_name, value in ast.iter_fields(node):
+            for child_path, child in _iter_ast_children(
+                field_name=field_name,
+                value=value,
+                parent_path=ast_path,
+            ):
+                visit(
+                    child,
+                    ast_path=child_path,
+                    statement_path=resolved_statement_path,
+                )
+
+    visit(tree, ast_path="", statement_path=None)
+    return ast_paths, statement_paths
+
+
+def _scope_id_for_ast_path(
+    scope_specs: tuple[TemplateScopeSpec, ...],
+    ast_path: str,
+) -> int:
+    best_scope_id = 0
+    best_depth = -1
+    for scope_id, scope in enumerate(scope_specs):
+        if not _ast_path_is_prefix(scope.ast_path, ast_path):
+            continue
+        depth = _ast_path_depth(scope.ast_path)
+        if depth > best_depth:
+            best_scope_id = scope_id
+            best_depth = depth
+    return best_scope_id
+
+
+def _marker_kind(marker: RecognizedMarker) -> str:
+    if marker.source_name == "astichi_pyimport":
+        return "pyimport"
+    if marker.source_name == "astichi_comment":
+        return "comment"
+    if marker.source_name == "astichi_ref":
+        return "ref"
+    if marker.source_name == "astichi_for":
+        return "unroll"
+    if marker.source_name.startswith("astichi_"):
+        return marker.source_name.removeprefix("astichi_")
+    return marker.source_name
+
+
+def _marker_flags(
+    marker: RecognizedMarker,
+    ast_path: str,
+    statement_path: str | None,
+) -> tuple[str, ...]:
+    flags: list[str] = []
+    if marker.context.is_call_context():
+        flags.append("call_context")
+    if marker.context.is_decorator_context():
+        flags.append("decorator_context")
+    if marker.context.is_definitional_context():
+        flags.append("definitional_context")
+    if marker.context.is_identifier_context():
+        flags.append("identifier_context")
+    if statement_path is not None and ast_path == statement_path:
+        flags.append("is_statement_marker")
+    if marker.spec.is_hygiene_directive():
+        flags.append("is_metadata_marker")
+    return tuple(flags)
 
 
 def _scope_binding_names(
@@ -172,3 +284,15 @@ def _argument_names(
     if scope.args.kwarg is not None:
         names.add(scope.args.kwarg.arg)
     return frozenset(names)
+
+
+def _ast_path_is_prefix(scope_path: str, ast_path: str) -> bool:
+    if scope_path == "":
+        return True
+    return ast_path == scope_path or ast_path.startswith(f"{scope_path}/")
+
+
+def _ast_path_depth(ast_path: str) -> int:
+    if ast_path == "":
+        return 0
+    return len(tuple(part for part in ast_path.split("/") if part))

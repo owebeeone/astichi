@@ -16,6 +16,7 @@ from astichi.lower_engine import (
     LowerTemplatePackageV2,
     PackageSchemaMismatchError,
     PackageSnapshotFormatError,
+    extract_marker_specs,
     extract_scope_specs,
     round_trip_package_snapshot_text,
     write_package_snapshot,
@@ -192,6 +193,42 @@ class Box:
     ) == _lower_boundary_available_names(tree, "body[5]/body[2]/body[6]")
     assert package.pyimport_existing_binding_names() == frozenset(
         _lower_pyimport_existing_binding_names(tree)
+    )
+
+
+def test_marker_ordering_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+astichi_keep(top)
+
+class Box:
+    astichi_keep(box)
+
+    def make(self):
+        astichi_keep(method)
+        return astichi_ref(external=dependency)
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="marker_order_template",
+        source_summary="marker order source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+    )
+    package = engine.template_package(template_id)
+
+    assert package.marker_ids_by_kind("keep") == (0, 1, 2)
+    assert package.marker_ids_by_kind("ref") == (3,)
+    assert package.marker_ids_by_scope_id(0) == (0,)
+    assert package.marker_ids_by_scope_id(1) == (1,)
+    assert package.marker_ids_by_scope_id(2) == (2, 3)
+    assert [row.source_order for row in package.markers] == [0, 1, 2, 3]
+    _assert_package_snapshot_matches_golden(
+        package,
+        "marker_order_package.json",
     )
 
 

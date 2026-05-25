@@ -143,5 +143,6 @@
       "scope_id": 4,
       "scope_kind": "async_function"
     }
-  ]
+  ],
+  "markers": []
 }

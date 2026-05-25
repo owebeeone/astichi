@@ -40,6 +40,22 @@ class TemplateScopeSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateMarkerSpec:
+    """Input spec for one recognized marker row in a lower template package."""
+
+    marker_kind: str
+    source_name: str
+    ast_path: str
+    statement_path: str | None
+    owner_path: tuple[str, ...]
+    scope_id: int
+    source_order: int
+    resource_name: str = ""
+    operation_key: str = ""
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId
