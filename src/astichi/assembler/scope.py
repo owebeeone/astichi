@@ -1246,33 +1246,48 @@ class AssemblyScope:
                 continue
             if operation.operation_key != "astichi.operation.splice_body_at_marker":
                 continue
-            source = self._lower_composable_by_occurrence.get(source_id)
-            if source is None or source.classification is None:
-                continue
-            target = self._lower_composable_by_occurrence.get(
-                operation.target_record_id.occurrence_id
+            source_occurrence = self._lower_engine.occurrence(
+                self._lower_state,
+                source_id,
             )
-            if target is None:
-                continue
+            source_package = self._lower_engine.template_package(
+                source_occurrence.template_id,
+            )
+            source_bindings = (
+                source_package.binding_names_for_scope_id(
+                    source_package.scopes[0].scope_id
+                )
+                if source_package.scopes
+                else frozenset()
+            )
+            target_occurrence = self._lower_engine.occurrence(
+                self._lower_state,
+                operation.target_record_id.occurrence_id,
+            )
+            target_package = self._lower_engine.template_package(
+                target_occurrence.template_id,
+            )
             target_locator = self._lower_engine.locator_for_record(
                 self._lower_state,
                 operation.target_record_id,
             )
-            target_statement_path = _block_statement_path_for_locator(
-                target.tree,
-                target_locator.ast_path,
+            target_statement_path = _block_statement_path_for_locator_path(
+                target_locator.ast_path
             )
-            boundary_names = _lower_boundary_available_names(
-                target.tree,
+            boundary_names = target_package.boundary_available_names_for_statement_path(
                 target_statement_path,
             )
-            collisions = tuple(sorted(boundary_names & source.classification.locals))
+            collisions = tuple(sorted(boundary_names & source_bindings))
             if not collisions:
                 continue
+            target_scope_id = (
+                target_package.scope_id_for_statement_path(target_statement_path)
+                or 0
+            )
             hygiene.append(
                 HygieneOperation(
                     operation_key="astichi.operation.rename_if_collides",
-                    target_scope_id=0,
+                    target_scope_id=target_scope_id,
                     record_id=operation.target_record_id,
                     captures={
                         "colliding_names": list(collisions),
@@ -2410,6 +2425,12 @@ def _block_statement_path_for_locator(root: ast.AST, path: str) -> str:
     if isinstance(node, ast.stmt):
         return path
     return _statement_path_for_marker_locator(path)
+
+
+def _block_statement_path_for_locator_path(path: str) -> str:
+    if path.endswith("/value"):
+        return _statement_path_for_marker_locator(path)
+    return path
 
 
 def _if_statement_path_for_elif_locator(path: str) -> str | None:

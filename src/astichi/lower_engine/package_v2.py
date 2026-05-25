@@ -627,6 +627,10 @@ class LowerTemplatePackageV2:
             return frozenset()
         return self.binding_names_for_scope_id(scope_id)
 
+    def scope_id_for_statement_path(self, statement_path: str) -> int | None:
+        """Return the innermost lexical scope id for one statement path."""
+        return self._scope_id_for_statement_path(statement_path)
+
     def pyimport_existing_binding_names(self) -> frozenset[str]:
         """Return the module binding view used for pyimport collision checks."""
         if not self.scopes:
