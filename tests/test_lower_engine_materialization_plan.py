@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 import sys
 
 import astichi
+import astichi.lower_engine.materialization as lower_materialization
 from astichi.assembler import (
     AssemblyScope,
     as_composable,
@@ -11,6 +13,7 @@ from astichi.assembler import (
     as_identifier,
     require_one,
 )
+from astichi.lower_engine import LowerEngine, MaterializationPlan
 from astichi.structural_snapshot import write_structural_snapshot
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
@@ -25,6 +28,42 @@ _ACTUAL_STRUCTURAL_DIR = (
     / "goldens"
     / "structural"
 )
+
+
+def _package_only_plan(scope: AssemblyScope) -> MaterializationPlan:
+    plan = scope.lower_materialization_plan()
+    saved = scope._lower_composable_by_occurrence
+    scope._lower_composable_by_occurrence = {}
+    try:
+        assert scope.lower_materialization_plan() == plan
+    finally:
+        scope._lower_composable_by_occurrence = saved
+    return plan
+
+
+def test_lower_plan_construction_avoids_composable_side_channels() -> None:
+    sources = "\n".join(
+        (
+            inspect.getsource(AssemblyScope.lower_materialization_plan),
+            inspect.getsource(AssemblyScope._append_lower_boundary_hygiene),
+            inspect.getsource(AssemblyScope._append_lower_pyimport_hygiene),
+            inspect.getsource(LowerEngine.build_materialization_plan),
+            inspect.getsource(LowerEngine._append_package_marker_hygiene),
+            inspect.getsource(LowerEngine._with_package_gate_captures),
+            inspect.getsource(LowerEngine._unresolved_capable_records),
+            inspect.getsource(lower_materialization),
+        )
+    )
+    forbidden = (
+        "_lower_composable_by_occurrence",
+        ".classification",
+        "root.markers",
+        "source.markers",
+        "composable.markers",
+        "BasicComposable",
+    )
+    for token in forbidden:
+        assert token not in sources
 
 
 def test_scope_lower_materialization_plan_matches_structural_golden() -> None:
@@ -84,7 +123,7 @@ result = astichi_hole(value)
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert {operation.operation_key for operation in plan.operation_stream} == {
         "astichi.operation.lower_external_ref",
         "astichi.operation.replace_expression",
@@ -124,7 +163,7 @@ def test_scope_lower_parameter_plan_matches_structural_golden() -> None:
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.splice_parameters",
     )
@@ -160,7 +199,7 @@ def test_scope_lower_funcargs_plan_matches_structural_golden() -> None:
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.splice_call_arguments",
     )
@@ -193,7 +232,7 @@ def run():
     )
     scope.add("Root", root)
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.splice_body_at_marker",
     )
@@ -222,7 +261,7 @@ def test_scope_lower_pyimport_plan_matches_structural_golden() -> None:
     )
     scope.add("Root", root)
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == ()
     assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
         "astichi.operation.managed_import_request",
@@ -248,7 +287,7 @@ def test_scope_lower_pyimport_collision_plan_matches_structural_golden() -> None
     root = astichi.compile("astichi_pyimport(module=foo, names=(a,))\na = 1\n")
     scope.add("Root", root)
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == ()
     assert tuple(operation.operation_key for operation in plan.hygiene_stream) == (
         "astichi.operation.rename_if_collides",
@@ -303,7 +342,7 @@ astichi_export(value)
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.splice_body_at_marker",
     )
@@ -352,7 +391,7 @@ def run():
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.splice_body_at_marker",
     )
@@ -409,7 +448,7 @@ def astichi_elif():
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.append_clause",
     )
@@ -463,7 +502,7 @@ def astichi_elif():
         )
     )
 
-    plan = scope.lower_materialization_plan()
+    plan = _package_only_plan(scope)
     assert tuple(operation.operation_key for operation in plan.operation_stream) == (
         "astichi.operation.append_clause",
     )
