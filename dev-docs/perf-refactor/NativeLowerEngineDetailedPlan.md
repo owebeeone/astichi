@@ -928,19 +928,63 @@ Acceptance:
 - unresolved native state fails before artifact construction;
 - overlay stream construction does not need Python builder-state mutation.
 
-### N9b2: Native Marker Metadata, Import, And Hygiene Streams
+### N9b2: Lower Template Package V2 Contract
 
-Goal: make marker-local hygiene and managed import planning native-owned.
+Goal: promote marker, scope, managed-import, and local-binding facts into the
+shared lower-engine contract before native hygiene implementation.
 
-This is split from N9b1 because the native template store initially contains
-template records and locators, but not the marker/local-binding metadata needed
-to reproduce Python's managed-import and collision-hygiene plan entries.
+This is a design/API slice, not a native-private metadata patch. The Python
+system already has these facts on `BasicComposable.markers`, name
+classification, and source AST walks. The lower engine does not yet own or
+expose them. Native cannot complete hygiene/materialization ownership until the
+same behavior-affecting data is available through a canonical lower-template
+package.
 
 Work:
 
-- store native template marker metadata for `astichi_keep`, `astichi_import`,
-  `astichi_export`, `astichi_pass`, and `astichi_pyimport`;
-- store enough local-binding metadata to reproduce rename-if-collides decisions;
+- add `LowerTemplatePackageV2` as the canonical records, locators, scopes,
+  markers, and managed-import contract;
+- encode package runtime rows with interned strings, path tables, typed arrays,
+  and flags rather than nested debug dictionaries;
+- add package snapshot goldens that expose behavior-affecting data but keep
+  derived indexes out of the contract;
+- refactor Python materialization planning so hygiene decisions read from
+  package/state APIs rather than `BasicComposable` side channels.
+
+Acceptance:
+
+- Python package projections contain the marker, scope, local-binding, and
+  managed-import facts needed by current hygiene goldens;
+- Python materialization-plan goldens still pass after side-channel removal;
+- native package extraction has a concrete parity target for N9b3.
+
+Implementation detail:
+
+- the Python-first roll-build slices are specified in
+  `dev-docs/perf-refactor/PythonLowerTemplatePackageV2Plan.md`;
+- native N9b3 must not start until the Python plan is complete through P5d.
+
+Native parallel work:
+
+- N9a operation streams and N9b1 overlay/gate streams are package-independent
+  and may be completed before P5d;
+- native work that only consumes records, locators, edges, overlays, or final
+  artifact-copy primitives may proceed before P5d;
+- native marker/scope/managed-import extraction must wait for the v2 package
+  schema to stabilize, except for throwaway spike code.
+
+### N9b3: Native Marker, Import, And Hygiene Streams
+
+Goal: make marker-local hygiene and managed import planning native-owned using
+the v2 lower-template package.
+
+Work:
+
+- produce native package rows for `astichi_keep`, `astichi_import`,
+  `astichi_export`, `astichi_pass`, `astichi_pyimport`, and relevant scope
+  bindings;
+- build native package-derived indexes for marker lookup, scope binding lookup,
+  and managed import lookup;
 - emit keep-name, strip-marker, managed-import, and rename-if-collides hygiene
   operations natively;
 - preserve the same deterministic hygiene ordering as the Python oracle.

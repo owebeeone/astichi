@@ -494,6 +494,13 @@ Python per record on the hot path.
 Hygiene is canonical lower-engine data, not debug-only metadata. Python/native
 parity compares both `operation_stream` and `hygiene_stream`.
 
+The facts needed to produce hygiene operations are also canonical. They belong
+in the v2 lower-template package described in
+`dev-docs/perf-refactor/LowerTemplatePackageV2.md`, not in Python-only
+`BasicComposable` side channels and not in native-private metadata. Engine
+private data may cache derived lookup indexes over package rows, but the
+package owns marker, scope, local-binding, and managed-import facts.
+
 ## Native API Resilience
 
 The native API should be stable across new syntax surfaces as long as those

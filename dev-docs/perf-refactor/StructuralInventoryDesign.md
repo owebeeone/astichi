@@ -136,6 +136,32 @@ Template:
   materialization_metadata
 ```
 
+This section describes the v1 structural inventory view. It is not sufficient
+as the long-term lower-engine API because marker-only syntax, managed import
+requests, and local binding facts affect hygiene/materialization but are not
+records or locators. The behavior-complete contract is
+`dev-docs/perf-refactor/LowerTemplatePackageV2.md`.
+
+In the v2 contract, the template catalog is encoded as row tables:
+
+```text
+LowerTemplatePackageV2:
+  string_table
+  path_table
+  ast_path_table
+  locators
+  records
+  scopes
+  markers
+  managed_imports
+```
+
+`scope_table` and `materialization_metadata` in the v1 sketch correspond to
+explicit `scopes`, `markers`, and `managed_imports` package rows in v2. Derived
+indexes such as `target_index`, `identifier_demand_index`, and
+`records_by_owner` are caches built from package rows and assembly state; they
+are not separate contract data.
+
 `source_tree_ref` is Python-owned in the reference engine. A native backend
 should prefer source text, a native parsed tree, or a normalized Astichi AST IR
 as its working template graph. It may hold a strong `PyObject*` reference to the

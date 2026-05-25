@@ -24,6 +24,12 @@ design artifacts for implementation planning:
   validation-only, and removable assembly APIs.
 - `SnapshotGrammar.md`: Slice 2 mini-spec for canonical structural snapshot
   shape and round-trip behavior.
+- `LowerTemplatePackageV2.md`: behavior-complete lower-template package
+  contract for records, locators, scopes, markers, managed imports, and dense
+  runtime encoding.
+- `PythonLowerTemplatePackageV2Plan.md`: Python-first roll-build plan to make
+  the reference lower engine produce and consume the v2 package before native
+  hygiene parity work.
 - `EngineSelectionContract.md`: native-engine selection and compatibility gate
   for the production native lower engine.
 - `NativeAstProbe.md`: parallel proof-of-concept plan for a native parser and
@@ -57,6 +63,9 @@ design artifacts for implementation planning:
   construction plus public `compile(...)`; internal CPython compiler APIs need a
   separate spike and acceptance gate.
 - Materialization and hygiene are lower-layer responsibilities from the start.
+- Data required by materialization, hygiene, diagnostics, or final output must
+  be part of the lower-template package contract. Private engine metadata may
+  only cache or index package/state facts.
 - Successful end-to-end behavior is validated through canonical goldens and
   structural snapshots, not duplicated bespoke tests.
 - Printing or projecting inventory is diagnostic/debug behavior and may be
@@ -88,6 +97,10 @@ decisions are now assigned to named slice deliverables:
   `EngineSelectionContract.md`.
 - Slice 16 decides whether native materialization emits Python `_ast` objects
   directly or a validated artifact for the facade to consume.
+- Native N9b2 depends on `LowerTemplatePackageV2.md`; it is a lower-engine API
+  contract slice, not a native-private metadata patch.
+- `PythonLowerTemplatePackageV2Plan.md` must complete at least through P5d
+  before native N9b3 can honestly claim full marker/import/hygiene ownership.
 - `NativeLowerEngineDetailedPlan.md` supersedes the historical native stop
   gates from Slice 14. The native probe result is accepted as sufficient
   evidence to pursue native parsing plus final CPython AST construction as the
