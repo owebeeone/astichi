@@ -211,6 +211,59 @@ fn materialization_workspace_apply_expression_edge(
     replace_expr_at_path(workspace_ref.module_mut(), &target_path, replacement)
 }
 
+#[pyfunction(name = "materialization_workspace_apply_block_edge")]
+fn materialization_workspace_apply_block_edge(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    edge: PyRef<'_, NativeEdgeHandle>,
+) -> PyResult<()> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    ensure_owner(engine.owner_id(), edge.owner_id())?;
+    if edge.edge_state_index() != state.state_index() {
+        return Err(crate::errors::stale_handle_error(
+            "edge belongs to another native assembly state",
+        ));
+    }
+    let (target_statement_path, replacement) = {
+        let workspace_ref = engine.workspace(workspace.index)?;
+        let state_ref = engine.state(state.state_index())?;
+        let edge_ref = state_ref.edge(edge.edge_index())?;
+        if edge_ref.operation_key() != "astichi.operation.splice_body_at_marker" {
+            return Err(crate::errors::schema_error(&format!(
+                "native block materializer cannot apply `{}`",
+                edge_ref.operation_key()
+            )));
+        }
+        let target_key = edge_ref.target_record();
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index())?;
+        if target_occurrence.template_index() != workspace_ref.template_index {
+            return Err(crate::errors::schema_error(
+                "workspace template does not match block edge target occurrence",
+            ));
+        }
+        let target_template = engine.template(target_occurrence.template_index())?;
+        let target_locator_path = target_template
+            .locator_ast_path_for_record(target_key.template_record_index())?
+            .to_string();
+        let target_statement_path = statement_path_for_locator(&target_locator_path)?;
+        let source_occurrence = state_ref.occurrence(edge_ref.source_occurrence_index())?;
+        let source_template = engine.template(source_occurrence.template_index())?;
+        let source_module = source_template.module().ok_or_else(|| {
+            crate::errors::schema_error("native source template does not carry native parser IR")
+        })?;
+        (target_statement_path, source_module.body.clone())
+    };
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    replace_statements_at_path(
+        workspace_ref.module_mut(),
+        &target_statement_path,
+        replacement,
+    )
+}
+
 #[pyfunction(name = "materialization_workspace_lower_literal_refs")]
 fn materialization_workspace_lower_literal_refs(
     mut engine: PyRefMut<'_, EngineHandle>,
@@ -273,6 +326,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(
         materialization_workspace_apply_expression_edge,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_apply_block_edge,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
@@ -1703,6 +1760,89 @@ fn replace_statement_at_path(
 ) -> PyResult<()> {
     let segments = parse_ast_path(statement_path)?;
     replace_statement_in_body(&mut module.body, &segments, replacement)
+}
+
+fn replace_statements_at_path(
+    module: &mut ast::ModModule,
+    statement_path: &str,
+    replacement: Vec<ast::Stmt>,
+) -> PyResult<()> {
+    let segments = parse_ast_path(statement_path)?;
+    replace_statements_in_body(&mut module.body, &segments, replacement)
+}
+
+fn replace_statements_in_body(
+    body: &mut Vec<ast::Stmt>,
+    segments: &[PathSegment],
+    replacement: Vec<ast::Stmt>,
+) -> PyResult<()> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "statement splice requires a statement path",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native statement splice expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body splice segment requires an index"))?;
+    if rest.is_empty() {
+        if index >= body.len() {
+            return Err(crate::errors::schema_error(
+                "native splice body index is out of range",
+            ));
+        }
+        body.splice(index..index + 1, replacement);
+        return Ok(());
+    }
+    let stmt = body
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native splice body index is out of range"))?;
+    replace_statements_in_stmt(stmt, rest, replacement)
+}
+
+fn replace_statements_in_stmt(
+    stmt: &mut ast::Stmt,
+    segments: &[PathSegment],
+    replacement: Vec<ast::Stmt>,
+) -> PyResult<()> {
+    let Some((first, _rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "statement splice requires a statement path",
+        ));
+    };
+    match stmt {
+        ast::Stmt::FunctionDef(node) if first.field == "body" => {
+            replace_statements_in_body(&mut node.body, segments, replacement)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
+            replace_statements_in_body(&mut node.body, segments, replacement)
+        }
+        ast::Stmt::ClassDef(node) if first.field == "body" => {
+            replace_statements_in_body(&mut node.body, segments, replacement)
+        }
+        ast::Stmt::If(node) if first.field == "body" => {
+            replace_statements_in_body(&mut node.body, segments, replacement)
+        }
+        ast::Stmt::If(node) if first.field == "orelse" => {
+            replace_statements_in_body(&mut node.orelse, segments, replacement)
+        }
+        ast::Stmt::For(node) if first.field == "body" => {
+            replace_statements_in_body(&mut node.body, segments, replacement)
+        }
+        ast::Stmt::For(node) if first.field == "orelse" => {
+            replace_statements_in_body(&mut node.orelse, segments, replacement)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native statement splice cannot enter field `{}` on {}",
+            first.field,
+            stmt_kind(stmt)
+        ))),
+    }
 }
 
 fn replace_statement_in_body(

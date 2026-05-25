@@ -1185,20 +1185,37 @@ payload, replace matching `astichi_bind_external(name)` uses in native IR, and
 then lower the now-literal ref. Remaining work is scope-shadow complete
 substitution and arbitrary Python object slots at the artifact boundary.
 
-### N10c: Native Block, Defaulted Block, And Boundary Hygiene Materializer
+### N10c1: Native Block Splice Materializer
 
-Goal: materialize statement-body insertions and boundary-marker effects.
+Goal: materialize statement-body insertions over native IR.
 
 Work:
 
-- implement body splice and defaulted-body fallback selection;
+- implement body splice for `splice_body_at_marker` edges;
+- preserve statement ordering and source-location policy.
+
+Acceptance:
+
+- block insertion snapshots match Python reference for the supported subset;
+- marker stripping is native-owned.
+
+Status: implemented for single native block splice edges over cloned native IR.
+Defaulted block fallback and boundary hygiene remain in N10c2.
+
+### N10c2: Native Defaulted Block And Boundary Hygiene Materializer
+
+Goal: finish defaulted statement-body insertions and boundary-marker effects.
+
+Work:
+
+- implement defaulted-body fallback selection;
 - strip boundary and keep markers after applying operations;
 - apply keep-name and scoped rename hygiene for block insertions;
 - preserve statement ordering and source-location policy.
 
 Acceptance:
 
-- block/defaulted-block/boundary-hygiene goldens match Python reference;
+- defaulted-block/boundary-hygiene goldens match Python reference;
 - unresolved block demands fail before artifact copy;
 - marker stripping is native-owned.
 

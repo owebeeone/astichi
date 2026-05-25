@@ -140,6 +140,65 @@ def test_native_materialization_workspace_applies_expression_edge_when_available
     }
 
 
+def test_native_materialization_workspace_applies_block_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "def run():\n"
+        "    astichi_hole(body)\n"
+        "    return item\n",
+        "workspace.py",
+        1,
+    )
+    block_template = module.register_template_package_v2_source(
+        engine,
+        "item = 1\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    block = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        block_template,
+        ("Root", "Body"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        block,
+        "astichi.operation.splice_body_at_marker",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        "body[0]/body[0]",
+    )["resolved_kind"] == "Expr"
+    module.materialization_workspace_apply_block_edge(engine, workspace, state, edge)
+
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        "body[0]/body[0]",
+    )["resolved_kind"] == "Assign"
+
+
 @pytest.mark.parametrize(
     ("source", "probe_path", "before_kind", "after_kind"),
     [
