@@ -9,8 +9,10 @@ from astichi.lower_engine import (
     LowerEngine,
     LowerTemplateBinding,
     LowerTemplateCache,
+    NativeTemplateCache,
     copy_composable_executable_ast,
     copy_composable_template_ast,
+    ensure_current_native_surface_bundle,
     render_composable_source,
 )
 from astichi.lower_engine.native import load_native_extension
@@ -84,12 +86,87 @@ def test_compile_explicit_native_attaches_native_template_snapshot(
     assert isinstance(lower_template, LowerTemplateBinding)
     assert lower_template.backend == "native-rust"
     assert lower_template.native_snapshot is not None
+    assert lower_template.native_source == source
+    assert lower_template.native_origin == native_composable.origin
     assert (
         write_structural_snapshot(lower_template.structural_snapshot())
         == write_structural_snapshot(
             python_composable._lower_template.structural_snapshot()
         )
     )
+
+
+def test_native_template_cache_reuses_registered_template_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    composable = astichi.compile("result = astichi_hole(value)\n")
+    binding = composable._lower_template
+    assert isinstance(binding, LowerTemplateBinding)
+
+    engine_handle = module.engine_create()
+    cache = NativeTemplateCache(module=module, engine_handle=engine_handle)
+
+    first = cache.template_handle_for(binding)
+    second = cache.template_handle_for(binding)
+
+    assert first is second
+    assert first.snapshot()["kind"] == "template"
+    assert first.snapshot()["index"] == 0
+
+    state = module.assembly_state_create(engine_handle)
+    occurrence = module.assembly_state_append_occurrence(
+        engine_handle,
+        state,
+        first,
+        ("Root",),
+    )
+    snapshot = module.assembly_state_snapshot(engine_handle, state)
+
+    assert occurrence.snapshot()["kind"] == "occurrence"
+    assert snapshot["templates"][0]["template_key"] == binding.template_key
+    assert snapshot["occurrences"] == [
+        {
+            "build_path": ["Root"],
+            "occurrence_id": 0,
+            "parent_occurrence_id": None,
+            "template_id": 0,
+        }
+    ]
+
+
+def test_native_template_cache_rejects_cross_engine_template_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    binding = astichi.compile("result = astichi_hole(value)\n")._lower_template
+    assert isinstance(binding, LowerTemplateBinding)
+
+    first_engine = module.engine_create()
+    second_engine = module.engine_create()
+    first_cache = NativeTemplateCache(module=module, engine_handle=first_engine)
+    ensure_current_native_surface_bundle(
+        module=module,
+        engine_handle=second_engine,
+    )
+    first_template = first_cache.template_handle_for(binding)
+    second_state = module.assembly_state_create(second_engine)
+
+    with pytest.raises(RuntimeError, match="belongs to another native engine"):
+        module.assembly_state_append_occurrence(
+            second_engine,
+            second_state,
+            first_template,
+            ("Root",),
+        )
 
 
 def test_compile_funcargs_payload_after_boundary_prefix_uses_payload_locator() -> None:

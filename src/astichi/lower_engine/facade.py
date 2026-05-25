@@ -7,6 +7,7 @@ from copy import deepcopy
 import hashlib
 from dataclasses import dataclass, field, replace
 from types import ModuleType
+from typing import Any
 
 from astichi.asttools import clone_ast
 from astichi.lower_engine.errors import LowerEngineError
@@ -46,6 +47,8 @@ class LowerTemplateBinding:
         repr=False,
         compare=False,
     )
+    native_source: str | None = field(default=None, repr=False, compare=False)
+    native_origin: CompileOrigin | None = field(default=None, repr=False, compare=False)
 
     def structural_snapshot(self) -> dict[str, object]:
         """Return a deterministic structural snapshot for this template."""
@@ -110,6 +113,8 @@ def register_native_template_source(
         fallback_binding,
         backend=_native_backend_name(module),
         native_snapshot=native_snapshot,
+        native_source=source,
+        native_origin=origin,
     )
 
 
@@ -131,6 +136,62 @@ class LowerTemplateCache:
         )
         self._template_ids_by_key[binding.template_key] = template_id
         return template_id
+
+
+@dataclass(slots=True)
+class NativeTemplateCache:
+    """Register native template bindings once in one native engine handle."""
+
+    module: ModuleType
+    engine_handle: object
+    _template_handles_by_key: dict[tuple[str, str, str], object] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        ensure_current_native_surface_bundle(
+            module=self.module,
+            engine_handle=self.engine_handle,
+        )
+
+    def template_handle_for(self, binding: LowerTemplateBinding) -> object:
+        """Return the destination native template handle for ``binding``."""
+        if binding.native_snapshot is None:
+            raise TypeError("binding does not carry a native template snapshot")
+        cache_key = (
+            binding.backend,
+            binding.surface_bundle_signature,
+            binding.template_key,
+        )
+        cached = self._template_handles_by_key.get(cache_key)
+        if cached is not None:
+            return cached
+        handle = self.module.register_template_snapshot(
+            self.engine_handle,
+            deepcopy(binding.native_snapshot),
+        )
+        self._template_handles_by_key[cache_key] = handle
+        return handle
+
+
+def ensure_current_native_surface_bundle(
+    *,
+    module: ModuleType,
+    engine_handle: object,
+) -> dict[str, object]:
+    """Ensure one native engine handle has the current surface bundle."""
+    expected = _current_surface_bundle_snapshot()
+    engine_snapshot = module.engine_snapshot(engine_handle)
+    if bool(engine_snapshot.get("surface_bundle_registered", False)):
+        actual = module.surface_bundle_snapshot(engine_handle)
+        if actual != expected:
+            raise LowerEngineError("native engine has incompatible surface bundle")
+        return _dict_copy(actual, "native surface bundle snapshot")
+    actual = module.register_surface_bundle(
+        engine_handle,
+        deepcopy(expected),
+    )
+    return _dict_copy(actual, "native surface bundle snapshot")
 
 
 def ensure_current_surface_bundle(engine: LowerEngine) -> RegisteredSurfaceBundle:
@@ -170,6 +231,18 @@ def _extract_native_template_snapshot(
     if not isinstance(snapshot, dict):
         raise TypeError("native template snapshot must be a dict")
     return snapshot
+
+
+def _current_surface_bundle_snapshot() -> dict[str, object]:
+    engine = LowerEngine()
+    bundle = engine.surface_registry.register_bundle(current_surface_bundle_spec())
+    return bundle.snapshot()
+
+
+def _dict_copy(value: Any, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} must be a dict")
+    return dict(value)
 
 
 def _native_backend_name(module: ModuleType) -> str:
