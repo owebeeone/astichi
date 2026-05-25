@@ -111,6 +111,108 @@ def test_native_occurrence_store_rejects_cross_engine_handles_when_available() -
         module.assembly_state_append_occurrence(second, state, template, ("Root",))
 
 
+def test_native_candidate_query_finds_composable_expression_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "answer = astichi_hole(value)\n",
+    )
+    expression_template = _register_template_source(module, handle, "40 + 2\n")
+    state = module.assembly_state_create(handle)
+    module.assembly_state_append_occurrence(handle, state, root_template, ("Root",))
+
+    result = module.assembly_state_query_composable_candidates(
+        handle,
+        state,
+        expression_template,
+        {
+            "name": "value",
+            "build_match": ["Root"],
+            "owner_match": None,
+            "target_inventory_kinds": [
+                "hole.block",
+                "hole.expr",
+                "hole.params",
+                "hole.elif",
+                "hole.positional_variadic",
+                "hole.named_variadic",
+            ],
+        },
+    )
+
+    assert result == {
+        "candidates": [
+            {
+                "production_records": [0],
+                "target_record": [0, 0],
+            }
+        ],
+        "diagnostic_summary": {"candidate_count": 1},
+    }
+
+
+def test_native_candidate_query_filters_owner_and_build_selectors_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "class Owner:\n    astichi_hole(body)\n",
+    )
+    block_template = _register_template_source(module, handle, "value = 1\n")
+    state = module.assembly_state_create(handle)
+    module.assembly_state_append_occurrence(handle, state, root_template, ("Root",))
+    request = {
+        "name": "body",
+        "build_match": ["Root"],
+        "owner_match": ["Owner"],
+        "target_inventory_kinds": [
+            "hole.block",
+            "hole.expr",
+            "hole.params",
+            "hole.elif",
+            "hole.positional_variadic",
+            "hole.named_variadic",
+        ],
+    }
+
+    matched = module.assembly_state_query_composable_candidates(
+        handle,
+        state,
+        block_template,
+        request,
+    )
+    wrong_owner = module.assembly_state_query_composable_candidates(
+        handle,
+        state,
+        block_template,
+        {**request, "owner_match": ["Other"]},
+    )
+    wrong_build = module.assembly_state_query_composable_candidates(
+        handle,
+        state,
+        block_template,
+        {**request, "build_match": ["Other"]},
+    )
+
+    assert matched["candidates"] == [
+        {
+            "production_records": [0],
+            "target_record": [0, 0],
+        }
+    ]
+    assert wrong_owner["candidates"] == []
+    assert wrong_build["candidates"] == []
+
+
 def test_native_scope_add_routes_root_occurrence_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,6 +231,37 @@ def test_native_scope_add_routes_root_occurrence_when_available(
 
     assert actual == expected
     assert counts["native_scope_append_occurrence"] == 1
+    assert counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_composable_lookup_uses_native_query_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("answer = astichi_hole(value)\n")
+    expression = astichi.compile("40 + 2\n")
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        candidates = scope.find_candidates(
+            as_composable(expression, build_name="Expression"),
+            name="value",
+            build_match=("Root",),
+        )
+
+    candidate = require_one(candidates)
+    counts = counters.snapshot()["counts"]
+
+    assert candidate.target_record.build_path.parts == ("Root",)
+    assert [record.kind for record in candidate.compatible_productions] == [
+        "production.expression",
+    ]
+    assert counts["candidate_lookup_lower"] == 1
+    assert counts["native_candidate_query_composable"] == 1
     assert counts.get("debug_inventory_projection", 0) == 0
 
 

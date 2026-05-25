@@ -105,6 +105,18 @@ impl RegisteredSurfaceBundle {
         self.patterns.len()
     }
 
+    pub fn accepts_live_records(
+        &self,
+        target_surface_key: &str,
+        production_surface_key: &str,
+    ) -> bool {
+        self.compatibility_rules.iter().any(|rule| {
+            rule.target_surface_key == target_surface_key
+                && rule.production_surface_key == production_surface_key
+                && rule.predicate.matches_live_records()
+        })
+    }
+
     pub fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("bundle_key", &self.bundle_key)?;
@@ -175,6 +187,24 @@ struct FieldExpectation {
 struct ResultPolicy {
     policy_key: String,
     summary: String,
+}
+
+impl ShapePredicate {
+    fn matches_live_records(&self) -> bool {
+        self.target_expectations
+            .iter()
+            .all(FieldExpectation::matches_live_record)
+            && self
+                .production_expectations
+                .iter()
+                .all(FieldExpectation::matches_live_record)
+    }
+}
+
+impl FieldExpectation {
+    fn matches_live_record(&self) -> bool {
+        self.field_name == "state" && self.expected_value == "live"
+    }
 }
 
 #[pyfunction]

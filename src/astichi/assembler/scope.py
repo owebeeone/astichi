@@ -26,7 +26,12 @@ from astichi.lower_engine import (
     load_native_extension,
     requested_lower_engine,
 )
-from astichi.lower_engine.handles import OccurrenceId, OverlayId, RecordId
+from astichi.lower_engine.handles import (
+    OccurrenceId,
+    OverlayId,
+    RecordId,
+    TemplateRecordId,
+)
 from astichi.lower_engine.inventory import AssemblyState
 from astichi.lower_engine.materialization import MaterializationOperation
 from astichi.lowering.parameters import param_hole_name
@@ -1771,6 +1776,12 @@ class AssemblyScope:
         resource: ComposableResource,
         selector: DemandSelector,
     ) -> tuple[BindingCandidate, ...]:
+        native_candidates = self._find_native_composable_candidates(
+            resource,
+            selector,
+        )
+        if native_candidates is not None:
+            return native_candidates
         production_records = _production_records(resource.composable)
         candidates: list[BindingCandidate] = []
         for target_record in self._lower_records_for_selector(
@@ -1795,6 +1806,98 @@ class AssemblyScope:
                 )
             )
         return tuple(candidates)
+
+    def _find_native_composable_candidates(
+        self,
+        resource: ComposableResource,
+        selector: DemandSelector,
+    ) -> tuple[BindingCandidate, ...] | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_template_cache is None
+            or self._native_state_handle is None
+        ):
+            return None
+        if not isinstance(resource.composable, BasicComposable):
+            raise TypeError(
+                "native assembler candidates require BasicComposable resources; "
+                f"got {type(resource.composable).__name__}"
+            )
+        binding = resource.composable._lower_template
+        if not isinstance(binding, LowerTemplateBinding):
+            raise TypeError("BasicComposable is missing lower template metadata")
+        source_template = self._native_template_cache.template_handle_for(binding)
+        request = {
+            "name": selector.name,
+            "build_match": (
+                None
+                if selector.build_match is None
+                else list(selector.build_match)
+            ),
+            "owner_match": (
+                None
+                if selector.owner_match is None
+                else list(selector.owner_match)
+            ),
+            "target_inventory_kinds": list(_lower_hole_inventory_kinds()),
+        }
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_candidate_query_composable")
+        result = self._native_module.assembly_state_query_composable_candidates(
+            self._native_engine_handle,
+            self._native_state_handle,
+            source_template,
+            request,
+        )
+        if not isinstance(result, dict):
+            raise TypeError("native candidate query result must be a dict")
+        raw_candidates = result.get("candidates")
+        if not isinstance(raw_candidates, list):
+            raise TypeError("native candidate query candidates must be a list")
+        production_records = _lower_template_projection_production_records(
+            resource.composable
+        )
+        candidates: list[BindingCandidate] = []
+        for raw_candidate in raw_candidates:
+            if not isinstance(raw_candidate, dict):
+                raise TypeError("native candidate entry must be a dict")
+            target_record_id = self._native_record_id(raw_candidate.get("target_record"))
+            target_record = self._visible_lower_projection_record(target_record_id)
+            if target_record is None:
+                continue
+            compatible_productions: list[InventoryRecord] = []
+            for index in _native_template_record_indexes(
+                raw_candidate.get("production_records")
+            ):
+                production_record = production_records.get(index)
+                if production_record is None:
+                    raise TypeError(
+                        "native candidate references a non-production template record"
+                    )
+                compatible_productions.append(production_record)
+            candidates.append(
+                ComposableCandidate(
+                    target_record=target_record,
+                    resource=resource,
+                    compatible_productions=tuple(compatible_productions),
+                )
+            )
+        return tuple(candidates)
+
+    def _native_record_id(self, value: object) -> RecordId:
+        indexes = _native_template_record_indexes(value)
+        if len(indexes) != 2:
+            raise TypeError("native record id must contain two indexes")
+        occurrence_index, template_record_index = indexes
+        return RecordId(
+            occurrence_id=OccurrenceId(self._lower_state.owner, occurrence_index),
+            template_record_id=TemplateRecordId(
+                self._lower_state.owner,
+                template_record_index,
+            ),
+        )
 
     def _find_lower_external_candidates(
         self,
@@ -2784,6 +2887,17 @@ def _projection_record_for(
     )
 
 
+def _native_template_record_indexes(value: object) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        raise TypeError("native record index payload must be a list")
+    indexes: list[int] = []
+    for item in value:
+        if not isinstance(item, int):
+            raise TypeError("native record index entries must be integers")
+        indexes.append(item)
+    return tuple(indexes)
+
+
 def _resolve_projection_record(
     record: InventoryRecord,
     identifier_bindings: dict[str, str],
@@ -2934,6 +3048,22 @@ def _production_records(composable: Composable) -> tuple[InventoryRecord, ...]:
         record_id for ids in inventory.production_map.values() for record_id in ids
     )
     return inventory.records_for_ids(record_ids)
+
+
+def _lower_template_projection_production_records(
+    composable: BasicComposable,
+) -> dict[int, InventoryRecord]:
+    binding = composable._lower_template
+    if not isinstance(binding, LowerTemplateBinding):
+        raise TypeError("BasicComposable is missing lower template metadata")
+    records: dict[int, InventoryRecord] = {}
+    for index, spec in enumerate(binding.record_specs):
+        record = spec.projection_record
+        if isinstance(record, InventoryRecord) and record.kind.startswith(
+            "production."
+        ):
+            records[index] = record
+    return records
 
 
 def _inventory_for(composable: Composable) -> Inventory:

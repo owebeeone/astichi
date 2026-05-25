@@ -380,6 +380,110 @@ fn assembly_state_index_snapshot(
     index_snapshot(py, &state_ref.indexes)
 }
 
+#[pyfunction(name = "assembly_state_query_composable_candidates")]
+fn assembly_state_query_composable_candidates(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    source_template: PyRef<'_, NativeTemplateHandle>,
+    request: &Bound<'_, PyDict>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    ensure_owner(engine.owner_id(), source_template.owner_id)?;
+    let surface_bundle = engine
+        .surface_bundle()
+        .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
+    let state_ref = engine.state(state.index)?;
+    let source_template_ref = engine.template(source_template.index)?;
+    let request = parse_candidate_query_request(request)?;
+    let target_kind_set: BTreeSet<String> =
+        request.target_inventory_kinds.iter().cloned().collect();
+
+    let mut raw_targets: Vec<RecordKey> = Vec::new();
+    if let Some(name) = &request.name {
+        if let Some(records) = state_ref.indexes.by_resource_name.get(name) {
+            raw_targets.extend(records.iter().copied());
+        }
+    } else {
+        for kind in &request.target_inventory_kinds {
+            if let Some(records) = state_ref.indexes.by_inventory_kind.get(kind) {
+                raw_targets.extend(records.iter().copied());
+            }
+        }
+    }
+
+    let candidates = PyList::empty(py);
+    let mut seen_targets = BTreeSet::new();
+    for target_key in raw_targets {
+        if !seen_targets.insert(target_key) {
+            continue;
+        }
+        if !record_is_visible(state_ref, target_key)? {
+            continue;
+        }
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index)?;
+        let target_template = engine.template(target_occurrence.template_index)?;
+        let target_record = target_template
+            .records()
+            .get(target_key.template_record_index)
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))?;
+        if !target_kind_set.contains(&target_record.inventory_kind) {
+            continue;
+        }
+        if let Some(name) = &request.name {
+            if target_record.resource_name != *name {
+                continue;
+            }
+        }
+        if let Some(build_match) = &request.build_match {
+            if !matches_path(build_match, &target_occurrence.build_path)? {
+                continue;
+            }
+        }
+        if let Some(owner_match) = &request.owner_match {
+            if !matches_path(owner_match, &target_record.code_owner)? {
+                continue;
+            }
+        }
+
+        let mut compatible_productions: Vec<usize> = Vec::new();
+        for (production_index, production_record) in
+            source_template_ref.records().iter().enumerate()
+        {
+            if !production_record.inventory_kind.starts_with("production.") {
+                continue;
+            }
+            if surface_bundle
+                .accepts_live_records(&target_record.surface_key, &production_record.surface_key)
+            {
+                compatible_productions.push(production_index);
+            }
+        }
+        if compatible_productions.is_empty() {
+            continue;
+        }
+
+        let candidate = PyDict::new(py);
+        candidate.set_item(
+            "target_record",
+            vec![
+                target_key.occurrence_index,
+                target_key.template_record_index,
+            ],
+        )?;
+        candidate.set_item("production_records", compatible_productions)?;
+        candidates.append(candidate)?;
+    }
+
+    let summary = PyDict::new(py);
+    summary.set_item("candidate_count", candidates.len())?;
+    let result = PyDict::new(py);
+    result.set_item("candidates", candidates)?;
+    result.set_item("diagnostic_summary", summary)?;
+    Ok(result.into_any().unbind())
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeTemplateHandle>()?;
     m.add_class::<NativeAssemblyStateHandle>()?;
@@ -391,6 +495,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(assembly_state_record_handle, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_index_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        assembly_state_query_composable_candidates,
+        m
+    )?)?;
     Ok(())
 }
 
@@ -668,6 +776,95 @@ fn record_key_list(py: Python<'_>, records: &[RecordKey]) -> PyResult<Py<PyAny>>
     Ok(list.into_any().unbind())
 }
 
+struct CandidateQueryRequest {
+    name: Option<String>,
+    build_match: Option<Vec<String>>,
+    owner_match: Option<Vec<String>>,
+    target_inventory_kinds: Vec<String>,
+}
+
+fn parse_candidate_query_request(request: &Bound<'_, PyDict>) -> PyResult<CandidateQueryRequest> {
+    Ok(CandidateQueryRequest {
+        name: get_optional_string(request, "name")?,
+        build_match: get_optional_string_list(request, "build_match")?,
+        owner_match: get_optional_string_list(request, "owner_match")?,
+        target_inventory_kinds: get_string_list(request, "target_inventory_kinds")?,
+    })
+}
+
+fn record_is_visible(state: &NativeAssemblyState, record_key: RecordKey) -> PyResult<bool> {
+    let occurrence = state.occurrence(record_key.occurrence_index)?;
+    Ok(occurrence.live
+        && !state.dead_records.contains(&record_key)
+        && !state.satisfied_records.contains(&record_key))
+}
+
+fn matches_path(selector: &[String], path: &[String]) -> PyResult<bool> {
+    let mut memo = BTreeMap::new();
+    matches_path_at(selector, path, 0, 0, &mut memo)
+}
+
+fn matches_path_at(
+    selector: &[String],
+    path: &[String],
+    selector_index: usize,
+    path_index: usize,
+    memo: &mut BTreeMap<(usize, usize), bool>,
+) -> PyResult<bool> {
+    if let Some(value) = memo.get(&(selector_index, path_index)) {
+        return Ok(*value);
+    }
+    let matched = if selector_index == selector.len() {
+        path_index == path.len()
+    } else {
+        let part = &selector[selector_index];
+        match part.as_str() {
+            "" => {
+                return Err(crate::errors::schema_error(
+                    "invalid path selector: empty path selector part",
+                ));
+            }
+            "." => {
+                path_index < path.len()
+                    && matches_path_at(selector, path, selector_index + 1, path_index + 1, memo)?
+            }
+            "?" => {
+                matches_path_at(selector, path, selector_index + 1, path_index, memo)?
+                    || (path_index < path.len()
+                        && matches_path_at(
+                            selector,
+                            path,
+                            selector_index + 1,
+                            path_index + 1,
+                            memo,
+                        )?)
+            }
+            "*" => {
+                matches_path_at(selector, path, selector_index + 1, path_index, memo)?
+                    || (path_index < path.len()
+                        && matches_path_at(selector, path, selector_index, path_index + 1, memo)?)
+            }
+            "+" => {
+                path_index < path.len()
+                    && (matches_path_at(selector, path, selector_index + 1, path_index + 1, memo)?
+                        || matches_path_at(selector, path, selector_index, path_index + 1, memo)?)
+            }
+            _ => {
+                if part.chars().any(|item| ".+?*/".contains(item)) {
+                    return Err(crate::errors::schema_error(&format!(
+                        "invalid path selector: reserved path selector character in {part:?}"
+                    )));
+                }
+                path_index < path.len()
+                    && *part == path[path_index]
+                    && matches_path_at(selector, path, selector_index + 1, path_index + 1, memo)?
+            }
+        }
+    };
+    memo.insert((selector_index, path_index), matched);
+    Ok(matched)
+}
+
 fn validate_snapshot_schema(snapshot: &Bound<'_, PyDict>) -> PyResult<()> {
     let schema = get_string(snapshot, "schema")?;
     if schema != STRUCTURAL_SCHEMA {
@@ -711,6 +908,17 @@ fn get_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
         .map_err(|_| crate::errors::schema_error(&format!("{key} must be a string")))
 }
 
+fn get_optional_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<String>> {
+    let value = required(dict, key)?;
+    if value.is_none() {
+        return Ok(None);
+    }
+    value
+        .extract::<String>()
+        .map(Some)
+        .map_err(|_| crate::errors::schema_error(&format!("{key} must be a string or None")))
+}
+
 fn get_usize(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<usize> {
     required(dict, key)?
         .extract::<usize>()
@@ -730,6 +938,14 @@ fn get_optional_usize(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<us
 fn get_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<String>> {
     let value = required(dict, key)?;
     parse_string_sequence(&value, key)
+}
+
+fn get_optional_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<Vec<String>>> {
+    let value = required(dict, key)?;
+    if value.is_none() {
+        return Ok(None);
+    }
+    parse_string_sequence(&value, key).map(Some)
 }
 
 fn parse_string_sequence(value: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<String>> {
