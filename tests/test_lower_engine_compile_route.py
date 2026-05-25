@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import astichi
+import pytest
 from astichi.lower_engine import (
     LowerEngine,
     LowerTemplateBinding,
@@ -12,6 +13,7 @@ from astichi.lower_engine import (
     copy_composable_template_ast,
     render_composable_source,
 )
+from astichi.lower_engine.native import load_native_extension
 from astichi.structural_snapshot import write_structural_snapshot
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
@@ -64,6 +66,30 @@ def make():
         _STRUCTURAL_GOLDENS_DIR / "compile_template_metadata.json"
     ).read_text(encoding="utf-8")
     assert actual_text == expected_text
+
+
+def test_compile_explicit_native_attaches_native_template_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    source = "result = astichi_hole(value)\n"
+    python_composable = astichi.compile(source)
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+
+    native_composable = astichi.compile(source)
+
+    lower_template = native_composable._lower_template
+    assert isinstance(lower_template, LowerTemplateBinding)
+    assert lower_template.backend == "native-rust"
+    assert lower_template.native_snapshot is not None
+    assert (
+        write_structural_snapshot(lower_template.structural_snapshot())
+        == write_structural_snapshot(
+            python_composable._lower_template.structural_snapshot()
+        )
+    )
 
 
 def test_compile_funcargs_payload_after_boundary_prefix_uses_payload_locator() -> None:

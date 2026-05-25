@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 import hashlib
 from dataclasses import dataclass, field, replace
+from types import ModuleType
 
 from astichi.asttools import clone_ast
 from astichi.lower_engine.errors import LowerEngineError
@@ -38,9 +40,17 @@ class LowerTemplateBinding:
     source_summary: str
     record_specs: tuple[TemplateRecordSpec, ...]
     surface_bundle_signature: str
+    backend: str = "python"
+    native_snapshot: dict[str, object] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def structural_snapshot(self) -> dict[str, object]:
         """Return a deterministic structural snapshot for this template."""
+        if self.native_snapshot is not None:
+            return deepcopy(self.native_snapshot)
         state = self.engine.new_state()
         self.engine.append_occurrence(
             state,
@@ -80,6 +90,29 @@ def register_inventory_template(
     )
 
 
+def register_native_template_source(
+    *,
+    source: str,
+    origin: CompileOrigin,
+    fallback_binding: LowerTemplateBinding,
+) -> LowerTemplateBinding:
+    """Attach a native-extracted structural template snapshot to a binding."""
+    from astichi.lower_engine.native import load_native_extension
+
+    module = load_native_extension(required=True)
+    assert module is not None
+    native_snapshot = _extract_native_template_snapshot(
+        module=module,
+        source=source,
+        origin=origin,
+    )
+    return replace(
+        fallback_binding,
+        backend=_native_backend_name(module),
+        native_snapshot=native_snapshot,
+    )
+
+
 @dataclass(slots=True)
 class LowerTemplateCache:
     """Register lower template bindings once in one destination engine."""
@@ -111,6 +144,40 @@ def ensure_current_surface_bundle(engine: LowerEngine) -> RegisteredSurfaceBundl
             f"lower engine has incompatible surface bundle: {existing.bundle_key}"
         )
     return existing
+
+
+def _extract_native_template_snapshot(
+    *,
+    module: ModuleType,
+    source: str,
+    origin: CompileOrigin,
+) -> dict[str, object]:
+    engine = LowerEngine()
+    bundle_snapshot = engine.surface_registry.register_bundle(
+        current_surface_bundle_spec()
+    ).snapshot()
+    handle = module.engine_create()
+    try:
+        module.register_surface_bundle(handle, deepcopy(bundle_snapshot))
+        snapshot = module.extract_template_snapshot(
+            handle,
+            source,
+            origin.file_name,
+            origin.line_number,
+        )
+    finally:
+        module.engine_close(handle)
+    if not isinstance(snapshot, dict):
+        raise TypeError("native template snapshot must be a dict")
+    return snapshot
+
+
+def _native_backend_name(module: ModuleType) -> str:
+    capabilities = module.capabilities()
+    label = str(capabilities.get("backend_label", ""))
+    if "cpp" in label or "c++" in label:
+        return "native-cpp"
+    return "native-rust"
 
 
 def register_lower_template_binding(

@@ -88,26 +88,28 @@ def compile(
         offset=offset,
     )
     apply_offset = _single_line_source(source)
+    parse_source = _padded_source(
+        source,
+        line_number=line_number,
+        offset=offset,
+        apply_offset=apply_offset,
+    )
     try:
         tree = ast.parse(
-            _padded_source(
-                source,
-                line_number=line_number,
-                offset=offset,
-                apply_offset=apply_offset,
-            ),
+            parse_source,
             filename=origin.file_name,
         )
     except IndentationError:
         if not apply_offset or offset <= 0:
             raise
+        parse_source = _padded_source(
+            source,
+            line_number=line_number,
+            offset=offset,
+            apply_offset=False,
+        )
         tree = ast.parse(
-            _padded_source(
-                source,
-                line_number=line_number,
-                offset=offset,
-                apply_offset=False,
-            ),
+            parse_source,
             filename=origin.file_name,
         )
     attach_astichi_source_file(tree, origin.file_name)
@@ -147,6 +149,11 @@ def compile(
         origin=origin,
         inventory=inventory,
     )
+    lower_template = _maybe_attach_native_lower_template(
+        source=parse_source,
+        origin=origin,
+        lower_template=lower_template,
+    )
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
     compiled = FrontendComposable(
         tree=tree,
@@ -163,6 +170,35 @@ def compile(
     if validated_arg_bindings:
         return compiled.bind_identifier(dict(validated_arg_bindings))
     return compiled
+
+
+def _maybe_attach_native_lower_template(
+    *,
+    source: str,
+    origin: CompileOrigin,
+    lower_template: object,
+) -> object:
+    from astichi.lower_engine.native import requested_lower_engine
+
+    requested = requested_lower_engine()
+    if requested in {"python", "auto"}:
+        return lower_template
+    if requested not in {"native", "native-rust", "native-cpp"}:
+        return lower_template
+
+    from astichi.lower_engine import register_native_template_source
+
+    native_binding = register_native_template_source(
+        source=source,
+        origin=origin,
+        fallback_binding=lower_template,
+    )
+    if requested == "native-cpp" and native_binding.backend != "native-cpp":
+        raise RuntimeError("requested native-cpp lower engine, but native backend is not C++")
+    if requested == "native-rust" and native_binding.backend != "native-rust":
+        raise RuntimeError("requested native-rust lower engine, but native backend is not Rust")
+    return native_binding
+
 
 def _validate_authored_marker_surface(
     tree: ast.AST,
