@@ -889,7 +889,7 @@ class AssemblyScope:
             target_record_id=record_id,
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
-        if kind == "external":
+        if kind in {"external", "identifier"}:
             self._append_native_overlay(
                 record_id,
                 kind=kind,
@@ -2072,14 +2072,7 @@ class AssemblyScope:
         return tuple(records)
 
     def _native_identifier_bindings_payload(self) -> list[list[object]]:
-        return [
-            [occurrence_id.index, source_name, target_name]
-            for occurrence_id, bindings in sorted(
-                self._identifier_bindings_by_occurrence.items(),
-                key=lambda item: item[0].index,
-            )
-            for source_name, target_name in sorted(bindings.items())
-        ]
+        return []
 
     def _find_lower_external_candidates(
         self,

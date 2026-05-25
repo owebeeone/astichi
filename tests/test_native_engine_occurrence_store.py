@@ -373,6 +373,60 @@ def test_native_demand_query_finds_external_and_identifier_when_available() -> N
     assert external["candidates"] == [{"target_record": [0, 1]}]
 
 
+def test_native_identifier_overlay_resolves_external_owner_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "class class_name__astichi_arg__:\n"
+        "    default = astichi_bind_external(default_value)\n",
+    )
+    state = module.assembly_state_create(handle)
+    root = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        root_template,
+        ("Root",),
+    )
+    identifier_record = module.assembly_state_record_handle(handle, state, root, 0)
+
+    module.assembly_state_append_overlay(
+        handle,
+        state,
+        identifier_record,
+        "identifier",
+        "GeneratedClass",
+    )
+    module.assembly_state_mark_satisfied(handle, state, identifier_record)
+
+    external = module.assembly_state_query_demand_candidates(
+        handle,
+        state,
+        {
+            "name": "default_value",
+            "build_match": ["Root"],
+            "owner_match": ["GeneratedClass"],
+            "target_inventory_kinds": ["external.bind"],
+            "identifier_bindings": None,
+        },
+    )
+    snapshot = module.assembly_state_snapshot(handle, state)
+
+    assert external["candidates"] == [{"target_record": [0, 1]}]
+    assert snapshot["overlays"] == [
+        {
+            "kind": "identifier",
+            "overlay_id": 0,
+            "source_label": "GeneratedClass",
+            "target_record_id": [0, 0],
+        }
+    ]
+
+
 def test_native_scope_add_routes_root_occurrence_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -470,11 +524,17 @@ def test_native_scope_external_and_identifier_lookup_use_native_query(
     assert str(external.demand_record.code_owner) == "GeneratedClass"
     assert snapshot["overlays"] == [
         {
-            "kind": "external",
+            "kind": "identifier",
             "overlay_id": 0,
+            "source_label": "GeneratedClass",
+            "target_record_id": [0, 0],
+        },
+        {
+            "kind": "external",
+            "overlay_id": 1,
             "source_label": "default_value",
             "target_record_id": [0, 1],
-        }
+        },
     ]
     assert identifier_counts["native_candidate_query_identifier"] == 1
     assert external_counts["native_candidate_query_external"] == 1

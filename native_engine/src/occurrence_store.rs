@@ -584,11 +584,13 @@ fn assembly_state_query_composable_candidates(
     let state_ref = engine.state(state.index)?;
     let source_template_ref = engine.template(source_template.index)?;
     let request = parse_candidate_query_request(request)?;
+    let identifier_bindings =
+        candidate_identifier_bindings(&engine, state_ref, &request.identifier_bindings)?;
     let target_kind_set: BTreeSet<String> =
         request.target_inventory_kinds.iter().cloned().collect();
 
     let mut raw_targets: Vec<RecordKey> = Vec::new();
-    if request.name.is_some() && request.identifier_bindings.is_empty() {
+    if request.name.is_some() && identifier_bindings.is_empty() {
         let name = request.name.as_ref().expect("checked is_some");
         if let Some(records) = state_ref.indexes.by_resource_name.get(name) {
             raw_targets.extend(records.iter().copied());
@@ -619,9 +621,7 @@ fn assembly_state_query_composable_candidates(
         if !target_kind_set.contains(&target_record.inventory_kind) {
             continue;
         }
-        let target_bindings = request
-            .identifier_bindings
-            .get(&target_key.occurrence_index);
+        let target_bindings = identifier_bindings.get(&target_key.occurrence_index);
         let target_resource_name = resolved_name(&target_record.resource_name, target_bindings);
         if let Some(name) = &request.name {
             if target_resource_name != *name {
@@ -688,11 +688,13 @@ fn assembly_state_query_demand_candidates(
     ensure_owner(engine.owner_id(), state.owner_id)?;
     let state_ref = engine.state(state.index)?;
     let request = parse_candidate_query_request(request)?;
+    let identifier_bindings =
+        candidate_identifier_bindings(&engine, state_ref, &request.identifier_bindings)?;
     let target_kind_set: BTreeSet<String> =
         request.target_inventory_kinds.iter().cloned().collect();
 
     let mut raw_targets: Vec<RecordKey> = Vec::new();
-    if request.name.is_some() && request.identifier_bindings.is_empty() {
+    if request.name.is_some() && identifier_bindings.is_empty() {
         let name = request.name.as_ref().expect("checked is_some");
         if let Some(records) = state_ref.indexes.by_resource_name.get(name) {
             raw_targets.extend(records.iter().copied());
@@ -723,9 +725,7 @@ fn assembly_state_query_demand_candidates(
         if !target_kind_set.contains(&target_record.inventory_kind) {
             continue;
         }
-        let target_bindings = request
-            .identifier_bindings
-            .get(&target_key.occurrence_index);
+        let target_bindings = identifier_bindings.get(&target_key.occurrence_index);
         let target_resource_name = resolved_name(&target_record.resource_name, target_bindings);
         if let Some(name) = &request.name {
             if target_resource_name != *name {
@@ -1138,6 +1138,53 @@ fn validate_record_key(
         ));
     }
     Ok(())
+}
+
+fn template_record_for_key<'a>(
+    engine: &'a EngineHandle,
+    state: &NativeAssemblyState,
+    record_key: RecordKey,
+) -> PyResult<&'a NativeTemplateRecord> {
+    let template_index = state
+        .occurrence(record_key.occurrence_index)?
+        .template_index;
+    let template = engine.template(template_index)?;
+    template
+        .records()
+        .get(record_key.template_record_index)
+        .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))
+}
+
+fn candidate_identifier_bindings(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request_bindings: &BTreeMap<usize, BTreeMap<String, String>>,
+) -> PyResult<BTreeMap<usize, BTreeMap<String, String>>> {
+    let mut bindings = BTreeMap::new();
+    for overlay in &state.overlays {
+        if overlay.kind != "identifier" {
+            continue;
+        }
+        let record = template_record_for_key(engine, state, overlay.target_record)?;
+        if record.resource_name.is_empty() {
+            return Err(crate::errors::schema_error(
+                "identifier overlay target record is missing a resource name",
+            ));
+        }
+        bindings
+            .entry(overlay.target_record.occurrence_index)
+            .or_insert_with(BTreeMap::new)
+            .insert(record.resource_name.clone(), overlay.source_label.clone());
+    }
+    for (occurrence_index, request_names) in request_bindings {
+        let occurrence_bindings = bindings
+            .entry(*occurrence_index)
+            .or_insert_with(BTreeMap::new);
+        for (source_name, target_name) in request_names {
+            occurrence_bindings.insert(source_name.clone(), target_name.clone());
+        }
+    }
+    Ok(bindings)
 }
 
 fn resolved_name(name: &str, bindings: Option<&BTreeMap<String, String>>) -> String {
