@@ -715,27 +715,55 @@ Acceptance:
 - the next slice can route a native composable facade on top of extracted
   native template records.
 
-### N5: Native Composable Facade
+### N5a: Native Template Snapshot Overlay
 
-Goal: route compile to native templates behind the public composable facade.
+Status: landed as the first N5 checkpoint.
+
+Goal: prove explicit native compile can attach native-extracted structural
+template snapshots without changing the public composable API.
 
 Work:
 
-- add `NativeTemplateBinding` / native-backed composable state;
-- route native-selected `astichi.compile(...)` through
-  `register_template_source(...)`;
-- expose explicit artifact-copy methods used by existing tests;
-- keep Python engine as oracle and fallback before native registration only.
+- route explicit native-selected `astichi.compile(...)` through native
+  extraction;
+- attach the native structural snapshot to the facade binding;
+- keep Python `record_specs` available for the current Python scope path;
+- keep `auto` on Python because this is not a complete lower engine.
 
 Acceptance:
 
-- compile-only structural goldens pass with `ASTICHI_LOWER_ENGINE=native`;
+- compile-only structural snapshots match the Python reference;
 - current public composable methods used by YIDL remain available;
-- native compile path has a counter proving no Python `Inventory` extraction.
+- native full-lower-engine capability is not advertised.
 
-### N6: Occurrence Store And Indexes
+### N5b: Native Template Binding And Scope Cache
 
-Goal: implement native assembly state for `AssemblyScope.add(...)`.
+Goal: make native template registration an explicit scope-owned cache rather
+than a temporary extraction handle.
+
+Work:
+
+- add a native template binding shape that carries the native snapshot/source
+  data needed to register into a scope-owned native engine;
+- add a native template cache parallel to `LowerTemplateCache`;
+- register template snapshots into the scope native engine and retain template
+  handles there;
+- keep Python `record_specs` only as the oracle/adapter path until candidate
+  query is native.
+
+Acceptance:
+
+- a native-selected composable can be registered into a native scope engine
+  without reparsing Python AST or rebuilding `Inventory`;
+- repeated adds of the same composable reuse the native template handle;
+- cross-engine template handles reject deterministically.
+
+### N6a: Native Occurrence Store And Index Primitives
+
+Status: landed as the first N6 checkpoint.
+
+Goal: implement the lower native data structure primitives needed by
+`AssemblyScope.add(...)`.
 
 Work:
 
@@ -747,122 +775,309 @@ Work:
 
 Acceptance:
 
-- add/scope structural snapshots match Python reference;
+- low-level native add/state snapshots match Python reference fixtures;
 - append cost is proportional to records in the added template;
-- debug inventory projection is not used by scope add.
+- record and occurrence handles reject stale/cross-engine use.
 
-### N7: Candidate Query
+### N6b: Native Scope Add Route
 
-Goal: make native candidate lookup satisfy the scope API.
+Goal: make `AssemblyScope.add(...)` append into native state through native
+handles while the Python path still runs as the parity oracle.
 
 Work:
 
-- implement candidate query over native indexes;
-- evaluate compatibility descriptors natively;
-- return candidate batches with stable keys and lazy diagnostics;
-- wrap candidate batches in Python facade adapters.
+- initialize a scope-owned native engine/state when native is explicitly
+  selected;
+- dual-write root and child occurrence appends to native and Python lower state
+  during the transition;
+- expose native structural snapshots for add-only scopes;
+- add counters proving the native append path does not use debug inventory
+  projection.
 
 Acceptance:
 
-- candidate goldens and scope lookup fixtures match Python;
-- candidate lookup uses no Python inventory projection;
-- missing/ambiguous diagnostics stay useful.
+- add-only structural goldens match through the native scope snapshot;
+- Python lower state can still be compared in tests, but native append does
+  not depend on Python `Inventory`;
+- `native.full_lower_engine.current_surfaces.v1` remains disabled.
 
-### N8: Apply, Edges, And Overlays
+### N7a: Native Candidate Query For Composable Inserts
 
-Goal: route composition and binding changes into native state.
+Goal: satisfy additive composable lookup from native indexes for the current
+hole/production families.
+
+Work:
+
+- implement native record lookup by name, build path, owner path, surface, and
+  inventory kind;
+- evaluate compatibility descriptors natively for expression, block,
+  parameter, call-argument, and elif surfaces;
+- return stable candidate payloads containing native target records and
+  compatible production records;
+- wrap native candidate batches in Python facade adapters without projecting a
+  Python `Inventory`.
+
+Acceptance:
+
+- composable candidate goldens and scope lookup fixtures match Python;
+- candidate lookup uses native indexes and compatibility rules only;
+- missing and ambiguous candidate diagnostics stay stable.
+
+### N7b: Native Candidate Query For External And Identifier Demands
+
+Goal: satisfy the non-composable scope API lookups from native indexes.
+
+Work:
+
+- implement native external demand lookup;
+- implement native identifier demand lookup;
+- apply overlay-resolved owner-name views when filtering by owner path;
+- return stable diagnostics for missing and ambiguous external/identifier
+  candidates.
+
+Acceptance:
+
+- external-value and identifier candidate fixtures match Python;
+- owner selector behavior matches after identifier overlays;
+- no Python inventory projection is required for lookup.
+
+### N8a: Native Composable Apply
+
+Goal: route composable insertion application into native edges and state bits.
 
 Work:
 
 - append insertion edges natively;
-- mark single-use demands satisfied;
-- allocate external slots and store external overlays;
-- store identifier overlays and resolved-name views;
-- preserve deterministic event order for snapshots.
+- mark single-use additive demands satisfied natively;
+- attach child occurrences under their parent occurrence handles;
+- preserve deterministic edge/order snapshots.
 
 Acceptance:
 
-- apply/bind overlay snapshots match Python reference;
-- YIDL-facing scope operations run against native handles;
-- external value lifetime is explicit and tested.
+- composable apply structural snapshots match Python reference;
+- staged build fixtures can apply composable candidates through native handles;
+- Python builder mutations remain an adapter fallback only.
 
-### N9: Native Materialization Plan
+### N8b: Native External Slots And External Overlays
 
-Goal: emit native materialization and hygiene streams.
+Goal: store external-value binding state in the native lower layer.
 
 Work:
 
-- build operation streams from native edges, overlays, and unsatisfied records;
-- implement hygiene stream decisions for keep-name, rename, import, and
-  unresolved-marker gates;
+- allocate explicit external slot handles;
+- keep Python external object references alive at the facade boundary;
+- store native external overlays and mark demands satisfied;
+- expose enough artifact metadata for later external/ref lowering.
+
+Acceptance:
+
+- external bind overlay snapshots match Python reference;
+- external object lifetime is explicit and tested;
+- external lookup/apply does not mutate Python builder state on the native path.
+
+### N8c: Native Identifier Overlays And Resolved Owner Views
+
+Goal: make identifier binding and owner-path resolution native-owned.
+
+Work:
+
+- store identifier overlays natively;
+- maintain resolved-name views for later owner selectors;
+- update code-owner lookups without rewriting template records;
+- keep overlay event order deterministic.
+
+Acceptance:
+
+- identifier overlay snapshots match Python reference;
+- later owner selectors observe resolved names;
+- identifier apply does not require Python inventory projection.
+
+### N9a: Native Materialization Operation Stream
+
+Goal: generate native materialization operations for applied insertion edges.
+
+Work:
+
+- build operation streams from native edges and target records;
 - validate operation ids against the registered bundle;
-- snapshot materialization plans.
+- include source occurrence, target record, order, and operation captures;
+- snapshot operation streams for expression, block, parameter, call-argument,
+  and elif targets.
+
+Acceptance:
+
+- operation-stream structural goldens match Python reference for insertion
+  edges;
+- no per-operation Python callback is needed;
+- unsupported operation ids fail before artifact construction.
+
+### N9b: Native Hygiene, Import, Overlay, And Unresolved Streams
+
+Goal: generate the remaining materialization and hygiene streams natively.
+
+Work:
+
+- emit external/ref lowering operations from native overlays;
+- emit identifier rewrite and keep-name hygiene decisions;
+- emit managed import placement/collision decisions;
+- emit unresolved-marker diagnostics from native state.
 
 Acceptance:
 
 - materialization-plan structural goldens match Python reference;
-- no per-operation Python callback is needed;
-- unresolved state fails before artifact construction.
+- unresolved native state fails before artifact construction;
+- hygiene/materialization planning no longer needs Python builder-state
+  mutation.
 
-### N10: Native IR Materializer
+### N10a: Native IR Clone And Locator Mutation Primitives
 
-Goal: apply materialization operations to a native IR copy.
+Goal: establish safe native mutation primitives before implementing each
+surface family.
 
 Work:
 
-- implement expression replacement;
-- implement body and defaulted-body splice;
-- implement parameter splice;
-- implement call-argument splice;
-- implement elif/clause append;
-- implement managed import placement;
-- implement identifier rewrite and collision policy;
-- implement external/ref lowering;
-- implement marker stripping and loop unroll.
+- clone native template IR into a materialization workspace;
+- resolve stored locators to mutable native IR nodes/lists;
+- implement splice/replace helper primitives with path diagnostics;
+- add round-trip tests for unchanged modules and locator failures.
 
 Acceptance:
 
-- final materialized goldens match Python for each enabled surface family;
-- native materialization does not construct CPython AST nodes until artifact
-  copy is requested;
+- mutation helpers never construct CPython AST nodes;
+- bad locators fail with useful diagnostics;
+- unchanged native IR can still be copied to artifacts later.
+
+### N10b: Native Expression And External/Ref Materializer
+
+Goal: materialize expression replacement and external/ref overlays.
+
+Work:
+
+- implement expression replacement for expression holes;
+- lower external slots into artifact placeholders or copied values according
+  to the existing facade policy;
+- lower `astichi_ref(...)` value and sentinel forms;
+- strip consumed expression markers.
+
+Acceptance:
+
+- expression/external/ref materialized goldens match Python reference;
+- executable subset tests pass once copied through the artifact boundary;
+- no Python AST mutation is used on the native path.
+
+### N10c: Native Block, Defaulted Block, And Boundary Hygiene Materializer
+
+Goal: materialize statement-body insertions and boundary-marker effects.
+
+Work:
+
+- implement body splice and defaulted-body fallback selection;
+- strip boundary and keep markers after applying operations;
+- apply keep-name and scoped rename hygiene for block insertions;
+- preserve statement ordering and source-location policy.
+
+Acceptance:
+
+- block/defaulted-block/boundary-hygiene goldens match Python reference;
+- unresolved block demands fail before artifact copy;
+- marker stripping is native-owned.
+
+### N10d: Native Parameter And Call-Argument Materializer
+
+Goal: materialize function parameter and call-argument payload surfaces.
+
+Work:
+
+- implement parameter splice including vararg/kwarg/default ordering checks;
+- implement call-argument payload lowering for plain, `*`, and `**` regions;
+- enforce duplicate keyword and positional/keyword compatibility diagnostics;
+- preserve payload-local import/export semantics.
+
+Acceptance:
+
+- parameter and call-argument goldens match Python reference;
+- payload diagnostics match the Python oracle;
+- no legacy `_=` carrier is accepted.
+
+### N10e: Native Elif, Pyimport, Identifier Rewrite, And Unroll Materializer
+
+Goal: close the remaining current materialization surfaces in native IR.
+
+Work:
+
+- implement elif/clause append materialization;
+- implement managed import placement after module docstring/future imports;
+- apply identifier rewrites from native overlays;
+- implement compile-time unroll using native IR;
+- run surface-family focused goldens before broad closure.
+
+Acceptance:
+
+- elif, pyimport, identifier, and unroll goldens match Python reference;
+- future dormant surfaces remain disabled;
 - every current operation primitive has native execution coverage.
 
-### N11: CPython AST Artifact Builder
+### N11a: CPython AST Artifact Builder Baseline
 
-Goal: produce executable public CPython AST nodes from materialized native IR.
+Goal: copy native IR to public CPython `ast`/`_ast` nodes for a narrow
+executable subset.
 
 Work:
 
-- build `_ast`/`ast` module nodes through public constructors or equivalent
-  PyO3 calls;
+- build module, statement, expression, argument, and context nodes through
+  public constructors or equivalent PyO3 calls;
 - populate required/default fields for supported Python versions;
-- populate or repair source locations according to the selected policy;
 - compile returned modules with public `compile(...)`;
-- measure artifact copy, source rendering, compile, and exec separately.
+- treat constructor warnings or missing-field warnings as failures.
 
 Acceptance:
 
-- executable AST tests pass with native artifacts;
+- marker-free and expression-subset executable AST tests pass;
+- artifact copy, source rendering, compile, and exec are timed separately;
+- no internal CPython compiler APIs are used.
+
+### N11b: CPython AST Artifact Builder Current Surface Coverage
+
+Goal: copy every current materialized native surface to executable public
+CPython AST nodes.
+
+Work:
+
+- cover class/function heads, decorators, imports, parameters, calls, elif,
+  unroll output, and managed hygiene rewrites;
+- repair or preserve source locations according to the selected policy;
+- render final goldens through the existing harness;
+- add version-specific coverage where CPython constructor requirements differ.
+
+Acceptance:
+
+- executable AST tests pass with native artifacts for current surfaces;
 - final goldens pass through the same renderer used by the current harness;
-- constructor warnings or missing-field warnings fail focused tests.
+- artifact construction remains an explicit boundary, not a materialization
+  dependency.
 
-### N12: Current Surface Closure
+### N12: Current Surface Closure And Native Capability Gate
 
-Goal: close parity for all currently supported Astichi/YIDL surfaces.
+Goal: close parity for all currently supported Astichi/YIDL surfaces and only
+then advertise the full native lower-engine capability.
 
 Work:
 
 - run the full Astichi suite with explicit native selection;
 - run YIDL integration/runtime tests using the native scope path;
 - close any unsupported current surface as a native implementation bug;
-- keep future surfaces dormant unless explicitly enabled.
+- remove Python lower-state dependency from the native success path;
+- keep future surfaces dormant unless explicitly enabled;
+- advertise `native.full_lower_engine.current_surfaces.v1` only after the
+  native success path is complete.
 
 Acceptance:
 
 - all current structural and final goldens pass under native;
 - YIDL uses the native lower engine through the scope API;
 - Python reference remains available for comparison but is not needed on the
-  native success path.
+  native success path;
+- explicit native selection fails if any required capability gate is missing.
 
 ### N13: Performance And Default Selection
 
