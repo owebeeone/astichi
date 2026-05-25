@@ -88,6 +88,22 @@ class TemplateRefMarkerSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateUnrollMarkerSpec:
+    """Typed source facts for one statement-context ``astichi_for`` marker."""
+
+    marker_id: int
+    statement_path: str
+    target_ast_path: str
+    iter_ast_path: str
+    domain_ast_path: str
+    body_path: str
+    orelse_path: str | None
+    target_bindings: tuple[str, ...] = ()
+    domain_shape: str = ""
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId

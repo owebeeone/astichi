@@ -183,6 +183,50 @@ Marker captures that affect behavior should be represented by typed columns or
 side tables, not by arbitrary maps. Debug projections may render captures as a
 dictionary.
 
+Initial typed marker side rows:
+
+```text
+PyImportMarkerRow:
+  pyimport_marker_id: u32
+  marker_id: MarkerId
+  module_path_id: PathId | none
+  name_ids: StringId[]
+  as_name_id: StringId | none
+  flags: PyImportMarkerFlags
+
+CommentMarkerRow:
+  comment_marker_id: u32
+  marker_id: MarkerId
+  payload_id: StringId
+  flags: CommentMarkerFlags
+
+RefMarkerRow:
+  ref_marker_id: u32
+  marker_id: MarkerId
+  ref_kind_id: StringId
+  context_id: StringId
+  sentinel_attr_id: StringId | none
+  literal_path_id: PathId | none
+  flags: RefMarkerFlags
+
+UnrollMarkerRow:
+  unroll_marker_id: u32
+  marker_id: MarkerId
+  statement_path_id: AstPathId
+  target_ast_path_id: AstPathId
+  iter_ast_path_id: AstPathId
+  domain_ast_path_id: AstPathId
+  body_path_id: AstPathId
+  orelse_path_id: AstPathId | none
+  target_binding_set_id: StringSetId
+  domain_shape_id: StringId
+  flags: UnrollMarkerFlags
+```
+
+Unroll rows deliberately carry structural loop-domain facts, not pre-resolved
+iteration values. Bind-fed domains can still be resolved later by the
+materializer after assembly state has supplied the value.
+
 ### Managed Imports
 
 Managed imports are normalized from pyimport markers because materialization

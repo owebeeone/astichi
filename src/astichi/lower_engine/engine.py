@@ -39,6 +39,7 @@ from astichi.lower_engine.templates import (
     TemplateRecord,
     TemplateRecordSpec,
     TemplateScopeSpec,
+    TemplateUnrollMarkerSpec,
 )
 
 _OWNER_IDS = count()
@@ -65,6 +66,7 @@ class LowerEngine:
         pyimport_markers: tuple[TemplatePyImportMarkerSpec, ...] = (),
         comment_markers: tuple[TemplateCommentMarkerSpec, ...] = (),
         ref_markers: tuple[TemplateRefMarkerSpec, ...] = (),
+        unroll_markers: tuple[TemplateUnrollMarkerSpec, ...] = (),
     ) -> TemplateId:
         """Register immutable template metadata and return its handle."""
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
@@ -173,6 +175,19 @@ class LowerEngine:
                 context=spec.context,
                 sentinel_attr=spec.sentinel_attr,
                 literal_path=spec.literal_path,
+                flags=spec.flags,
+            )
+        for spec in unroll_markers:
+            package.add_unroll_marker(
+                marker_id=spec.marker_id,
+                statement_path=spec.statement_path,
+                target_ast_path=spec.target_ast_path,
+                iter_ast_path=spec.iter_ast_path,
+                domain_ast_path=spec.domain_ast_path,
+                body_path=spec.body_path,
+                orelse_path=spec.orelse_path,
+                target_bindings=spec.target_bindings,
+                domain_shape=spec.domain_shape,
                 flags=spec.flags,
             )
         self._templates.append(

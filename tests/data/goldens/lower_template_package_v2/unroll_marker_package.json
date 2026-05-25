@@ -1,0 +1,234 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "unroll_marker_template",
+  "source_summary": "unroll marker source",
+  "string_table": [
+    "",
+    "unroll_marker_template",
+    "unroll marker source",
+    "module",
+    "n",
+    "other",
+    "value",
+    "x",
+    "y",
+    "z",
+    "unroll",
+    "astichi_for",
+    "keep",
+    "astichi_keep",
+    "slot",
+    "tuple",
+    "name",
+    "range"
+  ],
+  "path_table": [
+    []
+  ],
+  "ast_path_table": [
+    "",
+    "body[0]/iter",
+    "body[0]",
+    "body[0]/body[0]/value",
+    "body[0]/body[0]",
+    "body[0]/body[1]/iter",
+    "body[0]/body[1]",
+    "body[1]/iter",
+    "body[1]",
+    "body[0]/target",
+    "body[0]/iter/args[0]",
+    "body[0]/body",
+    "body[0]/body[1]/target",
+    "body[0]/body[1]/iter/args[0]",
+    "body[0]/body[1]/body",
+    "body[1]/target",
+    "body[1]/iter/args[0]",
+    "body[1]/body"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "n",
+        "other",
+        "value",
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    },
+    {
+      "binding_set_id": 2,
+      "names": [
+        "x"
+      ]
+    },
+    {
+      "binding_set_id": 3,
+      "names": [
+        "y",
+        "z"
+      ]
+    },
+    {
+      "binding_set_id": 4,
+      "names": [
+        "n"
+      ]
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "n",
+        "other",
+        "value",
+        "x",
+        "y",
+        "z"
+      ],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/iter",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 0,
+      "marker_kind": "unroll",
+      "operation_key": "astichi_for",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_for",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[0]/body[0]/value",
+      "flags": [
+        "call_context",
+        "is_metadata_marker"
+      ],
+      "marker_id": 1,
+      "marker_kind": "keep",
+      "operation_key": "astichi_keep",
+      "owner_path": [],
+      "resource_name": "slot",
+      "scope_id": 0,
+      "source_name": "astichi_keep",
+      "source_order": 1,
+      "statement_path": "body[0]/body[0]"
+    },
+    {
+      "ast_path": "body[0]/body[1]/iter",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 2,
+      "marker_kind": "unroll",
+      "operation_key": "astichi_for",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_for",
+      "source_order": 2,
+      "statement_path": "body[0]/body[1]"
+    },
+    {
+      "ast_path": "body[1]/iter",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 3,
+      "marker_kind": "unroll",
+      "operation_key": "astichi_for",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_for",
+      "source_order": 3,
+      "statement_path": "body[1]"
+    }
+  ],
+  "pyimport_markers": [],
+  "comment_markers": [],
+  "ref_markers": [],
+  "unroll_markers": [
+    {
+      "body_path": "body[0]/body",
+      "domain_ast_path": "body[0]/iter/args[0]",
+      "domain_shape": "tuple",
+      "flags": [
+        "statement_context",
+        "for_statement",
+        "simple_target",
+        "literal_domain"
+      ],
+      "iter_ast_path": "body[0]/iter",
+      "marker_id": 0,
+      "orelse_path": null,
+      "statement_path": "body[0]",
+      "target_ast_path": "body[0]/target",
+      "target_bindings": [
+        "x"
+      ],
+      "unroll_marker_id": 0
+    },
+    {
+      "body_path": "body[0]/body[1]/body",
+      "domain_ast_path": "body[0]/body[1]/iter/args[0]",
+      "domain_shape": "name",
+      "flags": [
+        "statement_context",
+        "for_statement",
+        "simple_target",
+        "external_domain_candidate"
+      ],
+      "iter_ast_path": "body[0]/body[1]/iter",
+      "marker_id": 2,
+      "orelse_path": null,
+      "statement_path": "body[0]/body[1]",
+      "target_ast_path": "body[0]/body[1]/target",
+      "target_bindings": [
+        "y",
+        "z"
+      ],
+      "unroll_marker_id": 1
+    },
+    {
+      "body_path": "body[1]/body",
+      "domain_ast_path": "body[1]/iter/args[0]",
+      "domain_shape": "range",
+      "flags": [
+        "statement_context",
+        "for_statement",
+        "simple_target",
+        "literal_domain"
+      ],
+      "iter_ast_path": "body[1]/iter",
+      "marker_id": 3,
+      "orelse_path": null,
+      "statement_path": "body[1]",
+      "target_ast_path": "body[1]/target",
+      "target_bindings": [
+        "n"
+      ],
+      "unroll_marker_id": 2
+    }
+  ]
+}

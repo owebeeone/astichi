@@ -27,6 +27,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "pyimport_markers",
     "comment_markers",
     "ref_markers",
+    "unroll_markers",
 )
 
 _LIST_SECTIONS = frozenset(
@@ -42,6 +43,7 @@ _LIST_SECTIONS = frozenset(
         "pyimport_markers",
         "comment_markers",
         "ref_markers",
+        "unroll_markers",
     }
 )
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -154,6 +156,21 @@ class RefMarkerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class UnrollMarkerRow:
+    unroll_marker_id: int
+    marker_id: int
+    statement_path_id: int
+    target_ast_path_id: int
+    iter_ast_path_id: int
+    domain_ast_path_id: int
+    body_path_id: int
+    orelse_path_id: int | None
+    target_binding_set_id: int
+    domain_shape_id: int
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PackageBindingIndex:
     bindings_by_scope_id: dict[int, frozenset[str]]
     arguments_by_scope_id: dict[int, frozenset[str]]
@@ -193,6 +210,7 @@ class LowerTemplatePackageV2:
         self.pyimport_markers: list[PyImportMarkerRow] = []
         self.comment_markers: list[CommentMarkerRow] = []
         self.ref_markers: list[RefMarkerRow] = []
+        self.unroll_markers: list[UnrollMarkerRow] = []
         self._binding_index: PackageBindingIndex | None = None
         self._marker_ids_by_kind: dict[str, tuple[int, ...]] | None = None
         self._marker_ids_by_scope_id: dict[int, tuple[int, ...]] | None = None
@@ -455,6 +473,41 @@ class LowerTemplatePackageV2:
         )
         return ref_marker_id
 
+    def add_unroll_marker(
+        self,
+        *,
+        marker_id: int,
+        statement_path: str,
+        target_ast_path: str,
+        iter_ast_path: str,
+        domain_ast_path: str,
+        body_path: str,
+        orelse_path: str | None,
+        target_bindings: tuple[str, ...] = (),
+        domain_shape: str = "",
+        flags: tuple[str, ...] = (),
+    ) -> int:
+        """Append typed source facts for an ``astichi_for`` marker."""
+        unroll_marker_id = len(self.unroll_markers)
+        self.unroll_markers.append(
+            UnrollMarkerRow(
+                unroll_marker_id=unroll_marker_id,
+                marker_id=marker_id,
+                statement_path_id=self.intern_ast_path(statement_path),
+                target_ast_path_id=self.intern_ast_path(target_ast_path),
+                iter_ast_path_id=self.intern_ast_path(iter_ast_path),
+                domain_ast_path_id=self.intern_ast_path(domain_ast_path),
+                body_path_id=self.intern_ast_path(body_path),
+                orelse_path_id=(
+                    None if orelse_path is None else self.intern_ast_path(orelse_path)
+                ),
+                target_binding_set_id=self.intern_binding_set(target_bindings),
+                domain_shape_id=self.intern_string(domain_shape),
+                flags=tuple(flags),
+            )
+        )
+        return unroll_marker_id
+
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
         """Return record rows owned by one package-local owner path."""
         path_id = self._path_index.get(owner_path)
@@ -608,6 +661,10 @@ class LowerTemplatePackageV2:
             "ref_markers": [
                 self._ref_marker_snapshot(row)
                 for row in self.ref_markers
+            ],
+            "unroll_markers": [
+                self._unroll_marker_snapshot(row)
+                for row in self.unroll_markers
             ],
         }
 
@@ -780,6 +837,28 @@ class LowerTemplatePackageV2:
             "ref_kind": self._string(row.ref_kind_id),
             "ref_marker_id": row.ref_marker_id,
             "sentinel_attr": self._optional_string(row.sentinel_attr_id),
+        }
+
+    def _unroll_marker_snapshot(
+        self,
+        row: UnrollMarkerRow,
+    ) -> dict[str, object]:
+        return {
+            "body_path": self._ast_path_text(row.body_path_id),
+            "domain_ast_path": self._ast_path_text(row.domain_ast_path_id),
+            "domain_shape": self._string(row.domain_shape_id),
+            "flags": list(row.flags),
+            "iter_ast_path": self._ast_path_text(row.iter_ast_path_id),
+            "marker_id": row.marker_id,
+            "orelse_path": (
+                None
+                if row.orelse_path_id is None
+                else self._ast_path_text(row.orelse_path_id)
+            ),
+            "statement_path": self._ast_path_text(row.statement_path_id),
+            "target_ast_path": self._ast_path_text(row.target_ast_path_id),
+            "target_bindings": self._binding_set_names(row.target_binding_set_id),
+            "unroll_marker_id": row.unroll_marker_id,
         }
 
     def _binding_set_names(self, binding_set_id: int) -> list[str]:

@@ -20,6 +20,7 @@ from astichi.lower_engine.templates import (
     TemplatePyImportMarkerSpec,
     TemplateRefMarkerSpec,
     TemplateScopeSpec,
+    TemplateUnrollMarkerSpec,
 )
 
 
@@ -242,6 +243,45 @@ def extract_ref_marker_specs(
     return tuple(specs)
 
 
+def extract_unroll_marker_specs(
+    tree: ast.Module,
+) -> tuple[TemplateUnrollMarkerSpec, ...]:
+    """Extract typed source facts for statement-context ``astichi_for`` markers."""
+    ast_paths, _statement_paths = _build_ast_path_maps(tree)
+    parent_map = _build_parent_map(tree)
+    specs: list[TemplateUnrollMarkerSpec] = []
+    for marker_id, marker in enumerate(recognize_markers(tree)):
+        if marker.source_name != "astichi_for" or not isinstance(marker.node, ast.Call):
+            continue
+        node = _parent_for_iter(parent_map, marker.node)
+        if node is None:
+            continue
+        statement_path = ast_paths.get(id(node), "")
+        domain = node.iter.args[0] if len(node.iter.args) == 1 else None
+        flags = _unroll_marker_flags(node, domain)
+        specs.append(
+            TemplateUnrollMarkerSpec(
+                marker_id=marker_id,
+                statement_path=statement_path,
+                target_ast_path=ast_paths.get(id(node.target), ""),
+                iter_ast_path=ast_paths.get(id(node.iter), ""),
+                domain_ast_path=(
+                    "" if domain is None else ast_paths.get(id(domain), "")
+                ),
+                body_path=_join_ast_path(statement_path, "body"),
+                orelse_path=(
+                    None
+                    if not node.orelse
+                    else _join_ast_path(statement_path, "orelse")
+                ),
+                target_bindings=tuple(sorted(_target_binding_names(node.target))),
+                domain_shape="" if domain is None else _domain_shape(domain),
+                flags=flags,
+            )
+        )
+    return tuple(specs)
+
+
 def _iter_ast_children(
     *,
     field_name: str,
@@ -301,6 +341,84 @@ def _statement_ref_call(node: ast.AST) -> ast.Call | None:
         if sentinel is not None:
             return sentinel.call
     return None
+
+
+def _build_parent_map(tree: ast.AST) -> dict[int, ast.AST]:
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _parent_for_iter(
+    parent_map: dict[int, ast.AST],
+    node: ast.Call,
+) -> ast.For | None:
+    parent = parent_map.get(id(node))
+    if isinstance(parent, ast.For) and parent.iter is node:
+        return parent
+    return None
+
+
+def _unroll_marker_flags(
+    node: ast.For,
+    domain: ast.expr | None,
+) -> tuple[str, ...]:
+    flags = ["statement_context", "for_statement"]
+    if node.orelse:
+        flags.append("has_else")
+    if domain is None or node.iter.keywords:
+        flags.append("invalid_signature")
+    if _target_binding_names(node.target):
+        flags.append("simple_target")
+    else:
+        flags.append("unsupported_target")
+    if isinstance(domain, (ast.Tuple, ast.List)) or _is_range_domain(domain):
+        flags.append("literal_domain")
+    elif isinstance(domain, ast.Name):
+        flags.append("external_domain_candidate")
+    return tuple(flags)
+
+
+def _target_binding_names(target: ast.expr) -> frozenset[str]:
+    names: set[str] = set()
+
+    def collect(node: ast.expr) -> None:
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+            return
+        if isinstance(node, (ast.Tuple, ast.List)):
+            for child in node.elts:
+                collect(child)
+            return
+        if isinstance(node, ast.Starred):
+            collect(node.value)
+
+    collect(target)
+    return frozenset(names)
+
+
+def _domain_shape(domain: ast.expr) -> str:
+    if isinstance(domain, ast.Tuple):
+        return "tuple"
+    if isinstance(domain, ast.List):
+        return "list"
+    if _is_range_domain(domain):
+        return "range"
+    if isinstance(domain, ast.Name):
+        return "name"
+    if isinstance(domain, ast.Call):
+        return "call"
+    return type(domain).__name__
+
+
+def _is_range_domain(domain: ast.expr | None) -> bool:
+    return (
+        isinstance(domain, ast.Call)
+        and isinstance(domain.func, ast.Name)
+        and domain.func.id == "range"
+    )
 
 
 def _is_ref_marker_call(node: ast.AST) -> bool:

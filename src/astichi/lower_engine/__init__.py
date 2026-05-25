@@ -53,6 +53,7 @@ from astichi.lower_engine.package_extract import (
     extract_pyimport_marker_specs,
     extract_ref_marker_specs,
     extract_scope_specs,
+    extract_unroll_marker_specs,
 )
 from astichi.lower_engine.package_v2 import (
     LowerTemplatePackageV2,
@@ -83,6 +84,7 @@ from astichi.lower_engine.templates import (
     TemplateRefMarkerSpec,
     TemplateRecordSpec,
     TemplateScopeSpec,
+    TemplateUnrollMarkerSpec,
 )
 
 __all__ = [
@@ -128,6 +130,7 @@ __all__ = [
     "TemplateRecordId",
     "TemplateRecordSpec",
     "TemplateScopeSpec",
+    "TemplateUnrollMarkerSpec",
     "build_materialization_plan",
     "copy_composable_executable_ast",
     "copy_composable_template_ast",
@@ -141,6 +144,7 @@ __all__ = [
     "extract_pyimport_marker_specs",
     "extract_ref_marker_specs",
     "extract_scope_specs",
+    "extract_unroll_marker_specs",
     "load_native_extension",
     "native_capabilities",
     "native_self_test",

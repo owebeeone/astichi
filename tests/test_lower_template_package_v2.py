@@ -23,6 +23,7 @@ from astichi.lower_engine import (
     extract_pyimport_marker_specs,
     extract_ref_marker_specs,
     extract_scope_specs,
+    extract_unroll_marker_specs,
     round_trip_package_snapshot_text,
     write_package_snapshot,
 )
@@ -394,6 +395,44 @@ del astichi_ref("self.deleted").astichi_v
 def test_ref_marker_extraction_rejects_bare_statement_context() -> None:
     with pytest.raises(ValueError, match="unsupported astichi_ref statement"):
         extract_ref_marker_specs(ast.parse('astichi_ref("pkg.mod")\n'))
+
+
+def test_unroll_marker_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+for x in astichi_for((1, 2)):
+    astichi_keep(slot)
+    for y, z in astichi_for(DOMAIN):
+        value = x + y + z
+for n in astichi_for(range(2)):
+    other = n
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="unroll_marker_template",
+        source_summary="unroll marker source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+        unroll_markers=extract_unroll_marker_specs(tree),
+    )
+    package = engine.template_package(template_id)
+
+    assert package.marker_ids_by_kind("unroll") == (0, 2, 3)
+    assert [row.marker_id for row in package.unroll_markers] == [0, 2, 3]
+    assert package.snapshot()["unroll_markers"][0]["domain_shape"] == "tuple"
+    assert package.snapshot()["unroll_markers"][1]["domain_shape"] == "name"
+    assert package.snapshot()["unroll_markers"][2]["domain_shape"] == "range"
+    assert package.snapshot()["unroll_markers"][1]["target_bindings"] == [
+        "y",
+        "z",
+    ]
+    _assert_package_snapshot_matches_golden(
+        package,
+        "unroll_marker_package.json",
+    )
 
 
 def test_package_intern_ids_are_package_local() -> None:
