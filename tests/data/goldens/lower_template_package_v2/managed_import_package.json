@@ -1,23 +1,20 @@
 {
   "schema": "astichi.lower-template-package.v2",
   "surface_bundle_signature": "",
-  "template_key": "keep_pyimport_template",
-  "source_summary": "keep pyimport source",
+  "template_key": "managed_import_template",
+  "source_summary": "managed import source",
   "string_table": [
     "",
-    "keep_pyimport_template",
-    "keep pyimport source",
+    "managed_import_template",
+    "managed import source",
     "module",
-    "keep",
-    "astichi_keep",
-    "module_name",
+    "a",
     "pyimport",
     "astichi_pyimport",
     "foo",
-    "a",
     "b",
-    "numpy",
-    "np",
+    "bar",
+    "foobar",
     "os"
   ],
   "path_table": [
@@ -26,7 +23,8 @@
       "foo"
     ],
     [
-      "numpy"
+      "foo",
+      "bar"
     ],
     [
       "os"
@@ -46,6 +44,12 @@
   "binding_sets": [
     {
       "binding_set_id": 0,
+      "names": [
+        "a"
+      ]
+    },
+    {
+      "binding_set_id": 1,
       "names": []
     }
   ],
@@ -55,7 +59,9 @@
     {
       "arguments": [],
       "ast_path": "",
-      "local_bindings": [],
+      "local_bindings": [
+        "a"
+      ],
       "owner_path": [],
       "parent_scope_id": null,
       "scope_id": 0,
@@ -66,16 +72,15 @@
     {
       "ast_path": "body[0]/value",
       "flags": [
-        "call_context",
-        "is_metadata_marker"
+        "call_context"
       ],
       "marker_id": 0,
-      "marker_kind": "keep",
-      "operation_key": "astichi_keep",
+      "marker_kind": "pyimport",
+      "operation_key": "astichi_pyimport",
       "owner_path": [],
-      "resource_name": "module_name",
+      "resource_name": "",
       "scope_id": 0,
-      "source_name": "astichi_keep",
+      "source_name": "astichi_pyimport",
       "source_order": 0,
       "statement_path": "body[0]"
     },
@@ -131,7 +136,7 @@
       "flags": [
         "from_import"
       ],
-      "marker_id": 1,
+      "marker_id": 0,
       "module_path": [
         "foo"
       ],
@@ -142,16 +147,31 @@
       "pyimport_marker_id": 0
     },
     {
-      "as_name": "np",
+      "as_name": "",
+      "flags": [
+        "from_import"
+      ],
+      "marker_id": 1,
+      "module_path": [
+        "foo"
+      ],
+      "names": [
+        "a"
+      ],
+      "pyimport_marker_id": 1
+    },
+    {
+      "as_name": "foobar",
       "flags": [
         "plain_import"
       ],
       "marker_id": 2,
       "module_path": [
-        "numpy"
+        "foo",
+        "bar"
       ],
       "names": [],
-      "pyimport_marker_id": 1
+      "pyimport_marker_id": 2
     },
     {
       "as_name": "",
@@ -163,7 +183,7 @@
         "os"
       ],
       "names": [],
-      "pyimport_marker_id": 2
+      "pyimport_marker_id": 3
     }
   ],
   "managed_imports": [
@@ -173,6 +193,34 @@
         "from_import"
       ],
       "managed_import_id": 0,
+      "marker_id": 0,
+      "module_path": [
+        "foo"
+      ],
+      "original_symbol": "a",
+      "scope_id": 0,
+      "source_order": 0
+    },
+    {
+      "final_local_name": "b",
+      "flags": [
+        "from_import"
+      ],
+      "managed_import_id": 1,
+      "marker_id": 0,
+      "module_path": [
+        "foo"
+      ],
+      "original_symbol": "b",
+      "scope_id": 0,
+      "source_order": 0
+    },
+    {
+      "final_local_name": "a",
+      "flags": [
+        "from_import"
+      ],
+      "managed_import_id": 2,
       "marker_id": 1,
       "module_path": [
         "foo"
@@ -182,28 +230,15 @@
       "source_order": 1
     },
     {
-      "final_local_name": "b",
-      "flags": [
-        "from_import"
-      ],
-      "managed_import_id": 1,
-      "marker_id": 1,
-      "module_path": [
-        "foo"
-      ],
-      "original_symbol": "b",
-      "scope_id": 0,
-      "source_order": 1
-    },
-    {
-      "final_local_name": "np",
+      "final_local_name": "foobar",
       "flags": [
         "plain_import"
       ],
-      "managed_import_id": 2,
+      "managed_import_id": 3,
       "marker_id": 2,
       "module_path": [
-        "numpy"
+        "foo",
+        "bar"
       ],
       "original_symbol": null,
       "scope_id": 0,
@@ -214,7 +249,7 @@
       "flags": [
         "plain_import"
       ],
-      "managed_import_id": 3,
+      "managed_import_id": 4,
       "marker_id": 3,
       "module_path": [
         "os"

@@ -238,7 +238,7 @@ ManagedImportRow:
   marker_id: MarkerId
   source_order: u32
   scope_id: ScopeId
-  module_path_id: PathId
+  module_path_id: PathId | none
   final_local_name_id: StringId
   original_symbol_id: StringId | none
   flags: ManagedImportFlags

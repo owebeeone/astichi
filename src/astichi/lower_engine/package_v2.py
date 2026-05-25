@@ -25,6 +25,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "scopes",
     "markers",
     "pyimport_markers",
+    "managed_imports",
     "comment_markers",
     "ref_markers",
     "unroll_markers",
@@ -41,6 +42,7 @@ _LIST_SECTIONS = frozenset(
         "scopes",
         "markers",
         "pyimport_markers",
+        "managed_imports",
         "comment_markers",
         "ref_markers",
         "unroll_markers",
@@ -137,6 +139,18 @@ class PyImportMarkerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedImportRow:
+    managed_import_id: int
+    marker_id: int
+    source_order: int
+    scope_id: int
+    module_path_id: int | None
+    final_local_name_id: int
+    original_symbol_id: int | None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class CommentMarkerRow:
     comment_marker_id: int
     marker_id: int
@@ -208,6 +222,7 @@ class LowerTemplatePackageV2:
         self.scopes: list[ScopeRow] = []
         self.markers: list[MarkerRow] = []
         self.pyimport_markers: list[PyImportMarkerRow] = []
+        self.managed_imports: list[ManagedImportRow] = []
         self.comment_markers: list[CommentMarkerRow] = []
         self.ref_markers: list[RefMarkerRow] = []
         self.unroll_markers: list[UnrollMarkerRow] = []
@@ -423,7 +438,82 @@ class LowerTemplatePackageV2:
                 flags=tuple(flags),
             )
         )
+        self._add_managed_imports_for_pyimport(
+            marker_id=marker_id,
+            module_path=module_path,
+            names=names,
+            as_name=as_name,
+            flags=flags,
+        )
         return pyimport_marker_id
+
+    def _add_managed_imports_for_pyimport(
+        self,
+        *,
+        marker_id: int,
+        module_path: tuple[str, ...] | None,
+        names: tuple[str, ...],
+        as_name: str,
+        flags: tuple[str, ...],
+    ) -> None:
+        marker = self.markers[marker_id]
+        if names:
+            for name in names:
+                self._add_managed_import(
+                    marker=marker,
+                    module_path=module_path,
+                    final_local_name=name,
+                    original_symbol=name,
+                    flags=flags,
+                )
+            return
+        if as_name != "":
+            self._add_managed_import(
+                marker=marker,
+                module_path=module_path,
+                final_local_name=as_name,
+                original_symbol=None,
+                flags=flags,
+            )
+            return
+        if module_path is not None and len(module_path) == 1:
+            self._add_managed_import(
+                marker=marker,
+                module_path=module_path,
+                final_local_name=module_path[0],
+                original_symbol=None,
+                flags=flags,
+            )
+
+    def _add_managed_import(
+        self,
+        *,
+        marker: MarkerRow,
+        module_path: tuple[str, ...] | None,
+        final_local_name: str,
+        original_symbol: str | None,
+        flags: tuple[str, ...],
+    ) -> int:
+        managed_import_id = len(self.managed_imports)
+        self.managed_imports.append(
+            ManagedImportRow(
+                managed_import_id=managed_import_id,
+                marker_id=marker.marker_id,
+                source_order=marker.source_order,
+                scope_id=marker.scope_id,
+                module_path_id=(
+                    None if module_path is None else self.intern_path(module_path)
+                ),
+                final_local_name_id=self.intern_string(final_local_name),
+                original_symbol_id=(
+                    None
+                    if original_symbol is None
+                    else self.intern_string(original_symbol)
+                ),
+                flags=tuple(flags),
+            )
+        )
+        return managed_import_id
 
     def add_comment_marker(
         self,
@@ -654,6 +744,10 @@ class LowerTemplatePackageV2:
                 self._pyimport_marker_snapshot(row)
                 for row in self.pyimport_markers
             ],
+            "managed_imports": [
+                self._managed_import_snapshot(row)
+                for row in self.managed_imports
+            ],
             "comment_markers": [
                 self._comment_marker_snapshot(row)
                 for row in self.comment_markers
@@ -819,6 +913,29 @@ class LowerTemplatePackageV2:
             "flags": list(row.flags),
             "marker_id": row.marker_id,
             "payload": self._string(row.payload_id),
+        }
+
+    def _managed_import_snapshot(
+        self,
+        row: ManagedImportRow,
+    ) -> dict[str, object]:
+        return {
+            "final_local_name": self._string(row.final_local_name_id),
+            "flags": list(row.flags),
+            "managed_import_id": row.managed_import_id,
+            "marker_id": row.marker_id,
+            "module_path": (
+                None
+                if row.module_path_id is None
+                else list(self._path(row.module_path_id))
+            ),
+            "original_symbol": (
+                None
+                if row.original_symbol_id is None
+                else self._string(row.original_symbol_id)
+            ),
+            "scope_id": row.scope_id,
+            "source_order": row.source_order,
         }
 
     def _ref_marker_snapshot(

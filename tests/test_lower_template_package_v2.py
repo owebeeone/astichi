@@ -27,6 +27,7 @@ from astichi.lower_engine import (
     round_trip_package_snapshot_text,
     write_package_snapshot,
 )
+from astichi.materialize.pyimport import collect_managed_imports
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
 
@@ -319,6 +320,60 @@ astichi_pyimport(module=os)
     _assert_package_snapshot_matches_golden(
         package,
         "keep_pyimport_package.json",
+    )
+
+
+def test_managed_import_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+astichi_pyimport(module=foo, names=(a, b))
+astichi_pyimport(module=foo, names=(a,))
+astichi_pyimport(module=foo.bar, as_=foobar)
+astichi_pyimport(module=os)
+a = 1
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="managed_import_template",
+        source_summary="managed import source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+        pyimport_markers=extract_pyimport_marker_specs(tree),
+    )
+    package = engine.template_package(template_id)
+
+    current_records = collect_managed_imports(recognize_markers(tree))
+    current_tuples = [
+        (
+            list(record.module_path),
+            record.final_local_name,
+            record.original_symbol,
+        )
+        for record in current_records
+    ]
+    package_tuples = [
+        (
+            row["module_path"],
+            row["final_local_name"],
+            row["original_symbol"],
+        )
+        for row in package.snapshot()["managed_imports"]
+    ]
+    assert package_tuples == current_tuples
+    assert [row["final_local_name"] for row in package.snapshot()["managed_imports"]] == [
+        "a",
+        "b",
+        "a",
+        "foobar",
+        "os",
+    ]
+    assert "a" in package.pyimport_existing_binding_names()
+    _assert_package_snapshot_matches_golden(
+        package,
+        "managed_import_package.json",
     )
 
 
