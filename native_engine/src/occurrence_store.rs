@@ -10,6 +10,7 @@ const HANDLE_KIND_TEMPLATE: &str = "template";
 const HANDLE_KIND_ASSEMBLY_STATE: &str = "assembly-state";
 const HANDLE_KIND_OCCURRENCE: &str = "occurrence";
 const HANDLE_KIND_RECORD: &str = "record";
+const HANDLE_KIND_EDGE: &str = "edge";
 
 #[derive(Clone)]
 pub struct NativeTemplate {
@@ -56,6 +57,7 @@ pub struct NativeTemplateRecord {
 #[derive(Clone)]
 pub struct NativeAssemblyState {
     occurrences: Vec<NativeOccurrence>,
+    edges: Vec<NativeEdge>,
     indexes: NativeIndexes,
     satisfied_records: BTreeSet<RecordKey>,
     dead_records: BTreeSet<RecordKey>,
@@ -65,6 +67,7 @@ impl NativeAssemblyState {
     pub fn new() -> Self {
         Self {
             occurrences: Vec::new(),
+            edges: Vec::new(),
             indexes: NativeIndexes::default(),
             satisfied_records: BTreeSet::new(),
             dead_records: BTreeSet::new(),
@@ -103,6 +106,23 @@ impl NativeAssemblyState {
         }
         occurrence_index
     }
+
+    fn append_edge(
+        &mut self,
+        target_record: RecordKey,
+        source_occurrence_index: usize,
+        operation_key: String,
+        order: usize,
+    ) -> usize {
+        let edge_index = self.edges.len();
+        self.edges.push(NativeEdge {
+            target_record,
+            source_occurrence_index,
+            operation_key,
+            order,
+        });
+        edge_index
+    }
 }
 
 #[derive(Clone)]
@@ -111,6 +131,14 @@ struct NativeOccurrence {
     build_path: Vec<String>,
     parent_occurrence_index: Option<usize>,
     live: bool,
+}
+
+#[derive(Clone)]
+struct NativeEdge {
+    target_record: RecordKey,
+    source_occurrence_index: usize,
+    operation_key: String,
+    order: usize,
 }
 
 #[derive(Clone, Default)]
@@ -248,6 +276,25 @@ impl NativeRecordHandle {
     }
 }
 
+#[pyclass(module = "_astichi_native_engine", skip_from_py_object)]
+pub struct NativeEdgeHandle {
+    owner_id: u64,
+    state_index: usize,
+    index: usize,
+    generation: u64,
+}
+
+impl NativeEdgeHandle {
+    fn new(owner_id: u64, state_index: usize, index: usize) -> Self {
+        Self {
+            owner_id,
+            state_index,
+            index,
+            generation: 0,
+        }
+    }
+}
+
 #[pyfunction(name = "register_template_snapshot")]
 fn register_template_snapshot(
     mut engine: PyRefMut<'_, EngineHandle>,
@@ -354,6 +401,67 @@ fn assembly_state_record_handle(
         occurrence.index,
         template_record_index,
     ))
+}
+
+#[pyfunction(name = "assembly_state_append_edge")]
+fn assembly_state_append_edge(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    target: PyRef<'_, NativeRecordHandle>,
+    source: PyRef<'_, NativeOccurrenceHandle>,
+    operation_key: String,
+    order: usize,
+) -> PyResult<NativeEdgeHandle> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    ensure_owner(engine.owner_id(), target.owner_id)?;
+    ensure_owner(engine.owner_id(), source.owner_id)?;
+    if target.state_index != state.index || source.state_index != state.index {
+        return Err(crate::errors::schema_error(
+            "edge handles must belong to the target assembly state",
+        ));
+    }
+    let target_key = RecordKey {
+        occurrence_index: target.occurrence_index,
+        template_record_index: target.template_record_index,
+    };
+    {
+        let state_ref = engine.state(state.index)?;
+        validate_record_key(&engine, state_ref, target_key)?;
+        state_ref.occurrence(source.index)?;
+    }
+    let owner_id = engine.owner_id();
+    let state_index = state.index;
+    let state_ref = engine.state_mut(state.index)?;
+    let edge_index = state_ref.append_edge(target_key, source.index, operation_key, order);
+    Ok(NativeEdgeHandle::new(owner_id, state_index, edge_index))
+}
+
+#[pyfunction(name = "assembly_state_mark_satisfied")]
+fn assembly_state_mark_satisfied(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    record: PyRef<'_, NativeRecordHandle>,
+) -> PyResult<()> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    ensure_owner(engine.owner_id(), record.owner_id)?;
+    if record.state_index != state.index {
+        return Err(crate::errors::schema_error(
+            "record belongs to another native assembly state",
+        ));
+    }
+    let record_key = RecordKey {
+        occurrence_index: record.occurrence_index,
+        template_record_index: record.template_record_index,
+    };
+    {
+        let state_ref = engine.state(state.index)?;
+        validate_record_key(&engine, state_ref, record_key)?;
+    }
+    let state_ref = engine.state_mut(state.index)?;
+    state_ref.satisfied_records.insert(record_key);
+    Ok(())
 }
 
 #[pyfunction(name = "assembly_state_snapshot")]
@@ -581,10 +689,13 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeAssemblyStateHandle>()?;
     m.add_class::<NativeOccurrenceHandle>()?;
     m.add_class::<NativeRecordHandle>()?;
+    m.add_class::<NativeEdgeHandle>()?;
     m.add_function(wrap_pyfunction!(register_template_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_create, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_append_occurrence, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_record_handle, m)?)?;
+    m.add_function(wrap_pyfunction!(assembly_state_append_edge, m)?)?;
+    m.add_function(wrap_pyfunction!(assembly_state_mark_satisfied, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_index_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(
@@ -684,7 +795,7 @@ fn structural_snapshot(
     snapshot.set_item("locators", locator_list(py, engine.templates())?)?;
     snapshot.set_item("occurrences", occurrence_list(py, state)?)?;
     snapshot.set_item("records", record_list(py, engine.templates(), state)?)?;
-    snapshot.set_item("edges", PyList::empty(py))?;
+    snapshot.set_item("edges", edge_list(py, state)?)?;
     snapshot.set_item("overlays", PyList::empty(py))?;
     snapshot.set_item("materialization", materialization(py)?)?;
     snapshot.set_item("diagnostics", PyList::empty(py))?;
@@ -779,6 +890,26 @@ fn record_list(
             item.set_item("template_record_id", template_record_index)?;
             list.append(item)?;
         }
+    }
+    Ok(list.into_any().unbind())
+}
+
+fn edge_list(py: Python<'_>, state: &NativeAssemblyState) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
+    for (index, edge) in state.edges.iter().enumerate() {
+        let item = PyDict::new(py);
+        item.set_item("edge_id", index)?;
+        item.set_item("operation_key", &edge.operation_key)?;
+        item.set_item("order", edge.order)?;
+        item.set_item("source_occurrence_id", edge.source_occurrence_index)?;
+        item.set_item(
+            "target_record_id",
+            vec![
+                edge.target_record.occurrence_index,
+                edge.target_record.template_record_index,
+            ],
+        )?;
+        list.append(item)?;
     }
     Ok(list.into_any().unbind())
 }
@@ -892,6 +1023,21 @@ fn record_is_visible(state: &NativeAssemblyState, record_key: RecordKey) -> PyRe
     Ok(occurrence.live
         && !state.dead_records.contains(&record_key)
         && !state.satisfied_records.contains(&record_key))
+}
+
+fn validate_record_key(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    record_key: RecordKey,
+) -> PyResult<()> {
+    let occurrence = state.occurrence(record_key.occurrence_index)?;
+    let template = engine.template(occurrence.template_index)?;
+    if record_key.template_record_index >= template.records().len() {
+        return Err(crate::errors::stale_handle_error(
+            "unknown native template record",
+        ));
+    }
+    Ok(())
 }
 
 fn resolved_name(name: &str, bindings: Option<&BTreeMap<String, String>>) -> String {
@@ -1213,6 +1359,34 @@ impl NativeRecordHandle {
         snapshot.set_item("state_index", self.state_index)?;
         snapshot.set_item("occurrence_index", self.occurrence_index)?;
         snapshot.set_item("template_record_index", self.template_record_index)?;
+        snapshot.set_item("generation", self.generation)?;
+        Ok(snapshot.into_any().unbind())
+    }
+}
+
+#[pymethods]
+impl NativeEdgeHandle {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        HANDLE_KIND_EDGE
+    }
+
+    #[getter]
+    fn index(&self) -> usize {
+        self.index
+    }
+
+    #[getter]
+    fn state_index(&self) -> usize {
+        self.state_index
+    }
+
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let snapshot = PyDict::new(py);
+        snapshot.set_item("owner_id", self.owner_id)?;
+        snapshot.set_item("kind", HANDLE_KIND_EDGE)?;
+        snapshot.set_item("state_index", self.state_index)?;
+        snapshot.set_item("index", self.index)?;
         snapshot.set_item("generation", self.generation)?;
         Ok(snapshot.into_any().unbind())
     }

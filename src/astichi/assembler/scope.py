@@ -490,17 +490,25 @@ class AssemblyScope:
         target_lower_record = self._lower_record_by_inventory_id.get(
             candidate.target_record.record_id
         )
+        source_build_prefix = build_path + (resource.instance_name,)
         source_occurrence = self._append_lower_occurrence(
-            build_path + (resource.instance_name,),
+            source_build_prefix,
             resource.composable,
             parent_occurrence_id=self._lower_occurrence_by_build_prefix.get(build_path),
         )
         if target_lower_record is not None:
+            operation_key = _operation_key_for_target(candidate.target_record)
             self._lower_engine.append_edge(
                 self._lower_state,
                 target_record_id=target_lower_record,
                 source_occurrence_id=source_occurrence,
-                operation_key=_operation_key_for_target(candidate.target_record),
+                operation_key=operation_key,
+                order=resource.order,
+            )
+            self._append_native_composable_edge(
+                target_lower_record,
+                source_build_prefix=source_build_prefix,
+                operation_key=operation_key,
                 order=resource.order,
             )
 
@@ -785,6 +793,84 @@ class AssemblyScope:
         record_id = self._lower_record_by_inventory_id.get(inventory_record_id)
         if record_id is not None:
             self._lower_engine.mark_satisfied(self._lower_state, record_id)
+            self._mark_native_record_satisfied(record_id)
+
+    def _native_record_handle_for(self, record_id: RecordId) -> object | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return None
+        occurrence = self._lower_state.occurrences[record_id.occurrence_id.index]
+        native_occurrence = self._native_occurrence_by_build_prefix.get(
+            occurrence.build_path
+        )
+        if native_occurrence is None:
+            raise RuntimeError(
+                "native occurrence is missing for build path "
+                f"{occurrence.build_path!r}"
+            )
+        return self._native_module.assembly_state_record_handle(
+            self._native_engine_handle,
+            self._native_state_handle,
+            native_occurrence,
+            record_id.template_record_id.index,
+        )
+
+    def _mark_native_record_satisfied(self, record_id: RecordId) -> None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return
+        record_handle = self._native_record_handle_for(record_id)
+        assert record_handle is not None
+        self._native_module.assembly_state_mark_satisfied(
+            self._native_engine_handle,
+            self._native_state_handle,
+            record_handle,
+        )
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_scope_mark_satisfied")
+
+    def _append_native_composable_edge(
+        self,
+        target_record_id: RecordId,
+        *,
+        source_build_prefix: tuple[str, ...],
+        operation_key: str,
+        order: int,
+    ) -> object | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return None
+        target_record = self._native_record_handle_for(target_record_id)
+        source_occurrence = self._native_occurrence_by_build_prefix.get(
+            source_build_prefix
+        )
+        if source_occurrence is None:
+            raise RuntimeError(
+                "native source occurrence is missing for build path "
+                f"{source_build_prefix!r}"
+            )
+        edge = self._native_module.assembly_state_append_edge(
+            self._native_engine_handle,
+            self._native_state_handle,
+            target_record,
+            source_occurrence,
+            operation_key,
+            order,
+        )
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_scope_append_edge")
+        return edge
 
     def _append_lower_overlay(
         self,

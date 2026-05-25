@@ -103,6 +103,66 @@ def test_native_occurrence_store_appends_child_occurrence_and_indexes_when_avail
     ] == [[0, 0]]
 
 
+def test_native_occurrence_store_appends_edge_and_satisfied_state_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "result = astichi_hole(value)\n",
+    )
+    value_template = _register_template_source(module, handle, "40 + 2\n")
+    state = module.assembly_state_create(handle)
+    root_occurrence = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        root_template,
+        ("Root",),
+    )
+    child_occurrence = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        value_template,
+        ("Root", "Value"),
+        root_occurrence,
+    )
+    target_record = module.assembly_state_record_handle(
+        handle,
+        state,
+        root_occurrence,
+        0,
+    )
+
+    edge = module.assembly_state_append_edge(
+        handle,
+        state,
+        target_record,
+        child_occurrence,
+        "astichi.operation.replace_expression",
+        2,
+    )
+    module.assembly_state_mark_satisfied(handle, state, target_record)
+    snapshot = module.assembly_state_snapshot(handle, state)
+
+    assert edge.snapshot()["kind"] == "edge"
+    assert snapshot["edges"] == [
+        {
+            "edge_id": 0,
+            "operation_key": "astichi.operation.replace_expression",
+            "order": 2,
+            "source_occurrence_id": 1,
+            "target_record_id": [0, 0],
+        }
+    ]
+    assert snapshot["records"][0]["state"] == {
+        "satisfied": True,
+        "visible": False,
+    }
+
+
 def test_native_occurrence_store_rejects_cross_engine_handles_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
@@ -398,7 +458,22 @@ def test_native_scope_apply_appends_child_occurrence_when_available(
             "template_id": 1,
         },
     ]
+    assert snapshot["edges"] == [
+        {
+            "edge_id": 0,
+            "operation_key": "astichi.operation.replace_expression",
+            "order": 0,
+            "source_occurrence_id": 1,
+            "target_record_id": [0, 0],
+        }
+    ]
+    assert snapshot["records"][0]["state"] == {
+        "satisfied": True,
+        "visible": False,
+    }
     assert counts["native_scope_append_occurrence"] == 1
+    assert counts["native_scope_append_edge"] == 1
+    assert counts["native_scope_mark_satisfied"] == 1
     assert counts.get("debug_inventory_projection", 0) == 0
 
 
