@@ -204,6 +204,13 @@ def test_native_template_extract_identifier_suffixes_match_python_reference_when
         ),
         "astichi_funcargs(a, key=b)\n",
         "astichi_funcargs(name__astichi_arg__, key__astichi_arg__=b)\n",
+        (
+            "astichi_funcargs("
+            "value, "
+            "__astichi_ph_0__=astichi_import(dep), "
+            "__astichi_ph_1__=astichi_export(out)"
+            ")\n"
+        ),
         "astichi_pyimport(module=foo, names=(bar,))\nastichi_funcargs(a, key=b)\n",
         "astichi_keep(foo)\nastichi_funcargs(name__astichi_arg__)\n",
         (
@@ -236,6 +243,40 @@ def test_native_template_extract_payload_markers_match_python_reference_when_ava
     expected = astichi.compile(source)._lower_template.structural_snapshot()
 
     assert actual == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        ("astichi_funcargs(_=value)\n", "keyword `_` is reserved"),
+        (
+            "astichi_funcargs(__astichi_ph_1__=astichi_import(dep))\n",
+            "contiguous and ordered",
+        ),
+        (
+            "astichi_funcargs(__astichi_ph_0__=astichi_pass(dep))\n",
+            "directive placeholders may only carry direct astichi_import",
+        ),
+        (
+            "astichi_funcargs(astichi_import(dep))\n",
+            r"astichi_import\(\.\.\.\) / astichi_export\(\.\.\.\) are only valid",
+        ),
+    ],
+)
+def test_native_template_extract_rejects_bad_funcargs_directives_when_available(
+    source: str, match: str
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    with pytest.raises(ValueError, match=match):
+        module.extract_template_snapshot(
+            _engine_with_current_bundle(module),
+            source,
+            "bad_funcargs.py",
+            1,
+        )
 
 
 @pytest.mark.parametrize(

@@ -530,6 +530,14 @@ impl<'py> Emitter<'py> {
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
+            ast::Stmt::AugAssign(node) => {
+                let target = self.expr(&node.target)?;
+                let op = self.operator(node.op)?;
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("AugAssign", (target, op, value))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
             ast::Stmt::For(node) => {
                 let target = self.expr(&node.target)?;
                 let iter = self.expr(&node.iter)?;
@@ -647,7 +655,6 @@ impl<'py> Emitter<'py> {
                 Ok(obj.unbind())
             }
             ast::Stmt::TypeAlias(_)
-            | ast::Stmt::AugAssign(_)
             | ast::Stmt::AsyncFor(_)
             | ast::Stmt::AsyncWith(_)
             | ast::Stmt::Match(_)
@@ -757,6 +764,13 @@ impl<'py> Emitter<'py> {
                 let op = self.bool_op(node.op)?;
                 let values = self.expr_list(&node.values)?;
                 let obj = self.call_ast("BoolOp", (op, values))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Expr::NamedExpr(node) => {
+                let target = self.expr(&node.target)?;
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("NamedExpr", (target, value))?;
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
@@ -915,8 +929,7 @@ impl<'py> Emitter<'py> {
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
-            ast::Expr::NamedExpr(_)
-            | ast::Expr::Lambda(_)
+            ast::Expr::Lambda(_)
             | ast::Expr::Await(_)
             | ast::Expr::Yield(_)
             | ast::Expr::YieldFrom(_) => Err(unsupported(format!(

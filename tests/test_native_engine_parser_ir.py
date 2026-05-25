@@ -38,6 +38,20 @@ def test_native_engine_parser_ir_smoke_when_available() -> None:
     assert module.to_source(native_module) == "def f(x):\n    return x + 1"
 
 
+def test_native_engine_parser_ir_copies_augassign_and_namedexpr_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    source = "total = 0\ntotal += (value := 2)\n"
+    native_module = module.compile_composable(source, "native-augassign.py")
+    python_ast = module.copy_to_python_ast(native_module)
+
+    compile(python_ast, "native-augassign.py", "exec")
+    assert native_module.node_counts()["AugAssign"] == 1
+    assert native_module.node_counts()["NamedExpr"] == 1
+
+
 @pytest.mark.parametrize("source_path", _GOLD_SOURCES, ids=lambda path: path.name)
 def test_native_engine_parser_ir_compiles_gold_sources_when_available(
     source_path: Path,

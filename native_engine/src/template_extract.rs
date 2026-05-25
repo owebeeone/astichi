@@ -8,6 +8,9 @@ use crate::handles::EngineHandle;
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
 const ARG_SUFFIX: &str = "__astichi_arg__";
 const KEEP_SUFFIX: &str = "__astichi_keep__";
+const PARAM_HOLE_SUFFIX: &str = "__astichi_param_hole__";
+const DIRECTIVE_PLACEHOLDER_PREFIX: &str = "__astichi_ph_";
+const DIRECTIVE_PLACEHOLDER_SUFFIX: &str = "__";
 const DEFAULTED_BLOCK_FALLBACK_NAME: &str = "astichi_fallback";
 
 #[derive(Clone)]
@@ -51,6 +54,14 @@ struct ExtractedRecord {
 struct RootBodyEntry<'a> {
     stmt: &'a ast::Stmt,
     path: String,
+}
+
+#[derive(Clone, Copy)]
+enum ExprRecordContext {
+    Statement,
+    Expression,
+    PositionalVariadic,
+    NamedVariadic,
 }
 
 #[pyfunction]
@@ -237,7 +248,7 @@ fn validate_pyimport_prefix(body: &[ast::Stmt], source_map: &SourceMap) -> PyRes
                     statement_line(stmt, source_map)
                 )));
             }
-        } else if !is_boundary_prefix_statement(stmt) {
+        } else if !is_boundary_prefix_statement(stmt) && !is_python_module_prefix_statement(stmt) {
             prefix_open = false;
         }
         match stmt {
@@ -260,6 +271,27 @@ fn is_pyimport_statement(stmt: &ast::Stmt) -> bool {
         return false;
     };
     is_call_named(&expr_stmt.value, "astichi_pyimport")
+}
+
+fn is_python_module_prefix_statement(stmt: &ast::Stmt) -> bool {
+    is_docstring_statement(stmt) || is_future_import_statement(stmt)
+}
+
+fn is_docstring_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    match expr_stmt.value.as_ref() {
+        ast::Expr::Constant(node) => matches!(node.value, ast::Constant::Str(_)),
+        _ => false,
+    }
+}
+
+fn is_future_import_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::ImportFrom(node) = stmt else {
+        return false;
+    };
+    node.module.as_ref().map(|module| module.as_str()) == Some("__future__")
 }
 
 fn validate_elif_positions(body: &[ast::Stmt], source_map: &SourceMap) -> PyResult<()> {
@@ -392,26 +424,46 @@ fn stmt_records(
                 &node.value,
                 &(path.to_string() + "/value"),
                 source_map,
-                true,
+                ExprRecordContext::Statement,
                 owner,
                 records,
             )?;
             Ok(())
         }
-        ast::Stmt::Assign(node) => expr_records(
-            &node.value,
-            &(path.to_string() + "/value"),
-            source_map,
-            false,
-            owner,
-            records,
-        ),
+        ast::Stmt::Assign(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                expr_records(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )
+        }
         ast::Stmt::AnnAssign(node) => {
+            expr_records(
+                &node.target,
+                &(path.to_string() + "/target"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
             expr_records(
                 &node.annotation,
                 &(path.to_string() + "/annotation"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )?;
@@ -420,12 +472,30 @@ fn stmt_records(
                     value,
                     &(path.to_string() + "/value"),
                     source_map,
-                    false,
+                    ExprRecordContext::Expression,
                     owner,
                     records,
                 )?;
             }
             Ok(())
+        }
+        ast::Stmt::AugAssign(node) => {
+            expr_records(
+                &node.target,
+                &(path.to_string() + "/target"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )
         }
         ast::Stmt::Return(node) => {
             if let Some(value) = node.value.as_ref() {
@@ -433,7 +503,7 @@ fn stmt_records(
                     value,
                     &(path.to_string() + "/value"),
                     source_map,
-                    false,
+                    ExprRecordContext::Expression,
                     owner,
                     records,
                 )?;
@@ -474,7 +544,7 @@ fn stmt_records(
                     &node.test,
                     &(path.to_string() + "/test"),
                     source_map,
-                    false,
+                    ExprRecordContext::Expression,
                     owner,
                     records,
                 )?;
@@ -527,7 +597,7 @@ fn stmt_records(
                     &function_owner,
                     source_map,
                     records,
-                );
+                )?;
                 return Ok(());
             } else if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
                 records.push(identifier_demand_record(
@@ -550,7 +620,7 @@ fn stmt_records(
                 &function_owner,
                 source_map,
                 records,
-            );
+            )?;
             for (index, stmt) in node.body.iter().enumerate() {
                 stmt_records(
                     stmt,
@@ -590,7 +660,7 @@ fn stmt_records(
                     &function_owner,
                     source_map,
                     records,
-                );
+                )?;
                 return Ok(());
             } else if let Some(resource_name) = strip_arg_suffix(node.name.as_str()) {
                 records.push(identifier_demand_record(
@@ -613,7 +683,7 @@ fn stmt_records(
                 &function_owner,
                 source_map,
                 records,
-            );
+            )?;
             for (index, stmt) in node.body.iter().enumerate() {
                 stmt_records(
                     stmt,
@@ -634,6 +704,36 @@ fn stmt_records(
                     source_map.line(node.range),
                     owner.to_vec(),
                 ));
+            }
+            for (index, base) in node.bases.iter().enumerate() {
+                expr_records(
+                    base,
+                    &format!("{path}/bases[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    &class_owner,
+                    records,
+                )?;
+            }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                if let Some(arg) = keyword.arg.as_ref() {
+                    if let Some(resource_name) = strip_arg_suffix(arg.as_str()) {
+                        records.push(identifier_demand_record(
+                            &format!("{path}/keywords[{index}]"),
+                            &resource_name,
+                            source_map.line(keyword.range),
+                            class_owner.clone(),
+                        ));
+                    }
+                }
+                expr_records(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    &class_owner,
+                    records,
+                )?;
             }
             decorator_records(
                 &node.decorator_list,
@@ -695,7 +795,7 @@ fn expr_records(
     expr: &ast::Expr,
     path: &str,
     source_map: &SourceMap,
-    in_expr_stmt: bool,
+    context: ExprRecordContext,
     owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
@@ -703,14 +803,27 @@ fn expr_records(
         ast::Expr::Call(node) => {
             let name = call_name(&node.func);
             if let Some(name) = name {
-                direct_call_record(name, node, path, source_map, in_expr_stmt, owner, records)?;
+                direct_call_record(name, node, path, source_map, context, owner, records)?;
             }
+            expr_records(
+                &node.func,
+                &(path.to_string() + "/func"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
             for (index, arg) in node.args.iter().enumerate() {
+                let arg_context = if matches!(arg, ast::Expr::Starred(_)) {
+                    ExprRecordContext::PositionalVariadic
+                } else {
+                    ExprRecordContext::Expression
+                };
                 expr_records(
                     arg,
                     &format!("{path}/args[{index}]"),
                     source_map,
-                    false,
+                    arg_context,
                     owner,
                     records,
                 )?;
@@ -726,17 +839,30 @@ fn expr_records(
                         ));
                     }
                 }
+                let keyword_context = if keyword.arg.is_none() {
+                    ExprRecordContext::NamedVariadic
+                } else {
+                    ExprRecordContext::Expression
+                };
                 expr_records(
                     &keyword.value,
                     &format!("{path}/keywords[{index}]/value"),
                     source_map,
-                    false,
+                    keyword_context,
                     owner,
                     records,
                 )?;
             }
             Ok(())
         }
+        ast::Expr::Starred(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            context,
+            owner,
+            records,
+        ),
         ast::Expr::Name(node) => {
             if let Some(resource_name) = strip_arg_suffix(node.id.as_str()) {
                 records.push(identifier_demand_record(
@@ -748,13 +874,31 @@ fn expr_records(
             }
             Ok(())
         }
+        ast::Expr::NamedExpr(node) => {
+            expr_records(
+                &node.target,
+                &(path.to_string() + "/target"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )
+        }
         ast::Expr::BoolOp(node) => {
             for (index, value) in node.values.iter().enumerate() {
                 expr_records(
                     value,
                     &format!("{path}/values[{index}]"),
                     source_map,
-                    false,
+                    ExprRecordContext::Expression,
                     owner,
                     records,
                 )?;
@@ -766,7 +910,7 @@ fn expr_records(
                 &node.left,
                 &(path.to_string() + "/left"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )?;
@@ -774,7 +918,7 @@ fn expr_records(
                 &node.right,
                 &(path.to_string() + "/right"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )
@@ -783,7 +927,15 @@ fn expr_records(
             &node.operand,
             &(path.to_string() + "/operand"),
             source_map,
-            false,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        ),
+        ast::Expr::Lambda(node) => expr_records(
+            &node.body,
+            &(path.to_string() + "/body"),
+            source_map,
+            ExprRecordContext::Expression,
             owner,
             records,
         ),
@@ -792,7 +944,7 @@ fn expr_records(
                 &node.test,
                 &(path.to_string() + "/test"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )?;
@@ -800,7 +952,7 @@ fn expr_records(
                 &node.body,
                 &(path.to_string() + "/body"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )?;
@@ -808,13 +960,298 @@ fn expr_records(
                 &node.orelse,
                 &(path.to_string() + "/orelse"),
                 source_map,
-                false,
+                ExprRecordContext::Expression,
                 owner,
                 records,
             )
         }
-        _ => Ok(()),
+        ast::Expr::Dict(node) => {
+            for (index, key) in node.keys.iter().enumerate() {
+                if let Some(key) = key {
+                    expr_records(
+                        key,
+                        &format!("{path}/keys[{index}]"),
+                        source_map,
+                        ExprRecordContext::Expression,
+                        owner,
+                        records,
+                    )?;
+                }
+            }
+            for (index, value) in node.values.iter().enumerate() {
+                expr_records(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Set(node) => expr_sequence_records(&node.elts, path, source_map, owner, records),
+        ast::Expr::List(node) => {
+            expr_sequence_records(&node.elts, path, source_map, owner, records)
+        }
+        ast::Expr::Tuple(node) => {
+            expr_sequence_records(&node.elts, path, source_map, owner, records)
+        }
+        ast::Expr::Compare(node) => {
+            expr_records(
+                &node.left,
+                &(path.to_string() + "/left"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            for (index, value) in node.comparators.iter().enumerate() {
+                expr_records(
+                    value,
+                    &format!("{path}/comparators[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Attribute(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        ),
+        ast::Expr::Subscript(node) => {
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.slice,
+                &(path.to_string() + "/slice"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )
+        }
+        ast::Expr::Slice(node) => {
+            if let Some(value) = node.lower.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/lower"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            if let Some(value) = node.upper.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/upper"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            if let Some(value) = node.step.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/step"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::FormattedValue(node) => {
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            if let Some(value) = node.format_spec.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/format_spec"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::JoinedStr(node) => {
+            for (index, value) in node.values.iter().enumerate() {
+                expr_records(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::ListComp(node) => {
+            expr_records(
+                &node.elt,
+                &(path.to_string() + "/elt"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            comprehension_expr_records(&node.generators, path, source_map, owner, records)
+        }
+        ast::Expr::SetComp(node) => {
+            expr_records(
+                &node.elt,
+                &(path.to_string() + "/elt"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            comprehension_expr_records(&node.generators, path, source_map, owner, records)
+        }
+        ast::Expr::DictComp(node) => {
+            expr_records(
+                &node.key,
+                &(path.to_string() + "/key"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.value,
+                &(path.to_string() + "/value"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            comprehension_expr_records(&node.generators, path, source_map, owner, records)
+        }
+        ast::Expr::GeneratorExp(node) => {
+            expr_records(
+                &node.elt,
+                &(path.to_string() + "/elt"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            comprehension_expr_records(&node.generators, path, source_map, owner, records)
+        }
+        ast::Expr::Await(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        ),
+        ast::Expr::Yield(node) => {
+            if let Some(value) = node.value.as_ref() {
+                expr_records(
+                    value,
+                    &(path.to_string() + "/value"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::YieldFrom(node) => expr_records(
+            &node.value,
+            &(path.to_string() + "/value"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        ),
+        ast::Expr::Constant(_) => Ok(()),
     }
+}
+
+fn comprehension_expr_records(
+    comprehensions: &[ast::Comprehension],
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    for (index, comprehension) in comprehensions.iter().enumerate() {
+        expr_records(
+            &comprehension.target,
+            &format!("{path}/generators[{index}]/target"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
+        expr_records(
+            &comprehension.iter,
+            &format!("{path}/generators[{index}]/iter"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
+        for (if_index, condition) in comprehension.ifs.iter().enumerate() {
+            expr_records(
+                condition,
+                &format!("{path}/generators[{index}]/ifs[{if_index}]"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn expr_sequence_records(
+    values: &[ast::Expr],
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    for (index, value) in values.iter().enumerate() {
+        expr_records(
+            value,
+            &format!("{path}/elts[{index}]"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
+    }
+    Ok(())
 }
 
 fn call_name(expr: &ast::Expr) -> Option<&str> {
@@ -831,58 +1268,281 @@ fn is_call_named(expr: &ast::Expr, name: &str) -> bool {
     }
 }
 
+fn is_directive_call(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(node) => matches!(
+            call_name(&node.func),
+            Some("astichi_import" | "astichi_export")
+        ),
+        _ => false,
+    }
+}
+
+fn directive_placeholder_index(name: &str) -> Option<usize> {
+    if !name.starts_with(DIRECTIVE_PLACEHOLDER_PREFIX)
+        || !name.ends_with(DIRECTIVE_PLACEHOLDER_SUFFIX)
+    {
+        return None;
+    }
+    let raw_index =
+        &name[DIRECTIVE_PLACEHOLDER_PREFIX.len()..name.len() - DIRECTIVE_PLACEHOLDER_SUFFIX.len()];
+    if raw_index.is_empty() || !raw_index.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if raw_index.len() > 1 && raw_index.starts_with('0') {
+        return None;
+    }
+    raw_index.parse().ok()
+}
+
+fn contains_directive_call(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(node) => {
+            is_directive_call(expr)
+                || contains_directive_call(&node.func)
+                || node.args.iter().any(contains_directive_call)
+                || node
+                    .keywords
+                    .iter()
+                    .any(|keyword| contains_directive_call(&keyword.value))
+        }
+        ast::Expr::BoolOp(node) => node.values.iter().any(contains_directive_call),
+        ast::Expr::NamedExpr(node) => {
+            contains_directive_call(&node.target) || contains_directive_call(&node.value)
+        }
+        ast::Expr::BinOp(node) => {
+            contains_directive_call(&node.left) || contains_directive_call(&node.right)
+        }
+        ast::Expr::UnaryOp(node) => contains_directive_call(&node.operand),
+        ast::Expr::Lambda(node) => contains_directive_call(&node.body),
+        ast::Expr::IfExp(node) => {
+            contains_directive_call(&node.test)
+                || contains_directive_call(&node.body)
+                || contains_directive_call(&node.orelse)
+        }
+        ast::Expr::Dict(node) => {
+            node.keys.iter().flatten().any(contains_directive_call)
+                || node.values.iter().any(contains_directive_call)
+        }
+        ast::Expr::Set(node) => node.elts.iter().any(contains_directive_call),
+        ast::Expr::ListComp(node) => {
+            contains_directive_call(&node.elt)
+                || node
+                    .generators
+                    .iter()
+                    .any(comprehension_contains_directive_call)
+        }
+        ast::Expr::SetComp(node) => {
+            contains_directive_call(&node.elt)
+                || node
+                    .generators
+                    .iter()
+                    .any(comprehension_contains_directive_call)
+        }
+        ast::Expr::DictComp(node) => {
+            contains_directive_call(&node.key)
+                || contains_directive_call(&node.value)
+                || node
+                    .generators
+                    .iter()
+                    .any(comprehension_contains_directive_call)
+        }
+        ast::Expr::GeneratorExp(node) => {
+            contains_directive_call(&node.elt)
+                || node
+                    .generators
+                    .iter()
+                    .any(comprehension_contains_directive_call)
+        }
+        ast::Expr::Await(node) => contains_directive_call(&node.value),
+        ast::Expr::Yield(node) => node
+            .value
+            .iter()
+            .any(|value| contains_directive_call(value)),
+        ast::Expr::YieldFrom(node) => contains_directive_call(&node.value),
+        ast::Expr::Compare(node) => {
+            contains_directive_call(&node.left)
+                || node.comparators.iter().any(contains_directive_call)
+        }
+        ast::Expr::FormattedValue(node) => {
+            contains_directive_call(&node.value)
+                || node
+                    .format_spec
+                    .iter()
+                    .any(|value| contains_directive_call(value))
+        }
+        ast::Expr::JoinedStr(node) => node.values.iter().any(contains_directive_call),
+        ast::Expr::Attribute(node) => contains_directive_call(&node.value),
+        ast::Expr::Subscript(node) => {
+            contains_directive_call(&node.value) || contains_directive_call(&node.slice)
+        }
+        ast::Expr::Starred(node) => contains_directive_call(&node.value),
+        ast::Expr::List(node) => node.elts.iter().any(contains_directive_call),
+        ast::Expr::Tuple(node) => node.elts.iter().any(contains_directive_call),
+        ast::Expr::Slice(node) => {
+            node.lower
+                .iter()
+                .any(|value| contains_directive_call(value))
+                || node
+                    .upper
+                    .iter()
+                    .any(|value| contains_directive_call(value))
+                || node.step.iter().any(|value| contains_directive_call(value))
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => false,
+    }
+}
+
+fn comprehension_contains_directive_call(comprehension: &ast::Comprehension) -> bool {
+    contains_directive_call(&comprehension.target)
+        || contains_directive_call(&comprehension.iter)
+        || comprehension.ifs.iter().any(contains_directive_call)
+}
+
+fn validate_funcargs_call(node: &ast::ExprCall) -> PyResult<()> {
+    let mut indexes = Vec::new();
+    for arg in &node.args {
+        if contains_directive_call(arg) {
+            return Err(crate::errors::schema_error(
+                "astichi_import(...) / astichi_export(...) are only valid as direct __astichi_ph_{N}__= carriers inside astichi_funcargs(...)",
+            ));
+        }
+    }
+    for keyword in &node.keywords {
+        let Some(arg) = keyword.arg.as_ref().map(|arg| arg.as_str()) else {
+            if contains_directive_call(&keyword.value) {
+                return Err(crate::errors::schema_error(
+                    "astichi_import(...) / astichi_export(...) are only valid as direct __astichi_ph_{N}__= carriers inside astichi_funcargs(...)",
+                ));
+            }
+            continue;
+        };
+        if arg == "_" {
+            return Err(crate::errors::schema_error(
+                "keyword `_` is reserved inside astichi_funcargs(...); use __astichi_ph_{N}__=astichi_import/export(...) for payload-local directives",
+            ));
+        }
+        if arg.starts_with(DIRECTIVE_PLACEHOLDER_PREFIX) {
+            let Some(index) = directive_placeholder_index(arg) else {
+                return Err(crate::errors::schema_error(
+                    "astichi_funcargs directive placeholder names must match __astichi_ph_{N}__",
+                ));
+            };
+            if !is_directive_call(&keyword.value) {
+                return Err(crate::errors::schema_error(
+                    "astichi_funcargs directive placeholders may only carry direct astichi_import(...) or astichi_export(...) calls",
+                ));
+            }
+            indexes.push(index);
+        } else if contains_directive_call(&keyword.value) {
+            return Err(crate::errors::schema_error(
+                "astichi_import(...) / astichi_export(...) are only valid as direct __astichi_ph_{N}__= carriers inside astichi_funcargs(...)",
+            ));
+        }
+    }
+    if indexes.iter().copied().ne(0..indexes.len()) {
+        return Err(crate::errors::schema_error(
+            "astichi_funcargs directive placeholders must be contiguous and ordered from __astichi_ph_0__",
+        ));
+    }
+    Ok(())
+}
+
 fn function_argument_suffix_records(
     args: &ast::Arguments,
     path: &str,
     owner: &[String],
     source_map: &SourceMap,
     records: &mut Vec<ExtractedRecord>,
-) {
+) -> PyResult<()> {
     for (index, arg) in args.posonlyargs.iter().enumerate() {
-        arg_suffix_record(
-            &arg.def,
+        arg_with_default_records(
+            arg,
             &format!("{path}/args/posonlyargs[{index}]"),
             source_map,
-            owner.to_vec(),
+            owner,
             records,
-        );
+        )?;
     }
     for (index, arg) in args.args.iter().enumerate() {
-        arg_suffix_record(
-            &arg.def,
+        arg_with_default_records(
+            arg,
             &format!("{path}/args/args[{index}]"),
             source_map,
-            owner.to_vec(),
+            owner,
             records,
-        );
+        )?;
     }
     for (index, arg) in args.kwonlyargs.iter().enumerate() {
-        arg_suffix_record(
-            &arg.def,
+        arg_with_default_records(
+            arg,
             &format!("{path}/args/kwonlyargs[{index}]"),
             source_map,
-            owner.to_vec(),
+            owner,
             records,
-        );
+        )?;
     }
     if let Some(arg) = args.vararg.as_ref() {
-        arg_suffix_record(
+        arg_records(
             arg,
             &(path.to_string() + "/args/vararg"),
             source_map,
-            owner.to_vec(),
+            owner,
             records,
-        );
+        )?;
     }
     if let Some(arg) = args.kwarg.as_ref() {
-        arg_suffix_record(
+        arg_records(
             arg,
             &(path.to_string() + "/args/kwarg"),
             source_map,
-            owner.to_vec(),
+            owner,
             records,
-        );
+        )?;
     }
+    Ok(())
+}
+
+fn arg_with_default_records(
+    arg: &ast::ArgWithDefault,
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    arg_records(&arg.def, path, source_map, owner, records)?;
+    if let Some(default) = arg.default.as_ref() {
+        expr_records(
+            default,
+            &(path.to_string() + "/default"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
+    }
+    Ok(())
+}
+
+fn arg_records(
+    arg: &ast::Arg,
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    arg_suffix_record(arg, path, source_map, owner.to_vec(), records);
+    if let Some(annotation) = arg.annotation.as_ref() {
+        expr_records(
+            annotation,
+            &(path.to_string() + "/annotation"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
+    }
+    Ok(())
 }
 
 fn arg_suffix_record(
@@ -892,7 +1552,18 @@ fn arg_suffix_record(
     owner: Vec<String>,
     records: &mut Vec<ExtractedRecord>,
 ) {
-    if let Some(resource_name) = strip_arg_suffix(arg.arg.as_str()) {
+    if let Some(resource_name) = strip_param_hole_suffix(arg.arg.as_str()) {
+        records.push(record_with_owner(
+            path,
+            &authored_summary(&resource_name, source_map.line(arg.range)),
+            "hole.params",
+            "splice-parameters",
+            "hole.params",
+            &resource_name,
+            "astichi.surface.parameter.hole",
+            owner,
+        ));
+    } else if let Some(resource_name) = strip_arg_suffix(arg.arg.as_str()) {
         records.push(identifier_demand_record(
             path,
             &resource_name,
@@ -977,36 +1648,49 @@ fn direct_call_record(
     node: &ast::ExprCall,
     path: &str,
     source_map: &SourceMap,
-    in_expr_stmt: bool,
+    context: ExprRecordContext,
     owner: &[String],
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
     match name {
         "astichi_hole" => {
             let resource_name = first_name_arg(node, name)?;
-            if in_expr_stmt {
-                records.push(record_with_owner(
-                    path,
-                    &authored_summary(&resource_name, source_map.line(node.range)),
+            let (role_key, materialization_anchor, inventory_kind, surface_key) = match context {
+                ExprRecordContext::Statement => (
                     "hole.block",
                     "splice-body-at-marker",
                     "hole.block",
-                    &resource_name,
                     "astichi.surface.block.hole",
-                    owner.to_vec(),
-                ));
-            } else {
-                records.push(record_with_owner(
-                    path,
-                    &authored_summary(&resource_name, source_map.line(node.range)),
+                ),
+                ExprRecordContext::PositionalVariadic => (
+                    "hole.positional_variadic",
+                    "splice-call-arguments",
+                    "hole.positional_variadic",
+                    "astichi.surface.funcargs.hole",
+                ),
+                ExprRecordContext::NamedVariadic => (
+                    "hole.named_variadic",
+                    "splice-call-arguments",
+                    "hole.named_variadic",
+                    "astichi.surface.funcargs.hole",
+                ),
+                ExprRecordContext::Expression => (
                     "hole.expr",
                     "replace-expression",
                     "hole.expr",
-                    &resource_name,
                     "astichi.surface.expression.hole",
-                    owner.to_vec(),
-                ));
-            }
+                ),
+            };
+            records.push(record_with_owner(
+                path,
+                &authored_summary(&resource_name, source_map.line(node.range)),
+                role_key,
+                materialization_anchor,
+                inventory_kind,
+                &resource_name,
+                surface_key,
+                owner.to_vec(),
+            ));
             Ok(())
         }
         "astichi_bind_external" => {
@@ -1074,7 +1758,7 @@ fn direct_call_record(
             Ok(())
         }
         "astichi_comment" => Ok(()),
-        "astichi_funcargs" => Ok(()),
+        "astichi_funcargs" => validate_funcargs_call(node),
         "astichi_keep" | "astichi_pyimport" => Ok(()),
         other if other.starts_with("astichi_") => Err(crate::errors::schema_error(&format!(
             "unsupported native direct call marker: {other}"
@@ -1446,9 +2130,16 @@ fn strip_arg_suffix(value: &str) -> Option<String> {
         .map(|stripped| stripped.to_string())
 }
 
+fn strip_param_hole_suffix(value: &str) -> Option<String> {
+    value
+        .strip_suffix(PARAM_HOLE_SUFFIX)
+        .map(|stripped| stripped.to_string())
+}
+
 fn strip_known_suffix(value: &str) -> String {
     value
         .strip_suffix(ARG_SUFFIX)
+        .or_else(|| value.strip_suffix(PARAM_HOLE_SUFFIX))
         .or_else(|| value.strip_suffix(KEEP_SUFFIX))
         .unwrap_or(value)
         .to_string()
