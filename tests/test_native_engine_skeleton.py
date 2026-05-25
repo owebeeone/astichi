@@ -7,13 +7,17 @@ import pytest
 
 from astichi.lower_engine import (
     LowerEngine,
+    PYTHON_PACKAGE_ONLY_PLAN_FEATURE,
+    PYTHON_PACKAGE_V2_FEATURE,
     current_plus_future_surface_bundle_spec,
     current_surface_bundle_spec,
 )
 from astichi.lower_engine.native import (
     EngineSelectionEvent,
     FULL_LOWER_ENGINE_FEATURE,
+    NATIVE_PACKAGE_V2_FEATURE,
     NativeExtensionUnavailableError,
+    REQUIRED_NATIVE_LOWER_ENGINE_FEATURES,
     load_native_extension,
     native_capabilities,
     native_self_test,
@@ -52,16 +56,45 @@ def test_native_engine_default_selection_falls_back_for_skeleton(
     assert event.snapshot() == {
         "fallback_scope": "engine",
         "reason_detail": (
-            "native extension is available but does not advertise "
-            f"{FULL_LOWER_ENGINE_FEATURE}"
+            "native extension is available but does not advertise required "
+            "features: "
+            + ", ".join(REQUIRED_NATIVE_LOWER_ENGINE_FEATURES)
         ),
-        "reason_key": "native_full_lower_engine_unavailable",
+        "reason_key": "native_required_features_unavailable",
         "requested_engine": "auto",
         "selected_engine": "python",
     }
 
 
 def test_native_engine_default_selection_prefers_capable_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import astichi.lower_engine.native as native
+
+    monkeypatch.delenv("ASTICHI_LOWER_ENGINE", raising=False)
+    monkeypatch.setattr(
+        native,
+        "load_native_extension",
+        lambda *, required=False: SimpleNamespace(
+            capabilities=lambda: {
+                "backend_label": "rust-pyo3-lower-engine",
+                "engine_features": [
+                    FULL_LOWER_ENGINE_FEATURE,
+                    NATIVE_PACKAGE_V2_FEATURE,
+                ],
+            },
+        ),
+    )
+
+    event = select_lower_engine()
+
+    assert event == EngineSelectionEvent(
+        requested_engine="auto",
+        selected_engine="native-rust",
+    )
+
+
+def test_native_engine_default_selection_falls_back_without_package_v2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import astichi.lower_engine.native as native
@@ -80,10 +113,16 @@ def test_native_engine_default_selection_prefers_capable_native(
 
     event = select_lower_engine()
 
-    assert event == EngineSelectionEvent(
-        requested_engine="auto",
-        selected_engine="native-rust",
-    )
+    assert event.snapshot() == {
+        "fallback_scope": "engine",
+        "reason_detail": (
+            "native extension is available but does not advertise required "
+            f"features: {NATIVE_PACKAGE_V2_FEATURE}"
+        ),
+        "reason_key": "native_required_features_unavailable",
+        "requested_engine": "auto",
+        "selected_engine": "python",
+    }
 
 
 def test_native_engine_default_selection_falls_back_without_extension(
@@ -157,9 +196,19 @@ def test_native_engine_explicit_native_fails_for_skeleton(
 
     with pytest.raises(
         NativeExtensionUnavailableError,
-        match="does not advertise native.full_lower_engine",
+        match="does not advertise required features",
     ):
         native.select_lower_engine("native")
+
+
+def test_python_lower_engine_capabilities_advertise_package_v2() -> None:
+    capabilities = LowerEngine().capabilities()
+
+    assert capabilities["lower_template_package_v2"] is True
+    assert capabilities["engine_features"] == [
+        PYTHON_PACKAGE_V2_FEATURE,
+        PYTHON_PACKAGE_ONLY_PLAN_FEATURE,
+    ]
 
 
 def test_native_engine_capabilities_when_extension_available() -> None:
@@ -245,10 +294,11 @@ def test_native_engine_auto_falls_back_for_core_extension_when_available() -> No
     assert event.snapshot() == {
         "fallback_scope": "engine",
         "reason_detail": (
-            "native extension is available but does not advertise "
-            f"{FULL_LOWER_ENGINE_FEATURE}"
+            "native extension is available but does not advertise required "
+            "features: "
+            + ", ".join(REQUIRED_NATIVE_LOWER_ENGINE_FEATURES)
         ),
-        "reason_key": "native_full_lower_engine_unavailable",
+        "reason_key": "native_required_features_unavailable",
         "requested_engine": "auto",
         "selected_engine": "python",
     }

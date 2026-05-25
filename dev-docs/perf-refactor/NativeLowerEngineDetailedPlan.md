@@ -972,6 +972,10 @@ Native parallel work:
   artifact-copy primitives may proceed before P5d;
 - native marker/scope/managed-import extraction must wait for the v2 package
   schema to stabilize, except for throwaway spike code.
+- production native selection remains disabled until the native backend
+  advertises both `native.full_lower_engine.current_surfaces.v1` and
+  `native.lower_template_package_v2.v1`; package-v2 rows are now the
+  materialization/hygiene contract.
 
 ### N9b3: Native Marker, Import, And Hygiene Streams
 
@@ -994,7 +998,9 @@ Acceptance:
 - materialization-plan structural goldens match Python reference for managed
   import, boundary marker, keep collision, and boundary-elif cases;
 - hygiene/materialization planning no longer needs Python builder-state
-  mutation.
+  mutation;
+- native capabilities include `native.lower_template_package_v2.v1`, allowing
+  explicit native lower-engine selection to pass the package-v2 gate.
 
 ### N10a: Native IR Clone And Locator Mutation Primitives
 

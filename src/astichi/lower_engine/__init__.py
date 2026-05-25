@@ -4,7 +4,11 @@ from astichi.lower_engine.catalog import (
     current_plus_future_surface_bundle_spec,
     current_surface_bundle_spec,
 )
-from astichi.lower_engine.engine import LowerEngine
+from astichi.lower_engine.engine import (
+    PYTHON_PACKAGE_ONLY_PLAN_FEATURE,
+    PYTHON_PACKAGE_V2_FEATURE,
+    LowerEngine,
+)
 from astichi.lower_engine.errors import LowerEngineError, StaleHandleError
 from astichi.lower_engine.facade import (
     LowerTemplateBinding,
@@ -40,7 +44,9 @@ from astichi.lower_engine.materialization import (
 )
 from astichi.lower_engine.native import (
     EngineSelectionEvent,
+    NATIVE_PACKAGE_V2_FEATURE,
     NativeExtensionUnavailableError,
+    REQUIRED_NATIVE_LOWER_ENGINE_FEATURES,
     load_native_extension,
     native_capabilities,
     native_self_test,
@@ -103,6 +109,7 @@ __all__ = [
     "NativeTemplateCache",
     "MaterializationOperation",
     "MaterializationPlan",
+    "NATIVE_PACKAGE_V2_FEATURE",
     "NativeExtensionUnavailableError",
     "OccurrenceId",
     "OperationId",
@@ -112,7 +119,10 @@ __all__ = [
     "PackageSnapshotFormatError",
     "PatternId",
     "PatternSpec",
+    "PYTHON_PACKAGE_ONLY_PLAN_FEATURE",
+    "PYTHON_PACKAGE_V2_FEATURE",
     "RecordId",
+    "REQUIRED_NATIVE_LOWER_ENGINE_FEATURES",
     "RegisteredSurfaceBundle",
     "ResultPolicyDescriptor",
     "ShapeFieldExpectation",

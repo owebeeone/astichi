@@ -21,6 +21,11 @@ EXTENSION_NAME = "_astichi_native_engine"
 ENGINE_SELECTION_ENV = "ASTICHI_LOWER_ENGINE"
 DEFAULT_ENGINE = "auto"
 FULL_LOWER_ENGINE_FEATURE = "native.full_lower_engine.current_surfaces.v1"
+NATIVE_PACKAGE_V2_FEATURE = "native.lower_template_package_v2.v1"
+REQUIRED_NATIVE_LOWER_ENGINE_FEATURES = (
+    FULL_LOWER_ENGINE_FEATURE,
+    NATIVE_PACKAGE_V2_FEATURE,
+)
 VALID_ENGINE_SELECTIONS = frozenset(
     {"python", "native", "native-rust", "native-cpp", "auto"}
 )
@@ -120,21 +125,22 @@ def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
                 f"requested {requested!r}, but the available native backend "
                 f"is {selected!r}"
             )
-        if _has_full_lower_engine_capability(capabilities):
+        missing_features = _missing_required_native_features(capabilities)
+        if not missing_features:
             return EngineSelectionEvent(
                 requested_engine=requested,
                 selected_engine=selected,
             )
         reason = (
-            f"native extension is available but does not advertise "
-            f"{FULL_LOWER_ENGINE_FEATURE}"
+            "native extension is available but does not advertise required "
+            f"features: {', '.join(missing_features)}"
         )
         if requested == "auto":
             return EngineSelectionEvent(
                 requested_engine=requested,
                 selected_engine="python",
                 fallback_scope="engine",
-                reason_key="native_full_lower_engine_unavailable",
+                reason_key="native_required_features_unavailable",
                 reason_detail=reason,
             )
         raise NativeExtensionUnavailableError(
@@ -193,9 +199,16 @@ def _native_capability_snapshot(module: ModuleType) -> dict[str, Any]:
     return dict(capabilities)
 
 
-def _has_full_lower_engine_capability(capabilities: dict[str, Any]) -> bool:
+def _missing_required_native_features(
+    capabilities: dict[str, Any],
+) -> tuple[str, ...]:
     features = capabilities.get("engine_features", ())
-    return FULL_LOWER_ENGINE_FEATURE in set(features)
+    available = set(features)
+    return tuple(
+        feature
+        for feature in REQUIRED_NATIVE_LOWER_ENGINE_FEATURES
+        if feature not in available
+    )
 
 
 def _native_backend_selection(capabilities: dict[str, Any]) -> str:

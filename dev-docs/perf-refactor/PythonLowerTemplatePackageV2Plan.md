@@ -385,8 +385,11 @@ Work:
 Acceptance:
 
 - package-v2 path is the default Python lower-engine path;
-- native selection continues to be gated until native can produce package-v2
-  rows;
+- Python lower-engine capabilities advertise `python.lower_template_package_v2.v1`
+  and `python.materialization_plan.package_only.v1`;
+- native selection continues to be gated until native advertises
+  `native.lower_template_package_v2.v1` in addition to the full lower-engine
+  capability;
 - docs and tests name the package as the materialization/hygiene contract.
 
 ## Native Parallel Work During Python V2

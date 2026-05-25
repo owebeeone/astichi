@@ -44,6 +44,8 @@ from astichi.lower_engine.templates import (
 )
 
 _OWNER_IDS = count()
+PYTHON_PACKAGE_V2_FEATURE = "python.lower_template_package_v2.v1"
+PYTHON_PACKAGE_ONLY_PLAN_FEATURE = "python.materialization_plan.package_only.v1"
 
 
 def _is_unresolved_capable_inventory_kind(inventory_kind: str) -> bool:
@@ -214,6 +216,17 @@ class LowerEngine:
     def new_state(self) -> AssemblyState:
         """Create a mutable assembly state owned by this engine."""
         return AssemblyState(owner=self._owner, owner_label=self._owner_label)
+
+    def capabilities(self) -> dict[str, object]:
+        """Return Python lower-engine capability metadata."""
+        return {
+            "backend_label": self._owner_label,
+            "engine_features": [
+                PYTHON_PACKAGE_V2_FEATURE,
+                PYTHON_PACKAGE_ONLY_PLAN_FEATURE,
+            ],
+            "lower_template_package_v2": True,
+        }
 
     def append_occurrence(
         self,
