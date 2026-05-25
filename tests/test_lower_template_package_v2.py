@@ -21,6 +21,7 @@ from astichi.lower_engine import (
     extract_comment_marker_specs,
     extract_marker_specs,
     extract_pyimport_marker_specs,
+    extract_ref_marker_specs,
     extract_scope_specs,
     round_trip_package_snapshot_text,
     write_package_snapshot,
@@ -352,6 +353,47 @@ class Box:
         package,
         "comment_marker_package.json",
     )
+
+
+def test_ref_marker_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+value = astichi_ref("pkg.mod")
+astichi_ref("self.field")._ = 1
+del astichi_ref("self.deleted").astichi_v
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="ref_marker_template",
+        source_summary="ref marker source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+        ref_markers=extract_ref_marker_specs(tree),
+    )
+    package = engine.template_package(template_id)
+
+    assert package.marker_ids_by_kind("ref") == (0, 1, 2)
+    assert [row.context_id for row in package.ref_markers]
+    assert [
+        package.snapshot()["ref_markers"][index]["context"]
+        for index in range(3)
+    ] == ["load", "store", "delete"]
+    assert [
+        package.snapshot()["ref_markers"][index]["ref_kind"]
+        for index in range(3)
+    ] == ["value", "sentinel_attribute", "sentinel_attribute"]
+    _assert_package_snapshot_matches_golden(
+        package,
+        "ref_marker_package.json",
+    )
+
+
+def test_ref_marker_extraction_rejects_bare_statement_context() -> None:
+    with pytest.raises(ValueError, match="unsupported astichi_ref statement"):
+        extract_ref_marker_specs(ast.parse('astichi_ref("pkg.mod")\n'))
 
 
 def test_package_intern_ids_are_package_local() -> None:

@@ -35,6 +35,7 @@ from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
     TemplatePyImportMarkerSpec,
+    TemplateRefMarkerSpec,
     TemplateRecord,
     TemplateRecordSpec,
     TemplateScopeSpec,
@@ -63,6 +64,7 @@ class LowerEngine:
         markers: tuple[TemplateMarkerSpec, ...] = (),
         pyimport_markers: tuple[TemplatePyImportMarkerSpec, ...] = (),
         comment_markers: tuple[TemplateCommentMarkerSpec, ...] = (),
+        ref_markers: tuple[TemplateRefMarkerSpec, ...] = (),
     ) -> TemplateId:
         """Register immutable template metadata and return its handle."""
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
@@ -162,6 +164,15 @@ class LowerEngine:
             package.add_comment_marker(
                 marker_id=spec.marker_id,
                 payload=spec.payload,
+                flags=spec.flags,
+            )
+        for spec in ref_markers:
+            package.add_ref_marker(
+                marker_id=spec.marker_id,
+                ref_kind=spec.ref_kind,
+                context=spec.context,
+                sentinel_attr=spec.sentinel_attr,
+                literal_path=spec.literal_path,
                 flags=spec.flags,
             )
         self._templates.append(

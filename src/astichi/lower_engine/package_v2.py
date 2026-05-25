@@ -26,6 +26,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "markers",
     "pyimport_markers",
     "comment_markers",
+    "ref_markers",
 )
 
 _LIST_SECTIONS = frozenset(
@@ -40,6 +41,7 @@ _LIST_SECTIONS = frozenset(
         "markers",
         "pyimport_markers",
         "comment_markers",
+        "ref_markers",
     }
 )
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -141,6 +143,17 @@ class CommentMarkerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class RefMarkerRow:
+    ref_marker_id: int
+    marker_id: int
+    ref_kind_id: int
+    context_id: int
+    sentinel_attr_id: int | None
+    literal_path_id: int | None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PackageBindingIndex:
     bindings_by_scope_id: dict[int, frozenset[str]]
     arguments_by_scope_id: dict[int, frozenset[str]]
@@ -179,6 +192,7 @@ class LowerTemplatePackageV2:
         self.markers: list[MarkerRow] = []
         self.pyimport_markers: list[PyImportMarkerRow] = []
         self.comment_markers: list[CommentMarkerRow] = []
+        self.ref_markers: list[RefMarkerRow] = []
         self._binding_index: PackageBindingIndex | None = None
         self._marker_ids_by_kind: dict[str, tuple[int, ...]] | None = None
         self._marker_ids_by_scope_id: dict[int, tuple[int, ...]] | None = None
@@ -412,6 +426,35 @@ class LowerTemplatePackageV2:
         )
         return comment_marker_id
 
+    def add_ref_marker(
+        self,
+        *,
+        marker_id: int,
+        ref_kind: str,
+        context: str,
+        sentinel_attr: str = "",
+        literal_path: tuple[str, ...] | None = None,
+        flags: tuple[str, ...] = (),
+    ) -> int:
+        """Append typed source facts for an ``astichi_ref`` marker."""
+        ref_marker_id = len(self.ref_markers)
+        self.ref_markers.append(
+            RefMarkerRow(
+                ref_marker_id=ref_marker_id,
+                marker_id=marker_id,
+                ref_kind_id=self.intern_string(ref_kind),
+                context_id=self.intern_string(context),
+                sentinel_attr_id=(
+                    None if sentinel_attr == "" else self.intern_string(sentinel_attr)
+                ),
+                literal_path_id=(
+                    None if literal_path is None else self.intern_path(literal_path)
+                ),
+                flags=tuple(flags),
+            )
+        )
+        return ref_marker_id
+
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
         """Return record rows owned by one package-local owner path."""
         path_id = self._path_index.get(owner_path)
@@ -561,6 +604,10 @@ class LowerTemplatePackageV2:
             "comment_markers": [
                 self._comment_marker_snapshot(row)
                 for row in self.comment_markers
+            ],
+            "ref_markers": [
+                self._ref_marker_snapshot(row)
+                for row in self.ref_markers
             ],
         }
 
@@ -715,6 +762,24 @@ class LowerTemplatePackageV2:
             "flags": list(row.flags),
             "marker_id": row.marker_id,
             "payload": self._string(row.payload_id),
+        }
+
+    def _ref_marker_snapshot(
+        self,
+        row: RefMarkerRow,
+    ) -> dict[str, object]:
+        return {
+            "context": self._string(row.context_id),
+            "flags": list(row.flags),
+            "literal_path": (
+                None
+                if row.literal_path_id is None
+                else list(self._path(row.literal_path_id))
+            ),
+            "marker_id": row.marker_id,
+            "ref_kind": self._string(row.ref_kind_id),
+            "ref_marker_id": row.ref_marker_id,
+            "sentinel_attr": self._optional_string(row.sentinel_attr_id),
         }
 
     def _binding_set_names(self, binding_set_id: int) -> list[str]:

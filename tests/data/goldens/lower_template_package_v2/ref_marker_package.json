@@ -1,0 +1,170 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "ref_marker_template",
+  "source_summary": "ref marker source",
+  "string_table": [
+    "",
+    "ref_marker_template",
+    "ref marker source",
+    "module",
+    "value",
+    "ref",
+    "astichi_ref",
+    "load",
+    "pkg",
+    "mod",
+    "sentinel_attribute",
+    "store",
+    "_",
+    "self",
+    "field",
+    "delete",
+    "astichi_v",
+    "deleted"
+  ],
+  "path_table": [
+    [],
+    [
+      "pkg",
+      "mod"
+    ],
+    [
+      "self",
+      "field"
+    ],
+    [
+      "self",
+      "deleted"
+    ]
+  ],
+  "ast_path_table": [
+    "",
+    "body[0]/value",
+    "body[0]",
+    "body[1]/targets[0]/value",
+    "body[1]",
+    "body[2]/targets[0]/value",
+    "body[2]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "value"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "value"
+      ],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 0,
+      "marker_kind": "ref",
+      "operation_key": "astichi_ref",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_ref",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[1]/targets[0]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 1,
+      "marker_kind": "ref",
+      "operation_key": "astichi_ref",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_ref",
+      "source_order": 1,
+      "statement_path": "body[1]"
+    },
+    {
+      "ast_path": "body[2]/targets[0]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 2,
+      "marker_kind": "ref",
+      "operation_key": "astichi_ref",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_ref",
+      "source_order": 2,
+      "statement_path": "body[2]"
+    }
+  ],
+  "pyimport_markers": [],
+  "comment_markers": [],
+  "ref_markers": [
+    {
+      "context": "load",
+      "flags": [
+        "value_form"
+      ],
+      "literal_path": [
+        "pkg",
+        "mod"
+      ],
+      "marker_id": 0,
+      "ref_kind": "value",
+      "ref_marker_id": 0,
+      "sentinel_attr": ""
+    },
+    {
+      "context": "store",
+      "flags": [
+        "sentinel_attribute"
+      ],
+      "literal_path": [
+        "self",
+        "field"
+      ],
+      "marker_id": 1,
+      "ref_kind": "sentinel_attribute",
+      "ref_marker_id": 1,
+      "sentinel_attr": "_"
+    },
+    {
+      "context": "delete",
+      "flags": [
+        "sentinel_attribute"
+      ],
+      "literal_path": [
+        "self",
+        "deleted"
+      ],
+      "marker_id": 2,
+      "ref_kind": "sentinel_attribute",
+      "ref_marker_id": 2,
+      "sentinel_attr": "astichi_v"
+    }
+  ]
+}

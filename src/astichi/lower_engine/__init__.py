@@ -51,6 +51,7 @@ from astichi.lower_engine.package_extract import (
     extract_comment_marker_specs,
     extract_marker_specs,
     extract_pyimport_marker_specs,
+    extract_ref_marker_specs,
     extract_scope_specs,
 )
 from astichi.lower_engine.package_v2 import (
@@ -79,6 +80,7 @@ from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
     TemplatePyImportMarkerSpec,
+    TemplateRefMarkerSpec,
     TemplateRecordSpec,
     TemplateScopeSpec,
 )
@@ -122,6 +124,7 @@ __all__ = [
     "TemplateCommentMarkerSpec",
     "TemplateMarkerSpec",
     "TemplatePyImportMarkerSpec",
+    "TemplateRefMarkerSpec",
     "TemplateRecordId",
     "TemplateRecordSpec",
     "TemplateScopeSpec",
@@ -136,6 +139,7 @@ __all__ = [
     "extract_comment_marker_specs",
     "extract_marker_specs",
     "extract_pyimport_marker_specs",
+    "extract_ref_marker_specs",
     "extract_scope_specs",
     "load_native_extension",
     "native_capabilities",

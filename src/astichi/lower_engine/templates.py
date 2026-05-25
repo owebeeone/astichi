@@ -76,6 +76,18 @@ class TemplateCommentMarkerSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateRefMarkerSpec:
+    """Typed source facts for one ``astichi_ref`` marker row."""
+
+    marker_id: int
+    ref_kind: str
+    context: str
+    sentinel_attr: str = ""
+    literal_path: tuple[str, ...] | None = None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId

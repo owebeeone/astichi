@@ -6,16 +6,19 @@ import ast
 from collections.abc import Iterable
 
 from astichi.asttools import import_statement_binding_names
+from astichi.lowering.external_ref import evaluate_restricted_path_expression
 from astichi.lowering import RecognizedMarker, recognize_markers
 from astichi.lowering.markers import (
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
 )
 from astichi.lowering.pyimport import validate_pyimport_declarations
+from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
     TemplatePyImportMarkerSpec,
+    TemplateRefMarkerSpec,
     TemplateScopeSpec,
 )
 
@@ -201,6 +204,44 @@ def extract_comment_marker_specs(
     return tuple(specs)
 
 
+def extract_ref_marker_specs(
+    tree: ast.Module,
+) -> tuple[TemplateRefMarkerSpec, ...]:
+    """Extract typed source facts for ``astichi_ref`` markers."""
+    sentinel_contexts = _ref_sentinel_contexts(tree)
+    bare_statement_call_ids = _bare_ref_statement_call_ids(tree)
+    specs: list[TemplateRefMarkerSpec] = []
+    for marker_id, marker in enumerate(recognize_markers(tree)):
+        if marker.source_name != "astichi_ref":
+            continue
+        if id(marker.node) in bare_statement_call_ids:
+            raise ValueError("unsupported astichi_ref statement context")
+        sentinel_context = sentinel_contexts.get(id(marker.node))
+        if sentinel_context is None:
+            specs.append(
+                TemplateRefMarkerSpec(
+                    marker_id=marker_id,
+                    ref_kind="value",
+                    context="load",
+                    literal_path=_literal_ref_path(marker),
+                    flags=("value_form",),
+                )
+            )
+            continue
+        sentinel_attr, context = sentinel_context
+        specs.append(
+            TemplateRefMarkerSpec(
+                marker_id=marker_id,
+                ref_kind="sentinel_attribute",
+                context=context,
+                sentinel_attr=sentinel_attr,
+                literal_path=_literal_ref_path(marker),
+                flags=("sentinel_attribute",),
+            )
+        )
+    return tuple(specs)
+
+
 def _iter_ast_children(
     *,
     field_name: str,
@@ -220,6 +261,80 @@ def _join_ast_path(parent_path: str, part: str) -> str:
     if parent_path == "":
         return part
     return f"{parent_path}/{part}"
+
+
+def _ref_sentinel_contexts(tree: ast.AST) -> dict[int, tuple[str, str]]:
+    contexts: dict[int, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        sentinel = match_transparent_sentinel(
+            node,
+            is_marker_call=_is_ref_marker_call,
+        )
+        if sentinel is None:
+            continue
+        contexts[id(sentinel.call)] = (node.attr, _ctx_name(sentinel.ctx))
+    return contexts
+
+
+def _bare_ref_statement_call_ids(tree: ast.AST) -> frozenset[int]:
+    call_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Expr):
+            continue
+        call = _statement_ref_call(node.value)
+        if call is not None:
+            call_ids.add(id(call))
+    return frozenset(call_ids)
+
+
+def _statement_ref_call(node: ast.AST) -> ast.Call | None:
+    if _is_ref_marker_call(node):
+        assert isinstance(node, ast.Call)
+        return node
+    if isinstance(node, ast.Attribute):
+        sentinel = match_transparent_sentinel(
+            node,
+            is_marker_call=_is_ref_marker_call,
+        )
+        if sentinel is not None:
+            return sentinel.call
+    return None
+
+
+def _is_ref_marker_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and (
+            (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "astichi_ref"
+            )
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "astichi_ref"
+            )
+        )
+    )
+
+
+def _literal_ref_path(marker: RecognizedMarker) -> tuple[str, ...] | None:
+    node = marker.node
+    if not isinstance(node, ast.Call) or len(node.args) != 1 or node.keywords:
+        return None
+    try:
+        return evaluate_restricted_path_expression(node.args[0])
+    except ValueError:
+        return None
+
+
+def _ctx_name(ctx: ast.expr_context) -> str:
+    if isinstance(ctx, ast.Store):
+        return "store"
+    if isinstance(ctx, ast.Del):
+        return "delete"
+    return "load"
 
 
 def _build_ast_path_maps(
