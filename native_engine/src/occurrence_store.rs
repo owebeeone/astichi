@@ -185,6 +185,12 @@ impl NativeAssemblyState {
             .ok_or_else(|| crate::errors::stale_handle_error("unknown native edge handle"))
     }
 
+    pub(crate) fn overlay(&self, index: usize) -> PyResult<&NativeOverlay> {
+        self.overlays
+            .get(index)
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native overlay handle"))
+    }
+
     fn append_occurrence(
         &mut self,
         template_index: usize,
@@ -282,10 +288,20 @@ impl NativeEdge {
 }
 
 #[derive(Clone)]
-struct NativeOverlay {
+pub(crate) struct NativeOverlay {
     kind: String,
     source_label: String,
     target_record: RecordKey,
+}
+
+impl NativeOverlay {
+    pub(crate) fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub(crate) fn source_label(&self) -> &str {
+        &self.source_label
+    }
 }
 
 #[derive(Clone, Default)]
@@ -496,6 +512,18 @@ impl NativeOverlayHandle {
             index,
             generation: 0,
         }
+    }
+
+    pub(crate) fn owner_id(&self) -> u64 {
+        self.owner_id
+    }
+
+    pub(crate) fn overlay_state_index(&self) -> usize {
+        self.state_index
+    }
+
+    pub(crate) fn overlay_index(&self) -> usize {
+        self.index
     }
 }
 

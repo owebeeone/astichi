@@ -200,6 +200,63 @@ def test_native_materialization_workspace_lowers_literal_refs_when_available(
     )["resolved_kind"] == after_kind
 
 
+def test_native_materialization_workspace_applies_external_overlay_literal_ref_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "value = astichi_ref(astichi_bind_external(path))\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        template,
+        ("Root",),
+    )
+    external_record = module.assembly_state_record_handle(engine, state, root, 0)
+    overlay = module.assembly_state_append_overlay(
+        engine,
+        state,
+        external_record,
+        "external",
+        "path",
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        "body[0]/value/args[0]",
+    )["resolved_kind"] == "Call"
+    external_count = module.materialization_workspace_apply_external_overlay_literal(
+        engine,
+        workspace,
+        state,
+        overlay,
+        "'pkg.mod'",
+    )
+    assert external_count == 1
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        "body[0]/value/args[0]",
+    )["resolved_kind"] == "Constant"
+
+    ref_count = module.materialization_workspace_lower_literal_refs(engine, workspace)
+    assert ref_count == 1
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        "body[0]/value",
+    )["resolved_kind"] == "Attribute"
+
+
 def test_native_materialization_workspace_bad_locator_diagnostic_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:

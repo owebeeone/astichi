@@ -1179,6 +1179,12 @@ Acceptance:
 - executable subset tests pass once copied through the artifact boundary;
 - no Python AST mutation is used on the native path.
 
+Status: implemented for a first external-overlay literal primitive: native
+workspaces can consume an external overlay handle plus a literal expression
+payload, replace matching `astichi_bind_external(name)` uses in native IR, and
+then lower the now-literal ref. Remaining work is scope-shadow complete
+substitution and arbitrary Python object slots at the artifact boundary.
+
 ### N10c: Native Block, Defaulted Block, And Boundary Hygiene Materializer
 
 Goal: materialize statement-body insertions and boundary-marker effects.

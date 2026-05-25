@@ -33,6 +33,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.materialization_workspace.v1",
             "native.materialization_expression.v1",
             "native.materialization_literal_ref.v1",
+            "native.materialization_external_overlay_literal.v1",
             "native.hygiene_gate.v1",
             "native.lower_template_package_v2.snapshot.partial.v1",
             "native.lower_template_package_v2.v1",
