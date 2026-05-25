@@ -1,0 +1,110 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "scope_template",
+  "source_summary": "nested scope source",
+  "string_table": [
+    "",
+    "scope_template",
+    "nested scope source",
+    "module",
+    "class",
+    "Box",
+    "function",
+    "make",
+    "async_function",
+    "load",
+    "outer"
+  ],
+  "path_table": [
+    [],
+    [
+      "Box"
+    ],
+    [
+      "Box",
+      "make"
+    ],
+    [
+      "Box",
+      "make",
+      "load"
+    ],
+    [
+      "outer"
+    ]
+  ],
+  "ast_path_table": [
+    "",
+    "body[0]",
+    "body[0]/body[0]",
+    "body[0]/body[0]/body[0]",
+    "body[1]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": []
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[0]",
+      "local_bindings": [],
+      "owner_path": [
+        "Box"
+      ],
+      "parent_scope_id": 0,
+      "scope_id": 1,
+      "scope_kind": "class"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[0]/body[0]",
+      "local_bindings": [],
+      "owner_path": [
+        "Box",
+        "make"
+      ],
+      "parent_scope_id": 1,
+      "scope_id": 2,
+      "scope_kind": "function"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[0]/body[0]/body[0]",
+      "local_bindings": [],
+      "owner_path": [
+        "Box",
+        "make",
+        "load"
+      ],
+      "parent_scope_id": 2,
+      "scope_id": 3,
+      "scope_kind": "async_function"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[1]",
+      "local_bindings": [],
+      "owner_path": [
+        "outer"
+      ],
+      "parent_scope_id": 0,
+      "scope_id": 4,
+      "scope_kind": "async_function"
+    }
+  ]
+}

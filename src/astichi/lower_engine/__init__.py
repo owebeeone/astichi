@@ -47,6 +47,7 @@ from astichi.lower_engine.native import (
     requested_lower_engine,
     select_lower_engine,
 )
+from astichi.lower_engine.package_extract import extract_scope_specs
 from astichi.lower_engine.package_v2 import (
     LowerTemplatePackageV2,
     PackageSchemaMismatchError,
@@ -69,7 +70,7 @@ from astichi.lower_engine.registry import (
     SurfaceRegistry,
     SurfaceSpec,
 )
-from astichi.lower_engine.templates import TemplateRecordSpec
+from astichi.lower_engine.templates import TemplateRecordSpec, TemplateScopeSpec
 
 __all__ = [
     "BundleSchemaMismatchError",
@@ -109,6 +110,7 @@ __all__ = [
     "TemplateId",
     "TemplateRecordId",
     "TemplateRecordSpec",
+    "TemplateScopeSpec",
     "build_materialization_plan",
     "copy_composable_executable_ast",
     "copy_composable_template_ast",
@@ -117,6 +119,7 @@ __all__ = [
     "current_surface_bundle_spec",
     "ensure_current_native_surface_bundle",
     "ensure_current_surface_bundle",
+    "extract_scope_specs",
     "load_native_extension",
     "native_capabilities",
     "native_self_test",

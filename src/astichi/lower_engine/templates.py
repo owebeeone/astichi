@@ -28,6 +28,16 @@ class TemplateRecordSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateScopeSpec:
+    """Input spec for one lexical scope row in a lower template package."""
+
+    scope_kind: str
+    ast_path: str
+    owner_path: tuple[str, ...]
+    parent_scope_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId

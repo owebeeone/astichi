@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import sys
 
 import pytest
 
 from astichi.lower_engine import (
+    LowerEngine,
     LowerTemplatePackageV2,
     PackageSchemaMismatchError,
     PackageSnapshotFormatError,
+    extract_scope_specs,
     round_trip_package_snapshot_text,
     write_package_snapshot,
 )
@@ -80,6 +83,33 @@ def test_populated_package_snapshot_matches_golden() -> None:
         "surface_key": "expression.hole",
         "template_record_id": 0,
     }
+
+
+def test_scope_extraction_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+class Box:
+    def make(self):
+        async def load():
+            return 1
+        return load
+
+async def outer():
+    return 2
+"""
+    )
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="scope_template",
+        source_summary="nested scope source",
+        records=(),
+        scopes=extract_scope_specs(tree),
+    )
+
+    _assert_package_snapshot_matches_golden(
+        engine.template_package(template_id),
+        "scope_package.json",
+    )
 
 
 def test_package_intern_ids_are_package_local() -> None:

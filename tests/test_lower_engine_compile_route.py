@@ -50,6 +50,8 @@ result = astichi_hole(value)
         record["surface_key"]
         for record in lower_template.package_v2.snapshot()["records"]
     ] == [spec.surface_key for spec in lower_template.record_specs]
+    assert lower_template.scope_specs[0].scope_kind == "module"
+    assert lower_template.package_v2.snapshot()["scopes"][0]["scope_kind"] == "module"
 
 
 def test_compile_lower_template_metadata_matches_structural_golden() -> None:

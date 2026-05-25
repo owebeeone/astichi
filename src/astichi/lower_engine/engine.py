@@ -34,6 +34,7 @@ from astichi.lower_engine.templates import (
     Template,
     TemplateRecord,
     TemplateRecordSpec,
+    TemplateScopeSpec,
 )
 
 _OWNER_IDS = count()
@@ -55,6 +56,7 @@ class LowerEngine:
         template_key: str,
         source_summary: str,
         records: tuple[TemplateRecordSpec, ...],
+        scopes: tuple[TemplateScopeSpec, ...] = (),
     ) -> TemplateId:
         """Register immutable template metadata and return its handle."""
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
@@ -119,6 +121,13 @@ class LowerEngine:
                     legacy_record_id=spec.legacy_record_id,
                     projection_record=spec.projection_record,
                 )
+            )
+        for spec in scopes:
+            package.add_scope(
+                scope_kind=spec.scope_kind,
+                ast_path=spec.ast_path,
+                owner_path=spec.owner_path,
+                parent_scope_id=spec.parent_scope_id,
             )
         self._templates.append(
             Template(
