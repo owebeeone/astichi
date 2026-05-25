@@ -238,6 +238,8 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.materialization_workspace.v1",
         "native.materialization_expression.v1",
         "native.materialization_block.v1",
+        "native.materialization_parameters.v1",
+        "native.materialization_call_arguments.v1",
         "native.materialization_literal_ref.v1",
         "native.materialization_external_overlay_literal.v1",
         "native.hygiene_gate.v1",

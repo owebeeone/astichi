@@ -1219,20 +1219,41 @@ Acceptance:
 - unresolved block demands fail before artifact copy;
 - marker stripping is native-owned.
 
-### N10d: Native Parameter And Call-Argument Materializer
+### N10d1: Native Parameter And Positional Call-Argument Materializer
 
-Goal: materialize function parameter and call-argument payload surfaces.
+Goal: materialize the first parameter and call-argument payload surfaces.
 
 Work:
 
-- implement parameter splice including vararg/kwarg/default ordering checks;
+- implement simple positional parameter splice;
+- implement positional `*astichi_hole(...)` call-argument splice;
+- preserve source ordering for payload items.
+
+Acceptance:
+
+- simple parameter and positional call-argument materialized snapshots match
+  Python reference;
+- no legacy `_=` carrier is accepted.
+
+Status: implemented for positional parameter payloads and positional
+`astichi_funcargs(...)` payloads over cloned native IR. Varargs, kwargs,
+defaults, duplicate diagnostics, and payload-local import/export remain in
+N10d2.
+
+### N10d2: Native Complete Parameter And Call-Argument Materializer
+
+Goal: finish function parameter and call-argument payload surfaces.
+
+Work:
+
+- implement vararg/kwarg/default ordering checks;
 - implement call-argument payload lowering for plain, `*`, and `**` regions;
 - enforce duplicate keyword and positional/keyword compatibility diagnostics;
 - preserve payload-local import/export semantics.
 
 Acceptance:
 
-- parameter and call-argument goldens match Python reference;
+- full parameter and call-argument goldens match Python reference;
 - payload diagnostics match the Python oracle;
 - no legacy `_=` carrier is accepted.
 

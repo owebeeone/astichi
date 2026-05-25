@@ -264,6 +264,114 @@ fn materialization_workspace_apply_block_edge(
     )
 }
 
+#[pyfunction(name = "materialization_workspace_apply_parameter_edge")]
+fn materialization_workspace_apply_parameter_edge(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    edge: PyRef<'_, NativeEdgeHandle>,
+) -> PyResult<()> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    ensure_owner(engine.owner_id(), edge.owner_id())?;
+    if edge.edge_state_index() != state.state_index() {
+        return Err(crate::errors::stale_handle_error(
+            "edge belongs to another native assembly state",
+        ));
+    }
+    let (target_path, payload_args) = {
+        let workspace_ref = engine.workspace(workspace.index)?;
+        let state_ref = engine.state(state.state_index())?;
+        let edge_ref = state_ref.edge(edge.edge_index())?;
+        if edge_ref.operation_key() != "astichi.operation.splice_parameters" {
+            return Err(crate::errors::schema_error(&format!(
+                "native parameter materializer cannot apply `{}`",
+                edge_ref.operation_key()
+            )));
+        }
+        let target_key = edge_ref.target_record();
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index())?;
+        if target_occurrence.template_index() != workspace_ref.template_index {
+            return Err(crate::errors::schema_error(
+                "workspace template does not match parameter edge target occurrence",
+            ));
+        }
+        let target_template = engine.template(target_occurrence.template_index())?;
+        let target_path = target_template
+            .locator_ast_path_for_record(target_key.template_record_index())?
+            .to_string();
+        let source_occurrence = state_ref.occurrence(edge_ref.source_occurrence_index())?;
+        let source_template = engine.template(source_occurrence.template_index())?;
+        let source_module = source_template.module().ok_or_else(|| {
+            crate::errors::schema_error("native source template does not carry native parser IR")
+        })?;
+        let source_path = source_template
+            .unique_locator_ast_path_for_surface("astichi.surface.parameter.production")?;
+        let payload_args = clone_function_args_at_path(source_module, source_path)?;
+        (target_path, payload_args)
+    };
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    splice_parameters_at_path(workspace_ref.module_mut(), &target_path, payload_args)
+}
+
+#[pyfunction(name = "materialization_workspace_apply_call_argument_edge")]
+fn materialization_workspace_apply_call_argument_edge(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    edge: PyRef<'_, NativeEdgeHandle>,
+) -> PyResult<()> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    ensure_owner(engine.owner_id(), edge.owner_id())?;
+    if edge.edge_state_index() != state.state_index() {
+        return Err(crate::errors::stale_handle_error(
+            "edge belongs to another native assembly state",
+        ));
+    }
+    let (target_path, payload_args, payload_keywords) = {
+        let workspace_ref = engine.workspace(workspace.index)?;
+        let state_ref = engine.state(state.state_index())?;
+        let edge_ref = state_ref.edge(edge.edge_index())?;
+        if edge_ref.operation_key() != "astichi.operation.splice_call_arguments" {
+            return Err(crate::errors::schema_error(&format!(
+                "native call-argument materializer cannot apply `{}`",
+                edge_ref.operation_key()
+            )));
+        }
+        let target_key = edge_ref.target_record();
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index())?;
+        if target_occurrence.template_index() != workspace_ref.template_index {
+            return Err(crate::errors::schema_error(
+                "workspace template does not match call-argument edge target occurrence",
+            ));
+        }
+        let target_template = engine.template(target_occurrence.template_index())?;
+        let target_path = target_template
+            .locator_ast_path_for_record(target_key.template_record_index())?
+            .to_string();
+        let source_occurrence = state_ref.occurrence(edge_ref.source_occurrence_index())?;
+        let source_template = engine.template(source_occurrence.template_index())?;
+        let source_module = source_template.module().ok_or_else(|| {
+            crate::errors::schema_error("native source template does not carry native parser IR")
+        })?;
+        let source_path = source_template
+            .unique_locator_ast_path_for_surface("astichi.surface.funcargs.production")?;
+        let (payload_args, payload_keywords) =
+            clone_funcargs_payload_at_path(source_module, source_path)?;
+        (target_path, payload_args, payload_keywords)
+    };
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    splice_call_arguments_at_path(
+        workspace_ref.module_mut(),
+        &target_path,
+        payload_args,
+        payload_keywords,
+    )
+}
+
 #[pyfunction(name = "materialization_workspace_lower_literal_refs")]
 fn materialization_workspace_lower_literal_refs(
     mut engine: PyRefMut<'_, EngineHandle>,
@@ -359,6 +467,14 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(
         materialization_workspace_apply_block_edge,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_apply_parameter_edge,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_apply_call_argument_edge,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
@@ -724,6 +840,58 @@ fn clone_expr_from_expr(expr: &ast::Expr, segments: &[PathSegment]) -> PyResult<
     }
 }
 
+fn clone_function_args_at_path(module: &ast::ModModule, path: &str) -> PyResult<ast::Arguments> {
+    let segments = parse_ast_path(path)?;
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "parameter production path must resolve to a function",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native parameter path expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body parameter segment requires an index"))?;
+    let stmt = module.body.get(index).ok_or_else(|| {
+        crate::errors::schema_error("native parameter body index is out of range")
+    })?;
+    if !rest.is_empty() {
+        return Err(crate::errors::schema_error(
+            "parameter production path must point at a function statement",
+        ));
+    }
+    match stmt {
+        ast::Stmt::FunctionDef(node) => Ok((*node.args).clone()),
+        ast::Stmt::AsyncFunctionDef(node) => Ok((*node.args).clone()),
+        _ => Err(crate::errors::schema_error(&format!(
+            "native parameter production expected function, got {}",
+            stmt_kind(stmt)
+        ))),
+    }
+}
+
+fn clone_funcargs_payload_at_path(
+    module: &ast::ModModule,
+    path: &str,
+) -> PyResult<(Vec<ast::Expr>, Vec<ast::Keyword>)> {
+    let expr = clone_expr_at_path(module, path)?;
+    match expr {
+        ast::Expr::Call(node) if astichi_call_name(&node.func) == Some("astichi_funcargs") => {
+            Ok((node.args.clone(), node.keywords.clone()))
+        }
+        ast::Expr::Call(_) => Err(crate::errors::schema_error(
+            "native funcargs production is not astichi_funcargs",
+        )),
+        _ => Err(crate::errors::schema_error(
+            "native funcargs production path did not resolve to a call",
+        )),
+    }
+}
+
 fn replace_expr_at_path(
     module: &mut ast::ModModule,
     path: &str,
@@ -904,6 +1072,228 @@ fn replace_expr_in_expr(
             "native expression replacement cannot enter field `{}` on {}",
             first.field,
             expr_kind(expr)
+        ))),
+    }
+}
+
+fn splice_parameters_at_path(
+    module: &mut ast::ModModule,
+    target_path: &str,
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
+    let segments = parse_ast_path(target_path)?;
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "parameter splice requires an argument path",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native parameter splice expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body parameter segment requires an index"))?;
+    let stmt = module.body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native parameter body index is out of range")
+    })?;
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            splice_parameters_in_arguments(&mut node.args, rest, payload_args)
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            splice_parameters_in_arguments(&mut node.args, rest, payload_args)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native parameter splice expected function, got {}",
+            stmt_kind(stmt)
+        ))),
+    }
+}
+
+fn splice_parameters_in_arguments(
+    target_args: &mut Box<ast::Arguments>,
+    segments: &[PathSegment],
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
+    if segments.len() != 2 || segments[0].field != "args" {
+        return Err(crate::errors::schema_error(
+            "native parameter splice expected args/args[index] path",
+        ));
+    }
+    let target_segment = &segments[1];
+    let index = target_segment
+        .index
+        .ok_or_else(|| crate::errors::schema_error("parameter splice segment requires an index"))?;
+    let mut inserted = Vec::new();
+    inserted.extend(payload_args.posonlyargs);
+    inserted.extend(payload_args.args);
+    if payload_args.vararg.is_some()
+        || !payload_args.kwonlyargs.is_empty()
+        || payload_args.kwarg.is_some()
+    {
+        return Err(crate::errors::schema_error(
+            "native parameter splice primitive only supports positional payloads",
+        ));
+    }
+    match target_segment.field.as_str() {
+        "posonlyargs" => {
+            if index >= target_args.posonlyargs.len() {
+                return Err(crate::errors::schema_error(
+                    "native parameter posonly index is out of range",
+                ));
+            }
+            target_args.posonlyargs.splice(index..index + 1, inserted);
+            Ok(())
+        }
+        "args" => {
+            if index >= target_args.args.len() {
+                return Err(crate::errors::schema_error(
+                    "native parameter arg index is out of range",
+                ));
+            }
+            target_args.args.splice(index..index + 1, inserted);
+            Ok(())
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native parameter splice does not support `{}`",
+            target_segment.field
+        ))),
+    }
+}
+
+fn splice_call_arguments_at_path(
+    module: &mut ast::ModModule,
+    target_path: &str,
+    payload_args: Vec<ast::Expr>,
+    payload_keywords: Vec<ast::Keyword>,
+) -> PyResult<()> {
+    let (call_path, arg_index) = call_argument_parent_path(target_path)?;
+    let call = call_expr_mut_at_path(module, &call_path)?;
+    if !payload_keywords.is_empty() {
+        return Err(crate::errors::schema_error(
+            "native call-argument splice primitive only supports positional payloads",
+        ));
+    }
+    if arg_index >= call.args.len() {
+        return Err(crate::errors::schema_error(
+            "native call argument index is out of range",
+        ));
+    }
+    call.args.splice(arg_index..arg_index + 1, payload_args);
+    Ok(())
+}
+
+fn call_argument_parent_path(target_path: &str) -> PyResult<(String, usize)> {
+    let Some((prefix, tail)) = target_path.rsplit_once("/args[") else {
+        return Err(crate::errors::schema_error(
+            "native call-argument splice expected args[index] locator",
+        ));
+    };
+    let Some(index_text) = tail.strip_suffix("]/value") else {
+        return Err(crate::errors::schema_error(
+            "native call-argument splice expected starred args[index]/value locator",
+        ));
+    };
+    let index = index_text.parse::<usize>().map_err(|_| {
+        crate::errors::schema_error("native call-argument index is not an unsigned integer")
+    })?;
+    Ok((prefix.to_string(), index))
+}
+
+fn call_expr_mut_at_path<'a>(
+    module: &'a mut ast::ModModule,
+    path: &str,
+) -> PyResult<&'a mut ast::ExprCall> {
+    let segments = parse_ast_path(path)?;
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "call expression path cannot be the module root",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native call path expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body call segment requires an index"))?;
+    let stmt = module
+        .body
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native call body index is out of range"))?;
+    call_expr_mut_from_stmt(stmt, rest)
+}
+
+fn call_expr_mut_from_stmt<'a>(
+    stmt: &'a mut ast::Stmt,
+    segments: &[PathSegment],
+) -> PyResult<&'a mut ast::ExprCall> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "call expression path must include a statement expression field",
+        ));
+    };
+    let stmt_name = stmt_kind(stmt);
+    match stmt {
+        ast::Stmt::Expr(node) if first.field == "value" => {
+            call_expr_mut_from_expr(&mut node.value, rest)
+        }
+        ast::Stmt::Assign(node) if first.field == "value" => {
+            call_expr_mut_from_expr(&mut node.value, rest)
+        }
+        ast::Stmt::Return(node) if first.field == "value" => match node.value.as_mut() {
+            Some(value) => call_expr_mut_from_expr(value, rest),
+            None => Err(crate::errors::schema_error("return call value is missing")),
+        },
+        _ => Err(crate::errors::schema_error(&format!(
+            "native call path cannot enter statement field `{}` on {}",
+            first.field, stmt_name
+        ))),
+    }
+}
+
+fn call_expr_mut_from_expr<'a>(
+    expr: &'a mut ast::Expr,
+    segments: &[PathSegment],
+) -> PyResult<&'a mut ast::ExprCall> {
+    let Some((first, rest)) = segments.split_first() else {
+        return match expr {
+            ast::Expr::Call(node) => Ok(node),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path resolved to {}",
+                expr_kind(expr)
+            ))),
+        };
+    };
+    let expr_name = expr_kind(expr);
+    match expr {
+        ast::Expr::Call(node) => match first.field.as_str() {
+            "func" => call_expr_mut_from_expr(&mut node.func, rest),
+            "args" => {
+                let index = first.index.ok_or_else(|| {
+                    crate::errors::schema_error("call args segment requires an index")
+                })?;
+                let arg = node.args.get_mut(index).ok_or_else(|| {
+                    crate::errors::schema_error("native call arg index is out of range")
+                })?;
+                call_expr_mut_from_expr(arg, rest)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Attribute(node) if first.field == "value" => {
+            call_expr_mut_from_expr(&mut node.value, rest)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native call path cannot enter field `{}` on {}",
+            first.field, expr_name
         ))),
     }
 }
