@@ -71,6 +71,19 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
             "class Box:\n"
             '    astichi_comment("class note")\n'
         ),
+        (
+            'value = astichi_ref("pkg.mod")\n'
+            'astichi_ref("self.field")._ = 1\n'
+            'del astichi_ref("self.deleted").astichi_v\n'
+        ),
+        (
+            "for x in astichi_for((1, 2)):\n"
+            "    astichi_keep(slot)\n"
+            "    for y, z in astichi_for(DOMAIN):\n"
+            "        value = x + y + z\n"
+            "for n in astichi_for(range(2)):\n"
+            "    other = n\n"
+        ),
     ],
 )
 def test_native_template_package_v2_snapshot_matches_python_reference_when_available(
@@ -90,6 +103,20 @@ def test_native_template_package_v2_snapshot_matches_python_reference_when_avail
 
     assert actual == expected
     assert write_package_snapshot(actual) == write_package_snapshot(expected)
+
+
+def test_native_template_package_v2_rejects_ref_statement_context_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    with pytest.raises(ValueError, match="unsupported astichi_ref statement"):
+        module.extract_template_package_v2_snapshot(
+            _engine_with_current_bundle(module),
+            'astichi_ref("pkg.mod")\n',
+            "package_v2.py",
+            1,
+        )
 
 
 def _engine_with_current_bundle(module: object) -> object:

@@ -1021,6 +1021,10 @@ Acceptance:
 
 ### N9b3b: Native Ref And Unroll Package Rows
 
+Status: implemented for native package snapshots. The production package-v2
+capability remains disabled until package rows are stored on native template
+handles and package-derived hygiene streams land.
+
 Goal: finish the typed package rows that are needed by current materialization
 and future surface extension.
 

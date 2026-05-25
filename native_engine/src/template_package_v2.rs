@@ -35,6 +35,8 @@ struct PackageBuilder {
     pyimport_markers: Vec<PyImportMarkerRow>,
     managed_imports: Vec<ManagedImportRow>,
     comment_markers: Vec<CommentMarkerRow>,
+    ref_markers: Vec<RefMarkerRow>,
+    unroll_markers: Vec<UnrollMarkerRow>,
 }
 
 struct LocatorRow {
@@ -107,6 +109,30 @@ struct CommentMarkerRow {
     flags: Vec<String>,
 }
 
+struct RefMarkerRow {
+    ref_marker_id: usize,
+    marker_id: usize,
+    ref_kind_id: usize,
+    context_id: usize,
+    sentinel_attr_id: Option<usize>,
+    literal_path_id: Option<usize>,
+    flags: Vec<String>,
+}
+
+struct UnrollMarkerRow {
+    unroll_marker_id: usize,
+    marker_id: usize,
+    statement_path_id: usize,
+    target_ast_path_id: usize,
+    iter_ast_path_id: usize,
+    domain_ast_path_id: usize,
+    body_path_id: usize,
+    orelse_path_id: Option<usize>,
+    target_binding_set_id: usize,
+    domain_shape_id: usize,
+    flags: Vec<String>,
+}
+
 #[pyfunction(name = "extract_template_package_v2_snapshot")]
 #[pyo3(signature = (engine, source, filename = None, line_number = 1))]
 fn extract_template_package_v2_snapshot(
@@ -164,6 +190,9 @@ fn extract_template_package_v2_snapshot(
             &mut marker_state,
         )?;
     }
+    for (index, stmt) in module.body.iter().enumerate() {
+        extract_typed_marker_rows_stmt(stmt, &format!("body[{index}]"), &mut package)?;
+    }
     package.snapshot(py)
 }
 
@@ -190,6 +219,8 @@ impl PackageBuilder {
             pyimport_markers: Vec::new(),
             managed_imports: Vec::new(),
             comment_markers: Vec::new(),
+            ref_markers: Vec::new(),
+            unroll_markers: Vec::new(),
         };
         package.intern_string(surface_bundle_signature);
         package.intern_string(template_key);
@@ -463,6 +494,89 @@ impl PackageBuilder {
         });
     }
 
+    fn add_ref_marker(
+        &mut self,
+        marker_id: usize,
+        ref_kind: &str,
+        context: &str,
+        sentinel_attr: &str,
+        literal_path: Option<Vec<String>>,
+        flags: Vec<String>,
+    ) {
+        let ref_marker_id = self.ref_markers.len();
+        let ref_kind_id = self.intern_string(ref_kind);
+        let context_id = self.intern_string(context);
+        let sentinel_attr_id = if sentinel_attr.is_empty() {
+            None
+        } else {
+            Some(self.intern_string(sentinel_attr))
+        };
+        let literal_path_id = literal_path
+            .as_ref()
+            .map(|path| self.intern_path(path.as_slice()));
+        self.ref_markers.push(RefMarkerRow {
+            ref_marker_id,
+            marker_id,
+            ref_kind_id,
+            context_id,
+            sentinel_attr_id,
+            literal_path_id,
+            flags,
+        });
+    }
+
+    fn add_unroll_marker(
+        &mut self,
+        marker_id: usize,
+        statement_path: &str,
+        target_ast_path: &str,
+        iter_ast_path: &str,
+        domain_ast_path: &str,
+        body_path: &str,
+        orelse_path: Option<&str>,
+        target_bindings: Vec<String>,
+        domain_shape: &str,
+        flags: Vec<String>,
+    ) {
+        let unroll_marker_id = self.unroll_markers.len();
+        let statement_path_id = self.intern_ast_path(statement_path);
+        let target_ast_path_id = self.intern_ast_path(target_ast_path);
+        let iter_ast_path_id = self.intern_ast_path(iter_ast_path);
+        let domain_ast_path_id = self.intern_ast_path(domain_ast_path);
+        let body_path_id = self.intern_ast_path(body_path);
+        let orelse_path_id = orelse_path.map(|path| self.intern_ast_path(path));
+        let target_binding_set_id = self.intern_binding_set(&target_bindings);
+        let domain_shape_id = self.intern_string(domain_shape);
+        self.unroll_markers.push(UnrollMarkerRow {
+            unroll_marker_id,
+            marker_id,
+            statement_path_id,
+            target_ast_path_id,
+            iter_ast_path_id,
+            domain_ast_path_id,
+            body_path_id,
+            orelse_path_id,
+            target_binding_set_id,
+            domain_shape_id,
+            flags,
+        });
+    }
+
+    fn marker_id_for(&self, source_name: &str, ast_path: &str) -> PyResult<usize> {
+        self.markers
+            .iter()
+            .find(|row| {
+                self.strings[row.source_name_id] == source_name
+                    && self.ast_paths[row.ast_path_id] == ast_path
+            })
+            .map(|row| row.marker_id)
+            .ok_or_else(|| {
+                crate::errors::schema_error(&format!(
+                    "native package marker row is missing for {source_name} at {ast_path}"
+                ))
+            })
+    }
+
     fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let snapshot = PyDict::new(py);
         snapshot.set_item("schema", PACKAGE_SCHEMA)?;
@@ -480,8 +594,8 @@ impl PackageBuilder {
         snapshot.set_item("pyimport_markers", self.pyimport_marker_list(py)?)?;
         snapshot.set_item("managed_imports", self.managed_import_list(py)?)?;
         snapshot.set_item("comment_markers", self.comment_marker_list(py)?)?;
-        snapshot.set_item("ref_markers", PyList::empty(py))?;
-        snapshot.set_item("unroll_markers", PyList::empty(py))?;
+        snapshot.set_item("ref_markers", self.ref_marker_list(py)?)?;
+        snapshot.set_item("unroll_markers", self.unroll_marker_list(py)?)?;
         Ok(snapshot.into_any().unbind())
     }
 
@@ -638,6 +752,56 @@ impl PackageBuilder {
             item.set_item("flags", &row.flags)?;
             item.set_item("marker_id", row.marker_id)?;
             item.set_item("payload", &self.strings[row.payload_id])?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn ref_marker_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.ref_markers {
+            let item = PyDict::new(py);
+            item.set_item("context", &self.strings[row.context_id])?;
+            item.set_item("flags", &row.flags)?;
+            match row.literal_path_id {
+                Some(path_id) => item.set_item("literal_path", &self.paths[path_id])?,
+                None => item.set_item("literal_path", py.None())?,
+            };
+            item.set_item("marker_id", row.marker_id)?;
+            item.set_item("ref_kind", &self.strings[row.ref_kind_id])?;
+            item.set_item("ref_marker_id", row.ref_marker_id)?;
+            item.set_item(
+                "sentinel_attr",
+                row.sentinel_attr_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn unroll_marker_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.unroll_markers {
+            let item = PyDict::new(py);
+            item.set_item("body_path", &self.ast_paths[row.body_path_id])?;
+            item.set_item("domain_ast_path", &self.ast_paths[row.domain_ast_path_id])?;
+            item.set_item("domain_shape", &self.strings[row.domain_shape_id])?;
+            item.set_item("flags", &row.flags)?;
+            item.set_item("iter_ast_path", &self.ast_paths[row.iter_ast_path_id])?;
+            item.set_item("marker_id", row.marker_id)?;
+            match row.orelse_path_id {
+                Some(path_id) => item.set_item("orelse_path", &self.ast_paths[path_id])?,
+                None => item.set_item("orelse_path", py.None())?,
+            };
+            item.set_item("statement_path", &self.ast_paths[row.statement_path_id])?;
+            item.set_item("target_ast_path", &self.ast_paths[row.target_ast_path_id])?;
+            item.set_item(
+                "target_bindings",
+                self.binding_set_names(row.target_binding_set_id),
+            )?;
+            item.set_item("unroll_marker_id", row.unroll_marker_id)?;
             list.append(item)?;
         }
         Ok(list.into_any().unbind())
@@ -1008,6 +1172,614 @@ fn import_alias_binding_name(alias: &ast::Alias, from_import: bool) -> String {
         .to_string()
 }
 
+fn extract_typed_marker_rows_stmt(
+    stmt: &ast::Stmt,
+    path: &str,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    match stmt {
+        ast::Stmt::Expr(node) => {
+            if is_ref_statement_expr(&node.value) {
+                return Err(crate::errors::schema_error(
+                    "unsupported astichi_ref statement context",
+                ));
+            }
+            extract_ref_rows_expr(&node.value, &format!("{path}/value"), Some(path), package)
+        }
+        ast::Stmt::Assign(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                extract_ref_rows_expr(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            extract_ref_rows_expr(&node.value, &format!("{path}/value"), Some(path), package)
+        }
+        ast::Stmt::AnnAssign(node) => {
+            extract_ref_rows_expr(&node.target, &format!("{path}/target"), Some(path), package)?;
+            extract_ref_rows_expr(
+                &node.annotation,
+                &format!("{path}/annotation"),
+                Some(path),
+                package,
+            )?;
+            if let Some(value) = node.value.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/value"), Some(path), package)?;
+            }
+            Ok(())
+        }
+        ast::Stmt::AugAssign(node) => {
+            extract_ref_rows_expr(&node.target, &format!("{path}/target"), Some(path), package)?;
+            extract_ref_rows_expr(&node.value, &format!("{path}/value"), Some(path), package)
+        }
+        ast::Stmt::Delete(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                extract_ref_rows_expr(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/value"), Some(path), package)?;
+            }
+            Ok(())
+        }
+        ast::Stmt::For(node) => {
+            let iter_path = format!("{path}/iter");
+            if call_expr_name(&node.iter) == Some("astichi_for") {
+                add_unroll_row(node, path, &iter_path, package)?;
+            }
+            extract_ref_rows_expr(&node.target, &format!("{path}/target"), Some(path), package)?;
+            extract_ref_rows_expr(&node.iter, &iter_path, Some(path), package)?;
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            extract_typed_marker_rows_stmt_list(&node.orelse, &format!("{path}/orelse"), package)
+        }
+        ast::Stmt::While(node) => {
+            extract_ref_rows_expr(&node.test, &format!("{path}/test"), Some(path), package)?;
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            extract_typed_marker_rows_stmt_list(&node.orelse, &format!("{path}/orelse"), package)
+        }
+        ast::Stmt::If(node) => {
+            extract_ref_rows_expr(&node.test, &format!("{path}/test"), Some(path), package)?;
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            extract_typed_marker_rows_stmt_list(&node.orelse, &format!("{path}/orelse"), package)
+        }
+        ast::Stmt::With(node) => {
+            for (index, item) in node.items.iter().enumerate() {
+                extract_ref_rows_expr(
+                    &item.context_expr,
+                    &format!("{path}/items[{index}]/context_expr"),
+                    Some(path),
+                    package,
+                )?;
+                if let Some(optional_vars) = item.optional_vars.as_ref() {
+                    extract_ref_rows_expr(
+                        optional_vars,
+                        &format!("{path}/items[{index}]/optional_vars"),
+                        Some(path),
+                        package,
+                    )?;
+                }
+            }
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+        }
+        ast::Stmt::FunctionDef(node) => {
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                extract_ref_rows_expr(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                extract_ref_rows_expr(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+        }
+        ast::Stmt::ClassDef(node) => {
+            for (index, base) in node.bases.iter().enumerate() {
+                extract_ref_rows_expr(
+                    base,
+                    &format!("{path}/bases[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                extract_ref_rows_expr(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+        }
+        ast::Stmt::Try(node) => {
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            for (index, handler) in node.handlers.iter().enumerate() {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                extract_typed_marker_rows_stmt_list(
+                    &handler.body,
+                    &format!("{path}/handlers[{index}]/body"),
+                    package,
+                )?;
+            }
+            extract_typed_marker_rows_stmt_list(&node.orelse, &format!("{path}/orelse"), package)?;
+            extract_typed_marker_rows_stmt_list(
+                &node.finalbody,
+                &format!("{path}/finalbody"),
+                package,
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn extract_typed_marker_rows_stmt_list(
+    body: &[ast::Stmt],
+    parent_path: &str,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    for (index, stmt) in body.iter().enumerate() {
+        extract_typed_marker_rows_stmt(stmt, &format!("{parent_path}[{index}]"), package)?;
+    }
+    Ok(())
+}
+
+fn extract_ref_rows_expr(
+    expr: &ast::Expr,
+    path: &str,
+    statement_path: Option<&str>,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    match expr {
+        ast::Expr::Call(node) => {
+            if astichi_call_name(&node.func) == Some("astichi_ref") {
+                let marker_id = package.marker_id_for("astichi_ref", path)?;
+                package.add_ref_marker(
+                    marker_id,
+                    "value",
+                    "load",
+                    "",
+                    literal_ref_path(node),
+                    vec!["value_form".to_string()],
+                );
+            }
+            extract_ref_rows_expr(&node.func, &format!("{path}/func"), statement_path, package)?;
+            for (index, arg) in node.args.iter().enumerate() {
+                extract_ref_rows_expr(
+                    arg,
+                    &format!("{path}/args[{index}]"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                extract_ref_rows_expr(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Attribute(node) => {
+            let value_path = format!("{path}/value");
+            if is_ref_sentinel_attr(node) {
+                let ast::Expr::Call(call) = node.value.as_ref() else {
+                    unreachable!("is_ref_sentinel_attr only matches call values");
+                };
+                let marker_id = package.marker_id_for("astichi_ref", &value_path)?;
+                package.add_ref_marker(
+                    marker_id,
+                    "sentinel_attribute",
+                    expr_context_name(node.ctx),
+                    node.attr.as_str(),
+                    literal_ref_path(call),
+                    vec!["sentinel_attribute".to_string()],
+                );
+                return Ok(());
+            }
+            extract_ref_rows_expr(&node.value, &value_path, statement_path, package)
+        }
+        ast::Expr::BoolOp(node) => {
+            for (index, value) in node.values.iter().enumerate() {
+                extract_ref_rows_expr(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::NamedExpr(node) => {
+            extract_ref_rows_expr(
+                &node.target,
+                &format!("{path}/target"),
+                statement_path,
+                package,
+            )?;
+            extract_ref_rows_expr(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                package,
+            )
+        }
+        ast::Expr::BinOp(node) => {
+            extract_ref_rows_expr(&node.left, &format!("{path}/left"), statement_path, package)?;
+            extract_ref_rows_expr(
+                &node.right,
+                &format!("{path}/right"),
+                statement_path,
+                package,
+            )
+        }
+        ast::Expr::UnaryOp(node) => extract_ref_rows_expr(
+            &node.operand,
+            &format!("{path}/operand"),
+            statement_path,
+            package,
+        ),
+        ast::Expr::Lambda(node) => {
+            extract_ref_rows_expr(&node.body, &format!("{path}/body"), statement_path, package)
+        }
+        ast::Expr::IfExp(node) => {
+            extract_ref_rows_expr(&node.test, &format!("{path}/test"), statement_path, package)?;
+            extract_ref_rows_expr(&node.body, &format!("{path}/body"), statement_path, package)?;
+            extract_ref_rows_expr(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                statement_path,
+                package,
+            )
+        }
+        ast::Expr::Dict(node) => {
+            for (index, key) in node.keys.iter().enumerate() {
+                if let Some(key) = key {
+                    extract_ref_rows_expr(
+                        key,
+                        &format!("{path}/keys[{index}]"),
+                        statement_path,
+                        package,
+                    )?;
+                }
+            }
+            for (index, value) in node.values.iter().enumerate() {
+                extract_ref_rows_expr(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Set(node) => {
+            extract_ref_rows_expr_list(&node.elts, path, "elts", statement_path, package)
+        }
+        ast::Expr::List(node) => {
+            extract_ref_rows_expr_list(&node.elts, path, "elts", statement_path, package)
+        }
+        ast::Expr::Tuple(node) => {
+            extract_ref_rows_expr_list(&node.elts, path, "elts", statement_path, package)
+        }
+        ast::Expr::Subscript(node) => {
+            extract_ref_rows_expr(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                package,
+            )?;
+            extract_ref_rows_expr(
+                &node.slice,
+                &format!("{path}/slice"),
+                statement_path,
+                package,
+            )
+        }
+        ast::Expr::Starred(node) => extract_ref_rows_expr(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            package,
+        ),
+        ast::Expr::Compare(node) => {
+            extract_ref_rows_expr(&node.left, &format!("{path}/left"), statement_path, package)?;
+            for (index, value) in node.comparators.iter().enumerate() {
+                extract_ref_rows_expr(
+                    value,
+                    &format!("{path}/comparators[{index}]"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::FormattedValue(node) => {
+            extract_ref_rows_expr(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                package,
+            )?;
+            if let Some(value) = node.format_spec.as_ref() {
+                extract_ref_rows_expr(
+                    value,
+                    &format!("{path}/format_spec"),
+                    statement_path,
+                    package,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::JoinedStr(node) => {
+            extract_ref_rows_expr_list(&node.values, path, "values", statement_path, package)
+        }
+        ast::Expr::ListComp(node) => {
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+        }
+        ast::Expr::SetComp(node) => {
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+        }
+        ast::Expr::GeneratorExp(node) => {
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+        }
+        ast::Expr::DictComp(node) => {
+            extract_ref_rows_expr(&node.key, &format!("{path}/key"), statement_path, package)?;
+            extract_ref_rows_expr(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                package,
+            )
+        }
+        ast::Expr::Await(node) => extract_ref_rows_expr(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            package,
+        ),
+        ast::Expr::Yield(node) => {
+            if let Some(value) = node.value.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/value"), statement_path, package)?;
+            }
+            Ok(())
+        }
+        ast::Expr::YieldFrom(node) => extract_ref_rows_expr(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            package,
+        ),
+        ast::Expr::Slice(node) => {
+            if let Some(value) = node.lower.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/lower"), statement_path, package)?;
+            }
+            if let Some(value) = node.upper.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/upper"), statement_path, package)?;
+            }
+            if let Some(value) = node.step.as_ref() {
+                extract_ref_rows_expr(value, &format!("{path}/step"), statement_path, package)?;
+            }
+            Ok(())
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => Ok(()),
+    }
+}
+
+fn extract_ref_rows_expr_list(
+    values: &[ast::Expr],
+    path: &str,
+    field: &str,
+    statement_path: Option<&str>,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    for (index, value) in values.iter().enumerate() {
+        extract_ref_rows_expr(
+            value,
+            &format!("{path}/{field}[{index}]"),
+            statement_path,
+            package,
+        )?;
+    }
+    Ok(())
+}
+
+fn add_unroll_row(
+    node: &ast::StmtFor,
+    statement_path: &str,
+    iter_path: &str,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    let ast::Expr::Call(call) = &*node.iter else {
+        return Ok(());
+    };
+    let marker_id = package.marker_id_for("astichi_for", iter_path)?;
+    let domain = if call.args.len() == 1 {
+        call.args.first()
+    } else {
+        None
+    };
+    let target_bindings = target_binding_names(&node.target);
+    let domain_ast_path = if domain.is_some() {
+        format!("{iter_path}/args[0]")
+    } else {
+        String::new()
+    };
+    let orelse_path = if node.orelse.is_empty() {
+        None
+    } else {
+        Some(format!("{statement_path}/orelse"))
+    };
+    package.add_unroll_marker(
+        marker_id,
+        statement_path,
+        &format!("{statement_path}/target"),
+        iter_path,
+        &domain_ast_path,
+        &format!("{statement_path}/body"),
+        orelse_path.as_deref(),
+        target_bindings.clone(),
+        domain.map(domain_shape).unwrap_or(""),
+        unroll_marker_flags(node, domain, !target_bindings.is_empty()),
+    );
+    Ok(())
+}
+
+fn target_binding_names(target: &ast::Expr) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    collect_target_bindings(target, &mut names);
+    names.into_iter().collect()
+}
+
+fn unroll_marker_flags(
+    node: &ast::StmtFor,
+    domain: Option<&ast::Expr>,
+    has_target_bindings: bool,
+) -> Vec<String> {
+    let mut flags = vec!["statement_context".to_string(), "for_statement".to_string()];
+    if !node.orelse.is_empty() {
+        flags.push("has_else".to_string());
+    }
+    let ast::Expr::Call(call) = &*node.iter else {
+        return flags;
+    };
+    if domain.is_none() || !call.keywords.is_empty() {
+        flags.push("invalid_signature".to_string());
+    }
+    if has_target_bindings {
+        flags.push("simple_target".to_string());
+    } else {
+        flags.push("unsupported_target".to_string());
+    }
+    if domain.map(is_literal_unroll_domain).unwrap_or(false) {
+        flags.push("literal_domain".to_string());
+    } else if matches!(domain, Some(ast::Expr::Name(_))) {
+        flags.push("external_domain_candidate".to_string());
+    }
+    flags
+}
+
+fn is_literal_unroll_domain(expr: &ast::Expr) -> bool {
+    matches!(expr, ast::Expr::Tuple(_) | ast::Expr::List(_)) || is_range_domain(expr)
+}
+
+fn is_range_domain(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(node) => astichi_call_name(&node.func) == Some("range"),
+        _ => false,
+    }
+}
+
+fn domain_shape(expr: &ast::Expr) -> &'static str {
+    match expr {
+        ast::Expr::Tuple(_) => "tuple",
+        ast::Expr::List(_) => "list",
+        ast::Expr::Name(_) => "name",
+        ast::Expr::Call(node) if astichi_call_name(&node.func) == Some("range") => "range",
+        ast::Expr::Call(_) => "call",
+        ast::Expr::BoolOp(_) => "BoolOp",
+        ast::Expr::NamedExpr(_) => "NamedExpr",
+        ast::Expr::BinOp(_) => "BinOp",
+        ast::Expr::UnaryOp(_) => "UnaryOp",
+        ast::Expr::Lambda(_) => "Lambda",
+        ast::Expr::IfExp(_) => "IfExp",
+        ast::Expr::Dict(_) => "Dict",
+        ast::Expr::Set(_) => "Set",
+        ast::Expr::Attribute(_) => "Attribute",
+        ast::Expr::Subscript(_) => "Subscript",
+        ast::Expr::Starred(_) => "Starred",
+        ast::Expr::Compare(_) => "Compare",
+        ast::Expr::FormattedValue(_) => "FormattedValue",
+        ast::Expr::JoinedStr(_) => "JoinedStr",
+        ast::Expr::Constant(_) => "Constant",
+        ast::Expr::ListComp(_) => "ListComp",
+        ast::Expr::SetComp(_) => "SetComp",
+        ast::Expr::GeneratorExp(_) => "GeneratorExp",
+        ast::Expr::DictComp(_) => "DictComp",
+        ast::Expr::Await(_) => "Await",
+        ast::Expr::Yield(_) => "Yield",
+        ast::Expr::YieldFrom(_) => "YieldFrom",
+        ast::Expr::Slice(_) => "Slice",
+    }
+}
+
+fn is_ref_sentinel_attr(node: &ast::ExprAttribute) -> bool {
+    matches!(node.attr.as_str(), "_" | "astichi_v")
+        && call_expr_name(&node.value) == Some("astichi_ref")
+}
+
+fn is_ref_statement_expr(expr: &ast::Expr) -> bool {
+    if call_expr_name(expr) == Some("astichi_ref") {
+        return true;
+    }
+    match expr {
+        ast::Expr::Attribute(node) => is_ref_sentinel_attr(node),
+        _ => false,
+    }
+}
+
+fn literal_ref_path(node: &ast::ExprCall) -> Option<Vec<String>> {
+    if node.args.len() != 1 || !node.keywords.is_empty() {
+        return None;
+    }
+    let raw = match node.args.first()? {
+        ast::Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Str(value) => value.to_string(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    validate_dotted_path(&raw)
+}
+
+fn validate_dotted_path(raw: &str) -> Option<Vec<String>> {
+    let parts = raw.split('.').map(str::to_string).collect::<Vec<String>>();
+    if parts.is_empty() || parts.iter().any(|part| !is_ascii_identifier(part)) {
+        return None;
+    }
+    Some(parts)
+}
+
+fn is_ascii_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first != '_' && !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn expr_context_name(ctx: ast::ExprContext) -> &'static str {
+    match ctx {
+        ast::ExprContext::Load => "load",
+        ast::ExprContext::Store => "store",
+        ast::ExprContext::Del => "delete",
+    }
+}
+
 struct MarkerState {
     source_order: usize,
 }
@@ -1094,6 +1866,19 @@ fn visit_stmt_markers(
                 package,
                 marker_state,
             )
+        }
+        ast::Stmt::Delete(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                visit_expr_markers(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
         }
         ast::Stmt::Return(node) => {
             if let Some(value) = node.value.as_ref() {
@@ -1978,8 +2763,20 @@ fn sorted_unique(names: &[String]) -> Vec<String> {
 }
 
 fn call_name(expr: &ast::Expr) -> Option<&str> {
+    astichi_call_name(expr)
+}
+
+fn astichi_call_name(expr: &ast::Expr) -> Option<&str> {
     match expr {
         ast::Expr::Name(node) => Some(node.id.as_str()),
+        ast::Expr::Attribute(node) => Some(node.attr.as_str()),
+        _ => None,
+    }
+}
+
+fn call_expr_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Call(node) => astichi_call_name(&node.func),
         _ => None,
     }
 }
