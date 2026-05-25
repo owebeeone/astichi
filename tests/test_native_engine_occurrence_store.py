@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 import astichi
-from astichi.assembler import AssemblyScope, as_composable, require_one
+from astichi.assembler import (
+    AssemblyScope,
+    as_composable,
+    as_external_value,
+    as_identifier,
+    require_one,
+)
 from astichi.lower_engine import LowerEngine, current_surface_bundle_spec
 from astichi.lower_engine.native import load_native_extension, native_capabilities
 from astichi.perf_counters import collect_perf_counters
@@ -142,6 +148,7 @@ def test_native_candidate_query_finds_composable_expression_when_available() -> 
                 "hole.positional_variadic",
                 "hole.named_variadic",
             ],
+            "identifier_bindings": None,
         },
     )
 
@@ -182,6 +189,7 @@ def test_native_candidate_query_filters_owner_and_build_selectors_when_available
             "hole.positional_variadic",
             "hole.named_variadic",
         ],
+        "identifier_bindings": None,
     }
 
     matched = module.assembly_state_query_composable_candidates(
@@ -211,6 +219,48 @@ def test_native_candidate_query_filters_owner_and_build_selectors_when_available
     ]
     assert wrong_owner["candidates"] == []
     assert wrong_build["candidates"] == []
+
+
+def test_native_demand_query_finds_external_and_identifier_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "class class_name__astichi_arg__:\n"
+        "    default = astichi_bind_external(default_value)\n",
+    )
+    state = module.assembly_state_create(handle)
+    module.assembly_state_append_occurrence(handle, state, root_template, ("Root",))
+
+    identifier = module.assembly_state_query_demand_candidates(
+        handle,
+        state,
+        {
+            "name": "class_name",
+            "build_match": ["Root"],
+            "owner_match": None,
+            "target_inventory_kinds": ["identifier.demand"],
+            "identifier_bindings": None,
+        },
+    )
+    external = module.assembly_state_query_demand_candidates(
+        handle,
+        state,
+        {
+            "name": "default_value",
+            "build_match": ["Root"],
+            "owner_match": ["GeneratedClass"],
+            "target_inventory_kinds": ["external.bind"],
+            "identifier_bindings": [[0, "class_name", "GeneratedClass"]],
+        },
+    )
+
+    assert identifier["candidates"] == [{"target_record": [0, 0]}]
+    assert external["candidates"] == [{"target_record": [0, 1]}]
 
 
 def test_native_scope_add_routes_root_occurrence_when_available(
@@ -263,6 +313,50 @@ def test_native_scope_composable_lookup_uses_native_query_when_available(
     assert counts["candidate_lookup_lower"] == 1
     assert counts["native_candidate_query_composable"] == 1
     assert counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_external_and_identifier_lookup_use_native_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        "class class_name__astichi_arg__:\n"
+        "    default = astichi_bind_external(default_value)\n"
+    )
+    scope.add("Root", root)
+
+    with collect_perf_counters() as identifier_counters:
+        identifier = require_one(
+            scope.find_candidates(
+                as_identifier("GeneratedClass"),
+                name="class_name",
+                build_match=("Root",),
+            )
+        )
+    scope.apply(identifier)
+    with collect_perf_counters() as external_counters:
+        external = require_one(
+            scope.find_candidates(
+                as_external_value(7),
+                name="default_value",
+                build_match=("Root",),
+                owner_match=("GeneratedClass",),
+            )
+        )
+
+    identifier_counts = identifier_counters.snapshot()["counts"]
+    external_counts = external_counters.snapshot()["counts"]
+
+    assert identifier.demand_record.name.logical_name() == "class_name"
+    assert external.demand_record.name.logical_name() == "default_value"
+    assert str(external.demand_record.code_owner) == "GeneratedClass"
+    assert identifier_counts["native_candidate_query_identifier"] == 1
+    assert external_counts["native_candidate_query_external"] == 1
+    assert external_counts.get("debug_inventory_projection", 0) == 0
 
 
 def test_native_scope_apply_appends_child_occurrence_when_available(

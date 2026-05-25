@@ -401,7 +401,8 @@ fn assembly_state_query_composable_candidates(
         request.target_inventory_kinds.iter().cloned().collect();
 
     let mut raw_targets: Vec<RecordKey> = Vec::new();
-    if let Some(name) = &request.name {
+    if request.name.is_some() && request.identifier_bindings.is_empty() {
+        let name = request.name.as_ref().expect("checked is_some");
         if let Some(records) = state_ref.indexes.by_resource_name.get(name) {
             raw_targets.extend(records.iter().copied());
         }
@@ -431,8 +432,12 @@ fn assembly_state_query_composable_candidates(
         if !target_kind_set.contains(&target_record.inventory_kind) {
             continue;
         }
+        let target_bindings = request
+            .identifier_bindings
+            .get(&target_key.occurrence_index);
+        let target_resource_name = resolved_name(&target_record.resource_name, target_bindings);
         if let Some(name) = &request.name {
-            if target_record.resource_name != *name {
+            if target_resource_name != *name {
                 continue;
             }
         }
@@ -442,7 +447,8 @@ fn assembly_state_query_composable_candidates(
             }
         }
         if let Some(owner_match) = &request.owner_match {
-            if !matches_path(owner_match, &target_record.code_owner)? {
+            let code_owner = resolved_owner(&target_record.code_owner, target_bindings);
+            if !matches_path(owner_match, &code_owner)? {
                 continue;
             }
         }
@@ -484,6 +490,92 @@ fn assembly_state_query_composable_candidates(
     Ok(result.into_any().unbind())
 }
 
+#[pyfunction(name = "assembly_state_query_demand_candidates")]
+fn assembly_state_query_demand_candidates(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    request: &Bound<'_, PyDict>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    let state_ref = engine.state(state.index)?;
+    let request = parse_candidate_query_request(request)?;
+    let target_kind_set: BTreeSet<String> =
+        request.target_inventory_kinds.iter().cloned().collect();
+
+    let mut raw_targets: Vec<RecordKey> = Vec::new();
+    if request.name.is_some() && request.identifier_bindings.is_empty() {
+        let name = request.name.as_ref().expect("checked is_some");
+        if let Some(records) = state_ref.indexes.by_resource_name.get(name) {
+            raw_targets.extend(records.iter().copied());
+        }
+    } else {
+        for kind in &request.target_inventory_kinds {
+            if let Some(records) = state_ref.indexes.by_inventory_kind.get(kind) {
+                raw_targets.extend(records.iter().copied());
+            }
+        }
+    }
+
+    let candidates = PyList::empty(py);
+    let mut seen_targets = BTreeSet::new();
+    for target_key in raw_targets {
+        if !seen_targets.insert(target_key) {
+            continue;
+        }
+        if !record_is_visible(state_ref, target_key)? {
+            continue;
+        }
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index)?;
+        let target_template = engine.template(target_occurrence.template_index)?;
+        let target_record = target_template
+            .records()
+            .get(target_key.template_record_index)
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))?;
+        if !target_kind_set.contains(&target_record.inventory_kind) {
+            continue;
+        }
+        let target_bindings = request
+            .identifier_bindings
+            .get(&target_key.occurrence_index);
+        let target_resource_name = resolved_name(&target_record.resource_name, target_bindings);
+        if let Some(name) = &request.name {
+            if target_resource_name != *name {
+                continue;
+            }
+        }
+        if let Some(build_match) = &request.build_match {
+            if !matches_path(build_match, &target_occurrence.build_path)? {
+                continue;
+            }
+        }
+        if let Some(owner_match) = &request.owner_match {
+            let code_owner = resolved_owner(&target_record.code_owner, target_bindings);
+            if !matches_path(owner_match, &code_owner)? {
+                continue;
+            }
+        }
+
+        let candidate = PyDict::new(py);
+        candidate.set_item(
+            "target_record",
+            vec![
+                target_key.occurrence_index,
+                target_key.template_record_index,
+            ],
+        )?;
+        candidates.append(candidate)?;
+    }
+
+    let summary = PyDict::new(py);
+    summary.set_item("candidate_count", candidates.len())?;
+    let result = PyDict::new(py);
+    result.set_item("candidates", candidates)?;
+    result.set_item("diagnostic_summary", summary)?;
+    Ok(result.into_any().unbind())
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeTemplateHandle>()?;
     m.add_class::<NativeAssemblyStateHandle>()?;
@@ -499,6 +591,7 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         assembly_state_query_composable_candidates,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(assembly_state_query_demand_candidates, m)?)?;
     Ok(())
 }
 
@@ -781,6 +874,7 @@ struct CandidateQueryRequest {
     build_match: Option<Vec<String>>,
     owner_match: Option<Vec<String>>,
     target_inventory_kinds: Vec<String>,
+    identifier_bindings: BTreeMap<usize, BTreeMap<String, String>>,
 }
 
 fn parse_candidate_query_request(request: &Bound<'_, PyDict>) -> PyResult<CandidateQueryRequest> {
@@ -789,6 +883,7 @@ fn parse_candidate_query_request(request: &Bound<'_, PyDict>) -> PyResult<Candid
         build_match: get_optional_string_list(request, "build_match")?,
         owner_match: get_optional_string_list(request, "owner_match")?,
         target_inventory_kinds: get_string_list(request, "target_inventory_kinds")?,
+        identifier_bindings: get_identifier_bindings(request, "identifier_bindings")?,
     })
 }
 
@@ -797,6 +892,20 @@ fn record_is_visible(state: &NativeAssemblyState, record_key: RecordKey) -> PyRe
     Ok(occurrence.live
         && !state.dead_records.contains(&record_key)
         && !state.satisfied_records.contains(&record_key))
+}
+
+fn resolved_name(name: &str, bindings: Option<&BTreeMap<String, String>>) -> String {
+    bindings
+        .and_then(|items| items.get(name))
+        .cloned()
+        .unwrap_or_else(|| name.to_string())
+}
+
+fn resolved_owner(owner: &[String], bindings: Option<&BTreeMap<String, String>>) -> Vec<String> {
+    owner
+        .iter()
+        .map(|part| resolved_name(part, bindings))
+        .collect()
 }
 
 fn matches_path(selector: &[String], path: &[String]) -> PyResult<bool> {
@@ -946,6 +1055,42 @@ fn get_optional_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Opt
         return Ok(None);
     }
     parse_string_sequence(&value, key).map(Some)
+}
+
+fn get_identifier_bindings(
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+) -> PyResult<BTreeMap<usize, BTreeMap<String, String>>> {
+    let value = required(dict, key)?;
+    if value.is_none() {
+        return Ok(BTreeMap::new());
+    }
+    let mut bindings: BTreeMap<usize, BTreeMap<String, String>> = BTreeMap::new();
+    for item in value.try_iter()? {
+        let item = item?;
+        let fields: Vec<Bound<'_, PyAny>> = item.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+        if fields.len() != 3 {
+            return Err(crate::errors::schema_error(&format!(
+                "{key} entries must be triples"
+            )));
+        }
+        let occurrence_index = fields[0].extract::<usize>().map_err(|_| {
+            crate::errors::schema_error(&format!(
+                "{key} occurrence indexes must be unsigned integers"
+            ))
+        })?;
+        let source_name = fields[1].extract::<String>().map_err(|_| {
+            crate::errors::schema_error(&format!("{key} source names must be strings"))
+        })?;
+        let target_name = fields[2].extract::<String>().map_err(|_| {
+            crate::errors::schema_error(&format!("{key} target names must be strings"))
+        })?;
+        bindings
+            .entry(occurrence_index)
+            .or_default()
+            .insert(source_name, target_name);
+    }
+    Ok(bindings)
 }
 
 fn parse_string_sequence(value: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<String>> {

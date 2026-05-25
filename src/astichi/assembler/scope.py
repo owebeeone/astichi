@@ -1841,6 +1841,7 @@ class AssemblyScope:
                 else list(selector.owner_match)
             ),
             "target_inventory_kinds": list(_lower_hole_inventory_kinds()),
+            "identifier_bindings": self._native_identifier_bindings_payload(),
         }
         counters = active_perf_counters()
         if counters is not None:
@@ -1899,11 +1900,83 @@ class AssemblyScope:
             ),
         )
 
+    def _find_native_demand_records(
+        self,
+        selector: DemandSelector,
+        *,
+        inventory_kinds: tuple[str, ...],
+        counter_key: str,
+    ) -> tuple[InventoryRecord, ...] | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return None
+        request = {
+            "name": selector.name,
+            "build_match": (
+                None
+                if selector.build_match is None
+                else list(selector.build_match)
+            ),
+            "owner_match": (
+                None
+                if selector.owner_match is None
+                else list(selector.owner_match)
+            ),
+            "target_inventory_kinds": list(inventory_kinds),
+            "identifier_bindings": self._native_identifier_bindings_payload(),
+        }
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment(counter_key)
+        result = self._native_module.assembly_state_query_demand_candidates(
+            self._native_engine_handle,
+            self._native_state_handle,
+            request,
+        )
+        if not isinstance(result, dict):
+            raise TypeError("native demand query result must be a dict")
+        raw_candidates = result.get("candidates")
+        if not isinstance(raw_candidates, list):
+            raise TypeError("native demand query candidates must be a list")
+        records: list[InventoryRecord] = []
+        for raw_candidate in raw_candidates:
+            if not isinstance(raw_candidate, dict):
+                raise TypeError("native demand candidate entry must be a dict")
+            record = self._visible_lower_projection_record(
+                self._native_record_id(raw_candidate.get("target_record"))
+            )
+            if record is not None:
+                records.append(record)
+        return tuple(records)
+
+    def _native_identifier_bindings_payload(self) -> list[list[object]]:
+        return [
+            [occurrence_id.index, source_name, target_name]
+            for occurrence_id, bindings in sorted(
+                self._identifier_bindings_by_occurrence.items(),
+                key=lambda item: item[0].index,
+            )
+            for source_name, target_name in sorted(bindings.items())
+        ]
+
     def _find_lower_external_candidates(
         self,
         resource: ExternalValueResource,
         selector: DemandSelector,
     ) -> tuple[BindingCandidate, ...]:
+        native_records = self._find_native_demand_records(
+            selector,
+            inventory_kinds=("external.bind",),
+            counter_key="native_candidate_query_external",
+        )
+        if native_records is not None:
+            return tuple(
+                ExternalValueCandidate(demand_record=record, resource=resource)
+                for record in native_records
+            )
         return tuple(
             ExternalValueCandidate(demand_record=record, resource=resource)
             for record in self._lower_records_for_selector(
@@ -1917,6 +1990,16 @@ class AssemblyScope:
         resource: IdentifierNameResource,
         selector: DemandSelector,
     ) -> tuple[BindingCandidate, ...]:
+        native_records = self._find_native_demand_records(
+            selector,
+            inventory_kinds=("identifier.demand",),
+            counter_key="native_candidate_query_identifier",
+        )
+        if native_records is not None:
+            return tuple(
+                IdentifierNameCandidate(demand_record=record, resource=resource)
+                for record in native_records
+            )
         return tuple(
             IdentifierNameCandidate(demand_record=record, resource=resource)
             for record in self._lower_records_for_selector(
