@@ -1137,23 +1137,45 @@ Status: implemented for applying a native `replace_expression` edge to a cloned
 native materialization workspace. The copied source expression remains native IR
 until the explicit artifact boundary.
 
-### N10b2: Native External/Ref Overlay Materializer
+### N10b2a: Native Literal Ref Materializer
 
-Goal: materialize external overlays and `astichi_ref(...)` marker forms over
-native IR.
+Goal: materialize literal `astichi_ref(...)` marker forms over native IR.
+
+Work:
+
+- lower literal `astichi_ref("pkg.path")` value forms to native
+  `Name`/`Attribute` chains;
+- lower literal sentinel forms such as `astichi_ref("self.field")._` and
+  `.astichi_v` while preserving store/delete context;
+- leave f-string, external-bound, and method-form refs for the external/ref
+  overlay slice unless native can reduce them without facade-owned values.
+
+Acceptance:
+
+- literal ref materialized snapshots match Python reference;
+- no Python AST mutation is used on the native path.
+
+Status: implemented for literal value-form refs and literal sentinel refs over
+cloned native IR. External-bound and dynamic refs remain in N10b2b.
+
+### N10b2b: Native External/Dynamic Ref Overlay Materializer
+
+Goal: materialize external overlays and dynamic `astichi_ref(...)` forms over
+native IR while keeping Python object ownership at the facade boundary.
 
 Work:
 
 - lower external slots into artifact placeholders or copied values according
   to the existing facade policy;
-- lower `astichi_ref(...)` value and sentinel forms;
+- lower f-string, external-bound, and method-form `astichi_ref(...)` values
+  after overlay values are available;
 - strip consumed external/ref markers;
 - keep external Python object ownership in the Python facade while native owns
   the marker rewrite decisions.
 
 Acceptance:
 
-- external/ref materialized snapshots match Python reference;
+- external/dynamic-ref materialized snapshots match Python reference;
 - executable subset tests pass once copied through the artifact boundary;
 - no Python AST mutation is used on the native path.
 

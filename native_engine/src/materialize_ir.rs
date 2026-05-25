@@ -122,6 +122,24 @@ fn materialization_workspace_resolve_locator(
     Ok(snapshot.into_any().unbind())
 }
 
+#[pyfunction(name = "materialization_workspace_resolve_ast_path")]
+fn materialization_workspace_resolve_ast_path(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    ast_path: String,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    let workspace_ref = engine.workspace(workspace.index)?;
+    let resolved_kind = resolve_ast_path(workspace_ref.module(), &ast_path)?;
+    let snapshot = PyDict::new(py);
+    snapshot.set_item("ast_path", ast_path)?;
+    snapshot.set_item("resolved_kind", resolved_kind)?;
+    snapshot.set_item("template_id", workspace_ref.template_index)?;
+    Ok(snapshot.into_any().unbind())
+}
+
 #[pyfunction(name = "materialization_workspace_replace_statement_with_pass")]
 fn materialization_workspace_replace_statement_with_pass(
     mut engine: PyRefMut<'_, EngineHandle>,
@@ -191,6 +209,17 @@ fn materialization_workspace_apply_expression_edge(
     replace_expr_at_path(workspace_ref.module_mut(), &target_path, replacement)
 }
 
+#[pyfunction(name = "materialization_workspace_lower_literal_refs")]
+fn materialization_workspace_lower_literal_refs(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+) -> PyResult<usize> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    lower_literal_refs_in_module(workspace_ref.module_mut())
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeMaterializationWorkspaceHandle>()?;
     m.add_function(wrap_pyfunction!(materialization_workspace_create, m)?)?;
@@ -200,11 +229,19 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
+        materialization_workspace_resolve_ast_path,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
         materialization_workspace_replace_statement_with_pass,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
         materialization_workspace_apply_expression_edge,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_lower_literal_refs,
         m
     )?)?;
     m.add(
@@ -320,6 +357,10 @@ fn resolve_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<&'s
         ast::Stmt::Expr(node) if first.field == "value" => resolve_from_expr(&node.value, rest),
         ast::Stmt::Assign(node) if first.field == "value" => resolve_from_expr(&node.value, rest),
         ast::Stmt::Assign(node) if first.field == "targets" => {
+            let target = indexed_expr(&node.targets, first)?;
+            resolve_from_expr(target, rest)
+        }
+        ast::Stmt::Delete(node) if first.field == "targets" => {
             let target = indexed_expr(&node.targets, first)?;
             resolve_from_expr(target, rest)
         }
@@ -465,6 +506,10 @@ fn clone_expr_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<
             let target = indexed_expr(&node.targets, first)?;
             clone_expr_from_expr(target, rest)
         }
+        ast::Stmt::Delete(node) if first.field == "targets" => {
+            let target = indexed_expr(&node.targets, first)?;
+            clone_expr_from_expr(target, rest)
+        }
         ast::Stmt::Return(node) if first.field == "value" => {
             let value = node
                 .value
@@ -603,6 +648,9 @@ fn replace_expr_in_stmt(
         ast::Stmt::Assign(node) if first.field == "targets" => {
             replace_indexed_expr(&mut node.targets, first, rest, replacement)
         }
+        ast::Stmt::Delete(node) if first.field == "targets" => {
+            replace_indexed_expr(&mut node.targets, first, rest, replacement)
+        }
         ast::Stmt::Return(node) if first.field == "value" => {
             let value = node
                 .value
@@ -727,6 +775,430 @@ fn replace_expr_in_expr(
             first.field,
             expr_kind(expr)
         ))),
+    }
+}
+
+fn lower_literal_refs_in_module(module: &mut ast::ModModule) -> PyResult<usize> {
+    lower_literal_refs_in_stmt_list(&mut module.body)
+}
+
+fn lower_literal_refs_in_stmt_list(body: &mut [ast::Stmt]) -> PyResult<usize> {
+    let mut count = 0;
+    for stmt in body {
+        count += lower_literal_refs_in_stmt(stmt)?;
+    }
+    Ok(count)
+}
+
+fn lower_literal_refs_in_stmt(stmt: &mut ast::Stmt) -> PyResult<usize> {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            let mut count = lower_literal_refs_in_expr_list(&mut node.decorator_list)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            Ok(count)
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            let mut count = lower_literal_refs_in_expr_list(&mut node.decorator_list)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            Ok(count)
+        }
+        ast::Stmt::ClassDef(node) => {
+            let mut count = lower_literal_refs_in_expr_list(&mut node.decorator_list)?;
+            count += lower_literal_refs_in_expr_list(&mut node.bases)?;
+            for keyword in &mut node.keywords {
+                count += lower_literal_refs_in_expr(&mut keyword.value)?;
+            }
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            Ok(count)
+        }
+        ast::Stmt::Return(node) => match node.value.as_mut() {
+            Some(value) => lower_literal_refs_in_expr(value),
+            None => Ok(0),
+        },
+        ast::Stmt::Delete(node) => lower_literal_refs_in_expr_list(&mut node.targets),
+        ast::Stmt::Assign(node) => {
+            let mut count = lower_literal_refs_in_expr_list(&mut node.targets)?;
+            count += lower_literal_refs_in_expr(&mut node.value)?;
+            Ok(count)
+        }
+        ast::Stmt::AugAssign(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.target)?;
+            count += lower_literal_refs_in_expr(&mut node.value)?;
+            Ok(count)
+        }
+        ast::Stmt::AnnAssign(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.target)?;
+            count += lower_literal_refs_in_expr(&mut node.annotation)?;
+            if let Some(value) = node.value.as_mut() {
+                count += lower_literal_refs_in_expr(value)?;
+            }
+            Ok(count)
+        }
+        ast::Stmt::For(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.target)?;
+            count += lower_literal_refs_in_expr(&mut node.iter)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            Ok(count)
+        }
+        ast::Stmt::AsyncFor(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.target)?;
+            count += lower_literal_refs_in_expr(&mut node.iter)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            Ok(count)
+        }
+        ast::Stmt::While(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.test)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            Ok(count)
+        }
+        ast::Stmt::If(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.test)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            Ok(count)
+        }
+        ast::Stmt::With(node) => {
+            let mut count = 0;
+            for item in &mut node.items {
+                count += lower_literal_refs_in_expr(&mut item.context_expr)?;
+                if let Some(optional_vars) = item.optional_vars.as_mut() {
+                    count += lower_literal_refs_in_expr(optional_vars)?;
+                }
+            }
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            Ok(count)
+        }
+        ast::Stmt::AsyncWith(node) => {
+            let mut count = 0;
+            for item in &mut node.items {
+                count += lower_literal_refs_in_expr(&mut item.context_expr)?;
+                if let Some(optional_vars) = item.optional_vars.as_mut() {
+                    count += lower_literal_refs_in_expr(optional_vars)?;
+                }
+            }
+            count += lower_literal_refs_in_stmt_list(&mut node.body)?;
+            Ok(count)
+        }
+        ast::Stmt::Match(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.subject)?;
+            for case in &mut node.cases {
+                if let Some(guard) = case.guard.as_mut() {
+                    count += lower_literal_refs_in_expr(guard)?;
+                }
+                count += lower_literal_refs_in_stmt_list(&mut case.body)?;
+            }
+            Ok(count)
+        }
+        ast::Stmt::Raise(node) => {
+            let mut count = 0;
+            if let Some(exc) = node.exc.as_mut() {
+                count += lower_literal_refs_in_expr(exc)?;
+            }
+            if let Some(cause) = node.cause.as_mut() {
+                count += lower_literal_refs_in_expr(cause)?;
+            }
+            Ok(count)
+        }
+        ast::Stmt::Try(node) => {
+            let mut count = lower_literal_refs_in_stmt_list(&mut node.body)?;
+            for handler in &mut node.handlers {
+                match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        if let Some(type_expr) = handler.type_.as_mut() {
+                            count += lower_literal_refs_in_expr(type_expr)?;
+                        }
+                        count += lower_literal_refs_in_stmt_list(&mut handler.body)?;
+                    }
+                }
+            }
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.finalbody)?;
+            Ok(count)
+        }
+        ast::Stmt::TryStar(node) => {
+            let mut count = lower_literal_refs_in_stmt_list(&mut node.body)?;
+            for handler in &mut node.handlers {
+                match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        if let Some(type_expr) = handler.type_.as_mut() {
+                            count += lower_literal_refs_in_expr(type_expr)?;
+                        }
+                        count += lower_literal_refs_in_stmt_list(&mut handler.body)?;
+                    }
+                }
+            }
+            count += lower_literal_refs_in_stmt_list(&mut node.orelse)?;
+            count += lower_literal_refs_in_stmt_list(&mut node.finalbody)?;
+            Ok(count)
+        }
+        ast::Stmt::Assert(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.test)?;
+            if let Some(msg) = node.msg.as_mut() {
+                count += lower_literal_refs_in_expr(msg)?;
+            }
+            Ok(count)
+        }
+        ast::Stmt::Expr(node) => lower_literal_refs_in_expr(&mut node.value),
+        ast::Stmt::TypeAlias(_)
+        | ast::Stmt::Import(_)
+        | ast::Stmt::ImportFrom(_)
+        | ast::Stmt::Global(_)
+        | ast::Stmt::Nonlocal(_)
+        | ast::Stmt::Pass(_)
+        | ast::Stmt::Break(_)
+        | ast::Stmt::Continue(_) => Ok(0),
+    }
+}
+
+fn lower_literal_refs_in_expr_list(items: &mut [ast::Expr]) -> PyResult<usize> {
+    let mut count = 0;
+    for item in items {
+        count += lower_literal_refs_in_expr(item)?;
+    }
+    Ok(count)
+}
+
+fn lower_literal_refs_in_expr(expr: &mut ast::Expr) -> PyResult<usize> {
+    if let Some(lowered) = lower_literal_ref_surface(expr)? {
+        *expr = lowered;
+        return Ok(1);
+    }
+    match expr {
+        ast::Expr::BoolOp(node) => lower_literal_refs_in_expr_list(&mut node.values),
+        ast::Expr::NamedExpr(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.target)?;
+            count += lower_literal_refs_in_expr(&mut node.value)?;
+            Ok(count)
+        }
+        ast::Expr::BinOp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.left)?;
+            count += lower_literal_refs_in_expr(&mut node.right)?;
+            Ok(count)
+        }
+        ast::Expr::UnaryOp(node) => lower_literal_refs_in_expr(&mut node.operand),
+        ast::Expr::Lambda(node) => lower_literal_refs_in_expr(&mut node.body),
+        ast::Expr::IfExp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.test)?;
+            count += lower_literal_refs_in_expr(&mut node.body)?;
+            count += lower_literal_refs_in_expr(&mut node.orelse)?;
+            Ok(count)
+        }
+        ast::Expr::Dict(node) => {
+            let mut count = 0;
+            for key in &mut node.keys {
+                if let Some(key) = key.as_mut() {
+                    count += lower_literal_refs_in_expr(key)?;
+                }
+            }
+            count += lower_literal_refs_in_expr_list(&mut node.values)?;
+            Ok(count)
+        }
+        ast::Expr::Set(node) => lower_literal_refs_in_expr_list(&mut node.elts),
+        ast::Expr::ListComp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.elt)?;
+            count += lower_literal_refs_in_comprehensions(&mut node.generators)?;
+            Ok(count)
+        }
+        ast::Expr::SetComp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.elt)?;
+            count += lower_literal_refs_in_comprehensions(&mut node.generators)?;
+            Ok(count)
+        }
+        ast::Expr::GeneratorExp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.elt)?;
+            count += lower_literal_refs_in_comprehensions(&mut node.generators)?;
+            Ok(count)
+        }
+        ast::Expr::DictComp(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.key)?;
+            count += lower_literal_refs_in_expr(&mut node.value)?;
+            count += lower_literal_refs_in_comprehensions(&mut node.generators)?;
+            Ok(count)
+        }
+        ast::Expr::Await(node) => lower_literal_refs_in_expr(&mut node.value),
+        ast::Expr::Yield(node) => match node.value.as_mut() {
+            Some(value) => lower_literal_refs_in_expr(value),
+            None => Ok(0),
+        },
+        ast::Expr::YieldFrom(node) => lower_literal_refs_in_expr(&mut node.value),
+        ast::Expr::Compare(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.left)?;
+            count += lower_literal_refs_in_expr_list(&mut node.comparators)?;
+            Ok(count)
+        }
+        ast::Expr::Call(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.func)?;
+            count += lower_literal_refs_in_expr_list(&mut node.args)?;
+            for keyword in &mut node.keywords {
+                count += lower_literal_refs_in_expr(&mut keyword.value)?;
+            }
+            Ok(count)
+        }
+        ast::Expr::FormattedValue(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.value)?;
+            if let Some(format_spec) = node.format_spec.as_mut() {
+                count += lower_literal_refs_in_expr(format_spec)?;
+            }
+            Ok(count)
+        }
+        ast::Expr::JoinedStr(node) => lower_literal_refs_in_expr_list(&mut node.values),
+        ast::Expr::Attribute(node) => lower_literal_refs_in_expr(&mut node.value),
+        ast::Expr::Subscript(node) => {
+            let mut count = lower_literal_refs_in_expr(&mut node.value)?;
+            count += lower_literal_refs_in_expr(&mut node.slice)?;
+            Ok(count)
+        }
+        ast::Expr::Starred(node) => lower_literal_refs_in_expr(&mut node.value),
+        ast::Expr::List(node) => lower_literal_refs_in_expr_list(&mut node.elts),
+        ast::Expr::Tuple(node) => lower_literal_refs_in_expr_list(&mut node.elts),
+        ast::Expr::Slice(node) => {
+            let mut count = 0;
+            if let Some(lower) = node.lower.as_mut() {
+                count += lower_literal_refs_in_expr(lower)?;
+            }
+            if let Some(upper) = node.upper.as_mut() {
+                count += lower_literal_refs_in_expr(upper)?;
+            }
+            if let Some(step) = node.step.as_mut() {
+                count += lower_literal_refs_in_expr(step)?;
+            }
+            Ok(count)
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => Ok(0),
+    }
+}
+
+fn lower_literal_refs_in_comprehensions(generators: &mut [ast::Comprehension]) -> PyResult<usize> {
+    let mut count = 0;
+    for generator in generators {
+        count += lower_literal_refs_in_expr(&mut generator.target)?;
+        count += lower_literal_refs_in_expr(&mut generator.iter)?;
+        count += lower_literal_refs_in_expr_list(&mut generator.ifs)?;
+    }
+    Ok(count)
+}
+
+fn lower_literal_ref_surface(expr: &ast::Expr) -> PyResult<Option<ast::Expr>> {
+    match expr {
+        ast::Expr::Call(node) if astichi_ref_call_segments(node)?.is_some() => {
+            let segments = astichi_ref_call_segments(node)?.expect("checked is_some");
+            Ok(Some(chain_expr(&segments, ast::ExprContext::Load)?))
+        }
+        ast::Expr::Attribute(node)
+            if matches!(node.attr.as_str(), "_" | "astichi_v")
+                && matches!(node.value.as_ref(), ast::Expr::Call(_)) =>
+        {
+            let ast::Expr::Call(call) = node.value.as_ref() else {
+                unreachable!("matches checked above");
+            };
+            match astichi_ref_call_segments(call)? {
+                Some(segments) => Ok(Some(chain_expr(&segments, node.ctx)?)),
+                None => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn astichi_ref_call_segments(node: &ast::ExprCall) -> PyResult<Option<Vec<String>>> {
+    if astichi_call_name(&node.func) != Some("astichi_ref") {
+        return Ok(None);
+    }
+    if node.args.len() != 1 || !node.keywords.is_empty() {
+        return Ok(None);
+    }
+    let Some(raw) = literal_string_expr(&node.args[0]) else {
+        return Ok(None);
+    };
+    let segments = raw.split('.').map(str::to_string).collect::<Vec<_>>();
+    if segments.is_empty() || segments.iter().any(|part| !is_ascii_identifier(part)) {
+        return Err(crate::errors::schema_error(
+            "native literal astichi_ref path is not a valid dotted reference",
+        ));
+    }
+    Ok(Some(segments))
+}
+
+fn astichi_call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.as_str()),
+        ast::Expr::Attribute(node) => Some(node.attr.as_str()),
+        _ => None,
+    }
+}
+
+fn literal_string_expr(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Constant(node) => match &node.value {
+            ast::Constant::Str(value) => Some(value.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_ascii_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first != '_' && !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn chain_expr(segments: &[String], ctx: ast::ExprContext) -> PyResult<ast::Expr> {
+    if segments.is_empty() {
+        return Err(crate::errors::schema_error(
+            "native literal astichi_ref path is empty",
+        ));
+    }
+    let source = format!("{}\n", segments.join("."));
+    let module = crate::parser_ir::parse_native_module(&source, "<astichi-ref>")?;
+    let mut expr = module
+        .body
+        .into_iter()
+        .next()
+        .and_then(|stmt| match stmt {
+            ast::Stmt::Expr(node) => Some(*node.value),
+            _ => None,
+        })
+        .ok_or_else(|| crate::errors::schema_error("failed to build native ref chain"))?;
+    set_ref_chain_context(&mut expr, ctx)?;
+    Ok(expr)
+}
+
+fn set_ref_chain_context(expr: &mut ast::Expr, ctx: ast::ExprContext) -> PyResult<()> {
+    match expr {
+        ast::Expr::Name(node) => {
+            node.ctx = ctx;
+            Ok(())
+        }
+        ast::Expr::Attribute(node) => {
+            node.ctx = ctx;
+            force_load_context(&mut node.value);
+            Ok(())
+        }
+        _ => Err(crate::errors::schema_error(
+            "native ref chain did not parse as a name or attribute",
+        )),
+    }
+}
+
+fn force_load_context(expr: &mut ast::Expr) {
+    match expr {
+        ast::Expr::Name(node) => {
+            node.ctx = ast::ExprContext::Load;
+        }
+        ast::Expr::Attribute(node) => {
+            node.ctx = ast::ExprContext::Load;
+            force_load_context(&mut node.value);
+        }
+        _ => {}
     }
 }
 

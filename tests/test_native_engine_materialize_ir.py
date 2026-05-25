@@ -140,6 +140,66 @@ def test_native_materialization_workspace_applies_expression_edge_when_available
     }
 
 
+@pytest.mark.parametrize(
+    ("source", "probe_path", "before_kind", "after_kind"),
+    [
+        pytest.param(
+            "value = astichi_ref('pkg.mod')\n",
+            "body[0]/value",
+            "Call",
+            "Attribute",
+            id="value-form",
+        ),
+        pytest.param(
+            "astichi_ref('self.f0')._ = 42\n",
+            "body[0]/targets[0]/value",
+            "Call",
+            "Name",
+            id="store-sentinel",
+        ),
+        pytest.param(
+            "del astichi_ref('self.f0').astichi_v\n",
+            "body[0]/targets[0]/value",
+            "Call",
+            "Name",
+            id="delete-sentinel",
+        ),
+    ],
+)
+def test_native_materialization_workspace_lowers_literal_refs_when_available(
+    source: str,
+    probe_path: str,
+    before_kind: str,
+    after_kind: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        source,
+        "workspace.py",
+        1,
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        probe_path,
+    )["resolved_kind"] == before_kind
+    count = module.materialization_workspace_lower_literal_refs(engine, workspace)
+
+    assert count == 1
+    assert module.materialization_workspace_resolve_ast_path(
+        engine,
+        workspace,
+        probe_path,
+    )["resolved_kind"] == after_kind
+
+
 def test_native_materialization_workspace_bad_locator_diagnostic_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
