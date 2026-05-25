@@ -24,6 +24,8 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.template_extract.identifier_suffix.v1",
             "native.template_extract.payload.v1",
             "native.template_extract.insert_metadata.v1",
+            "native.occurrence_store.v1",
+            "native.record_indexes.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

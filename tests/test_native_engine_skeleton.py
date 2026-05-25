@@ -180,6 +180,8 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.template_extract.identifier_suffix.v1",
         "native.template_extract.payload.v1",
         "native.template_extract.insert_metadata.v1",
+        "native.occurrence_store.v1",
+        "native.record_indexes.v1",
     ]
     assert capabilities["supported_bundle_schema_versions"] == [1]
     assert native_self_test() is True

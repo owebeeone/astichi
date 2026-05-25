@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::occurrence_store::{NativeAssemblyState, NativeTemplate};
 use crate::surface_registry::RegisteredSurfaceBundle;
 
 pub const HANDLE_KIND_ENGINE: &str = "engine";
@@ -13,6 +14,8 @@ pub struct EngineHandle {
     generation: u64,
     closed: bool,
     surface_bundle: Option<RegisteredSurfaceBundle>,
+    templates: Vec<NativeTemplate>,
+    states: Vec<NativeAssemblyState>,
 }
 
 impl EngineHandle {
@@ -24,6 +27,8 @@ impl EngineHandle {
             generation: 0,
             closed: false,
             surface_bundle: None,
+            templates: Vec::new(),
+            states: Vec::new(),
         }
     }
 
@@ -47,6 +52,49 @@ impl EngineHandle {
 
     pub fn surface_bundle(&self) -> Option<&RegisteredSurfaceBundle> {
         self.surface_bundle.as_ref()
+    }
+
+    pub fn template_count(&self) -> usize {
+        self.templates.len()
+    }
+
+    pub fn push_template(&mut self, template: NativeTemplate) -> PyResult<usize> {
+        self.ensure_open()?;
+        let index = self.templates.len();
+        self.templates.push(template);
+        Ok(index)
+    }
+
+    pub fn template(&self, index: usize) -> PyResult<&NativeTemplate> {
+        self.ensure_open()?;
+        self.templates
+            .get(index)
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native template handle"))
+    }
+
+    pub fn templates(&self) -> &[NativeTemplate] {
+        &self.templates
+    }
+
+    pub fn push_state(&mut self, state: NativeAssemblyState) -> PyResult<usize> {
+        self.ensure_open()?;
+        let index = self.states.len();
+        self.states.push(state);
+        Ok(index)
+    }
+
+    pub fn state(&self, index: usize) -> PyResult<&NativeAssemblyState> {
+        self.ensure_open()?;
+        self.states.get(index).ok_or_else(|| {
+            crate::errors::stale_handle_error("unknown native assembly state handle")
+        })
+    }
+
+    pub fn state_mut(&mut self, index: usize) -> PyResult<&mut NativeAssemblyState> {
+        self.ensure_open()?;
+        self.states.get_mut(index).ok_or_else(|| {
+            crate::errors::stale_handle_error("unknown native assembly state handle")
+        })
     }
 
     pub fn set_surface_bundle(&mut self, bundle: RegisteredSurfaceBundle) -> PyResult<()> {
