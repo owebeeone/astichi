@@ -46,6 +46,10 @@ result = astichi_hole(value)
         "astichi.surface.block.production",
     ]
     assert all(spec.surface_id is not None for spec in lower_template.record_specs)
+    assert [
+        record["surface_key"]
+        for record in lower_template.package_v2.snapshot()["records"]
+    ] == [spec.surface_key for spec in lower_template.record_specs]
 
 
 def test_compile_lower_template_metadata_matches_structural_golden() -> None:

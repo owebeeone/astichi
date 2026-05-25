@@ -189,12 +189,15 @@ class LowerTemplatePackageV2:
         authored_summary: str,
         materialization_anchor: str,
         parent_locator_id: int | None = None,
+        locator_id: int | None = None,
     ) -> int:
         """Append a locator row and return its id."""
-        locator_id = len(self.locators)
+        resolved_locator_id = (
+            len(self.locators) if locator_id is None else locator_id
+        )
         self.locators.append(
             LocatorRow(
-                locator_id=locator_id,
+                locator_id=resolved_locator_id,
                 ast_path_id=self.intern_ast_path(ast_path),
                 role_key_id=self.intern_string(role_key),
                 parent_locator_id=parent_locator_id,
@@ -204,7 +207,7 @@ class LowerTemplatePackageV2:
                 ),
             )
         )
-        return locator_id
+        return resolved_locator_id
 
     def add_record(
         self,
@@ -217,12 +220,17 @@ class LowerTemplatePackageV2:
         operation_key: str | None = None,
         resource_name: str = "",
         flags: tuple[str, ...] = (),
+        template_record_id: int | None = None,
     ) -> int:
         """Append a template record row and return its id."""
-        template_record_id = len(self.records)
+        resolved_template_record_id = (
+            len(self.records)
+            if template_record_id is None
+            else template_record_id
+        )
         self.records.append(
             RecordRow(
-                template_record_id=template_record_id,
+                template_record_id=resolved_template_record_id,
                 surface_key_id=self.intern_string(surface_key),
                 operation_key_id=(
                     None
@@ -239,7 +247,7 @@ class LowerTemplatePackageV2:
                 flags=tuple(flags),
             )
         )
-        return template_record_id
+        return resolved_template_record_id
 
     def add_scope(
         self,

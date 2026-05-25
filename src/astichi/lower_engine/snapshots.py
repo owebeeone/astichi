@@ -6,7 +6,6 @@ from typing import Any
 
 from astichi.lower_engine.handles import (
     EdgeId,
-    LocatorId,
     OccurrenceId,
     OverlayId,
     RecordId,
@@ -48,9 +47,11 @@ def structural_snapshot(
         ),
         "templates": [_template_snapshot(template) for template in templates],
         "locators": [
-            _locator_snapshot(locator)
+            locator
             for template in templates
-            for locator in template.locators
+            for locator in template.package_v2.structural_locator_snapshots(
+                template_id=_template_index(template.template_id)
+            )
         ],
         "occurrences": [
             {
@@ -93,24 +94,9 @@ def structural_snapshot(
 
 
 def _template_snapshot(template: Template) -> dict[str, Any]:
-    return {
-        "record_count": len(template.records),
-        "source_summary": template.source_summary,
-        "template_id": _template_index(template.template_id),
-        "template_key": template.template_key,
-    }
-
-
-def _locator_snapshot(locator: Any) -> dict[str, Any]:
-    return {
-        "ast_path": locator.ast_path,
-        "authored_summary": locator.authored_summary,
-        "locator_id": _locator_index(locator.locator_id),
-        "materialization_anchor": locator.materialization_anchor,
-        "parent_locator_id": _optional_locator_index(locator.parent_locator_id),
-        "role_key": locator.role_key,
-        "template_id": _template_index(locator.template_id),
-    }
+    return template.package_v2.structural_template_snapshot(
+        template_id=_template_index(template.template_id)
+    )
 
 
 def _record_snapshot(
@@ -124,24 +110,15 @@ def _record_snapshot(
         state=state,
         templates=templates,
     )
+    occurrence = state.occurrences[record_id.occurrence_id.index]
+    template = _template(occurrence.template_id, templates)
     resolved_state = _record_state(record_id=record_id, state=state)
-    return {
-        "code_owner": list(template_record.code_owner_parts),
-        "inventory_kind": template_record.inventory_kind,
-        "locator_id": _locator_index(template_record.locator_id),
-        "occurrence_id": _occurrence_index(record_id.occurrence_id),
-        "record_id": _record_id_array(record_id),
-        "resource_name": template_record.resource_name,
-        "semantic_summary": template_record.semantic_summary,
-        "state": {
-            "satisfied": resolved_state == "satisfied",
-            "visible": resolved_state == "live",
-        },
-        "surface_key": template_record.surface_key,
-        "template_record_id": _template_record_index(
-            record_id.template_record_id
-        ),
-    }
+    return template.package_v2.structural_record_snapshot(
+        template_record_id=_template_record_index(template_record.template_record_id),
+        occurrence_id=_occurrence_index(record_id.occurrence_id),
+        visible=resolved_state == "live",
+        satisfied=resolved_state == "satisfied",
+    )
 
 
 def _materialization_snapshot(plan: MaterializationPlan) -> dict[str, Any]:
@@ -244,14 +221,6 @@ def _template_index(template_id: TemplateId) -> int:
 
 def _template_record_index(template_record_id: TemplateRecordId) -> int:
     return template_record_id.index
-
-
-def _locator_index(locator_id: LocatorId) -> int:
-    return locator_id.index
-
-
-def _optional_locator_index(locator_id: LocatorId | None) -> int | None:
-    return None if locator_id is None else _locator_index(locator_id)
 
 
 def _occurrence_index(occurrence_id: OccurrenceId) -> int:

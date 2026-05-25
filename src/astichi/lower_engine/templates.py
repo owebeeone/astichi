@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from astichi.lower_engine.handles import LocatorId, TemplateId, TemplateRecordId
 from astichi.lower_engine.handles import SurfaceId
+from astichi.lower_engine.package_v2 import LowerTemplatePackageV2
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,3 +59,4 @@ class Template:
     source_summary: str
     locators: tuple[SourceLocator, ...]
     records: tuple[TemplateRecord, ...]
+    package_v2: LowerTemplatePackageV2

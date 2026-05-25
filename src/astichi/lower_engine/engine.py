@@ -26,6 +26,7 @@ from astichi.lower_engine.materialization import (
     MaterializationPlan,
     build_materialization_plan,
 )
+from astichi.lower_engine.package_v2 import LowerTemplatePackageV2
 from astichi.lower_engine.registry import SurfaceRegistry
 from astichi.lower_engine.snapshots import structural_snapshot
 from astichi.lower_engine.templates import (
@@ -59,6 +60,15 @@ class LowerEngine:
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
         locators: list[SourceLocator] = []
         template_records: list[TemplateRecord] = []
+        package = LowerTemplatePackageV2(
+            template_key=template_key,
+            source_summary=source_summary,
+            surface_bundle_signature=(
+                ""
+                if self.surface_registry.bundle is None
+                else self.surface_registry.bundle.bundle_signature
+            ),
+        )
         for spec in records:
             locator_id = LocatorId(
                 owner=self._owner,
@@ -68,6 +78,22 @@ class LowerEngine:
             record_id = TemplateRecordId(
                 owner=self._owner,
                 index=len(template_records),
+            )
+            package.add_locator(
+                ast_path=spec.ast_path,
+                role_key=spec.role_key,
+                authored_summary=spec.authored_summary,
+                materialization_anchor=spec.materialization_anchor,
+                locator_id=locator_id.index,
+            )
+            package.add_record(
+                surface_key=spec.surface_key,
+                locator_id=locator_id.index,
+                inventory_kind=spec.inventory_kind,
+                owner_path=spec.code_owner_parts,
+                semantic_summary=spec.semantic_summary,
+                resource_name=spec.resource_name,
+                template_record_id=record_id.index,
             )
             locators.append(
                 SourceLocator(
@@ -101,6 +127,7 @@ class LowerEngine:
                 source_summary=source_summary,
                 locators=tuple(locators),
                 records=tuple(template_records),
+                package_v2=package,
             )
         )
         return template_id
@@ -268,6 +295,11 @@ class LowerEngine:
         """Return template records for one occurrence."""
         occurrence = self.occurrence(state, occurrence_id)
         return self._template(occurrence.template_id).records
+
+    def template_package(self, template_id: TemplateId) -> LowerTemplatePackageV2:
+        """Return the v2 lower-template package for a registered template."""
+        self._check_template_id(template_id)
+        return self._template(template_id).package_v2
 
     def structural_snapshot(
         self,

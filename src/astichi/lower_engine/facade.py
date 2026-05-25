@@ -14,6 +14,7 @@ from astichi.lower_engine.errors import LowerEngineError
 from astichi.lower_engine.catalog import current_surface_bundle_spec
 from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.handles import TemplateId
+from astichi.lower_engine.package_v2 import LowerTemplatePackageV2
 from astichi.lower_engine.registry import RegisteredSurfaceBundle
 from astichi.lower_engine.templates import TemplateRecordSpec
 from astichi.model.composable import Composable
@@ -41,6 +42,7 @@ class LowerTemplateBinding:
     source_summary: str
     record_specs: tuple[TemplateRecordSpec, ...]
     surface_bundle_signature: str
+    package_v2: LowerTemplatePackageV2
     backend: str = "python"
     native_snapshot: dict[str, object] | None = field(
         default=None,
@@ -90,6 +92,7 @@ def register_inventory_template(
         source_summary=source_summary,
         record_specs=record_specs,
         surface_bundle_signature=bundle.bundle_signature,
+        package_v2=engine.template_package(template_id),
     )
 
 
@@ -266,11 +269,12 @@ def register_lower_template_binding(
         )
         for spec in binding.record_specs
     )
-    return engine.register_template(
+    template_id = engine.register_template(
         template_key=binding.template_key,
         source_summary=binding.source_summary,
         records=rebound_specs,
     )
+    return template_id
 
 
 def copy_template_ast(tree: ast.Module) -> ast.Module:

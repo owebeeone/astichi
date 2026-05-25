@@ -11,6 +11,7 @@ from astichi.lower_engine import (
     MaterializationPlan,
     StaleHandleError,
     TemplateRecordSpec,
+    write_package_snapshot,
 )
 from astichi.structural_snapshot import write_structural_snapshot
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
@@ -18,10 +19,18 @@ from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _STRUCTURAL_GOLDENS_DIR = data_golden_dir(_PROJECT_ROOT, phase="structural")
+_PACKAGE_GOLDENS_DIR = data_golden_dir(
+    _PROJECT_ROOT,
+    phase="lower_template_package_v2",
+)
 _ACTUAL_STRUCTURAL_DIR = actual_results_dir(
     _PROJECT_ROOT,
     runtime_version=(sys.version_info.major, sys.version_info.minor),
 ) / "goldens" / "structural"
+_ACTUAL_PACKAGE_DIR = actual_results_dir(
+    _PROJECT_ROOT,
+    runtime_version=(sys.version_info.major, sys.version_info.minor),
+) / "goldens" / "lower_template_package_v2"
 
 
 def test_lower_engine_skeleton_state_matches_structural_golden() -> None:
@@ -88,6 +97,36 @@ def test_lower_engine_skeleton_state_matches_structural_golden() -> None:
     actual_path.write_text(actual_text, encoding="utf-8")
     expected_text = (
         _STRUCTURAL_GOLDENS_DIR / "lower_engine_tiny_state.json"
+    ).read_text(encoding="utf-8")
+    assert actual_text == expected_text
+
+
+def test_lower_engine_template_package_matches_golden() -> None:
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="lower_engine_root",
+        source_summary="result = astichi_hole(value)",
+        records=(
+            TemplateRecordSpec(
+                surface_key="expression.hole",
+                semantic_summary="expression hole value",
+                ast_path="body[0].value",
+                role_key="expression.hole",
+                materialization_anchor="replace-expression",
+                authored_summary="astichi_hole(value)",
+            ),
+        ),
+    )
+
+    actual_text = write_package_snapshot(
+        engine.template_package(template_id).snapshot()
+    )
+
+    _ACTUAL_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+    actual_path = _ACTUAL_PACKAGE_DIR / "lower_engine_root_package.json"
+    actual_path.write_text(actual_text, encoding="utf-8")
+    expected_text = (
+        _PACKAGE_GOLDENS_DIR / "lower_engine_root_package.json"
     ).read_text(encoding="utf-8")
     assert actual_text == expected_text
 
