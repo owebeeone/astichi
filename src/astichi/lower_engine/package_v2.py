@@ -679,6 +679,23 @@ class LowerTemplatePackageV2:
         """Return the name-bearing resource for a marker row, if any."""
         return self._optional_string(row.resource_name_id)
 
+    def managed_import_module_path(
+        self,
+        row: ManagedImportRow,
+    ) -> tuple[str, ...] | None:
+        """Return the resolved module path for a managed import row, if known."""
+        return None if row.module_path_id is None else self._path(row.module_path_id)
+
+    def managed_import_final_local_name(self, row: ManagedImportRow) -> str:
+        """Return the final local binding name for a managed import row."""
+        return self._string(row.final_local_name_id)
+
+    def managed_import_original_symbol(self, row: ManagedImportRow) -> str | None:
+        """Return the original imported symbol for a managed from-import row."""
+        if row.original_symbol_id is None:
+            return None
+        return self._string(row.original_symbol_id)
+
     def record_inventory_kind(self, row: RecordRow) -> str:
         """Return the inventory kind for a template record row."""
         return self._string(row.inventory_kind_id)

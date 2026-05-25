@@ -1174,18 +1174,22 @@ class AssemblyScope:
         root_id = plan.root_occurrence_id
         if root_id is None:
             return plan
-        root = self._lower_composable_by_occurrence.get(root_id)
-        if root is None:
-            return plan
-        try:
-            from astichi.materialize.pyimport import collect_managed_imports
-
-            records = collect_managed_imports(root.markers)
-        except ValueError:
-            return plan
+        occurrence = self._lower_engine.occurrence(self._lower_state, root_id)
+        package = self._lower_engine.template_package(occurrence.template_id)
+        records = tuple(
+            row
+            for row in package.managed_imports
+            if package.managed_import_module_path(row) is not None
+        )
         if not records:
             return plan
-        collisions = _lower_pyimport_colliding_existing_bindings(root.tree, records)
+        final_names = tuple(
+            package.managed_import_final_local_name(row)
+            for row in records
+        )
+        collisions = tuple(
+            sorted(set(final_names) & package.pyimport_existing_binding_names())
+        )
         rename_hygiene = (
             (
                 HygieneOperation(
@@ -1205,9 +1209,15 @@ class AssemblyScope:
                 operation_key="astichi.operation.managed_import_request",
                 target_scope_id=0,
                 captures={
-                    "final_local_name": record.final_local_name,
-                    "module_path": ".".join(record.module_path),
-                    "original_symbol": record.original_symbol,
+                    "final_local_name": package.managed_import_final_local_name(
+                        record
+                    ),
+                    "module_path": ".".join(
+                        package.managed_import_module_path(record) or ()
+                    ),
+                    "original_symbol": package.managed_import_original_symbol(
+                        record
+                    ),
                     "root_occurrence_id": root_id.index,
                 },
             )
