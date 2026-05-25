@@ -44,7 +44,7 @@ impl SourceMap {
 }
 
 #[derive(Default, Clone)]
-struct EmitStats {
+pub(crate) struct EmitStats {
     nodes_constructed: usize,
     required_default_fields: usize,
     location_fields: usize,
@@ -276,7 +276,7 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn convert_module_artifact(
+pub(crate) fn convert_module_artifact(
     py: Python<'_>,
     source: &str,
     module: &ast::ModModule,

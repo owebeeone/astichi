@@ -1273,6 +1273,11 @@ Acceptance:
 - artifact copy, source rendering, compile, and exec are timed separately;
 - no internal CPython compiler APIs are used.
 
+Status: implemented for materialization workspaces using the public CPython
+AST constructors already proven by the native parser probe. Workspace artifact
+copy defaults to `fix_missing` locations until source text is carried with the
+workspace.
+
 ### N11b: CPython AST Artifact Builder Current Surface Coverage
 
 Goal: copy every current materialized native surface to executable public

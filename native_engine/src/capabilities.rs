@@ -36,6 +36,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.materialization_literal_ref.v1",
             "native.materialization_external_overlay_literal.v1",
             "native.hygiene_gate.v1",
+            "native.artifact_builder.python_ast.baseline.v1",
             "native.lower_template_package_v2.snapshot.partial.v1",
             "native.lower_template_package_v2.v1",
         ],
@@ -43,7 +44,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;
     dict.set_item("supported_snapshot_schema_versions", vec![1_u32])?;
     dict.set_item("supported_operation_primitives", Vec::<&str>::new())?;
-    dict.set_item("artifact_kinds", Vec::<&str>::new())?;
+    dict.set_item("artifact_kinds", vec!["python_ast"])?;
     dict.set_item("parser_backend", crate::parser_ir::PARSER_BACKEND)?;
     dict.set_item("parser_grammar_version", "python-3-compatible")?;
     dict.set_item("parsing_releases_gil", true)?;

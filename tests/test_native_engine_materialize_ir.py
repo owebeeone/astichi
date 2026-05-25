@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
 
 import pytest
@@ -138,6 +139,10 @@ def test_native_materialization_workspace_applies_expression_edge_when_available
         "resolved_kind": "BinOp",
         "template_id": 0,
     }
+    artifact = module.materialization_workspace_copy_to_python_ast(engine, workspace)
+    assert isinstance(artifact, ast.Module)
+    compile(artifact, "workspace.py", "exec")
+    assert module.materialization_workspace_to_source(engine, workspace) == "result = 40 + 2"
 
 
 def test_native_materialization_workspace_applies_block_edge_when_available() -> None:
@@ -197,6 +202,10 @@ def test_native_materialization_workspace_applies_block_edge_when_available() ->
         workspace,
         "body[0]/body[0]",
     )["resolved_kind"] == "Assign"
+    assert (
+        module.materialization_workspace_to_source(engine, workspace)
+        == "def run():\n    item = 1\n    return item"
+    )
 
 
 @pytest.mark.parametrize(

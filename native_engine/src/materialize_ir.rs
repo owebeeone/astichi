@@ -308,6 +308,35 @@ fn materialization_workspace_apply_external_overlay_literal(
     substitute_external_literal_in_module(workspace_ref.module_mut(), &external_name, &replacement)
 }
 
+#[pyfunction(name = "materialization_workspace_copy_to_python_ast")]
+#[pyo3(signature = (engine, workspace, location_policy = "fix_missing"))]
+fn materialization_workspace_copy_to_python_ast(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    location_policy: &str,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    let workspace_ref = engine.workspace(workspace.index)?;
+    crate::parser_ir::convert_module_artifact(py, "", workspace_ref.module(), location_policy)
+        .map(|(artifact, _stats)| artifact)
+}
+
+#[pyfunction(name = "materialization_workspace_to_source")]
+#[pyo3(signature = (engine, workspace, location_policy = "fix_missing"))]
+fn materialization_workspace_to_source(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    location_policy: &str,
+) -> PyResult<String> {
+    let module =
+        materialization_workspace_copy_to_python_ast(py, engine, workspace, location_policy)?;
+    let ast_mod = py.import("ast")?;
+    ast_mod.getattr("unparse")?.call1((module,))?.extract()
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeMaterializationWorkspaceHandle>()?;
     m.add_function(wrap_pyfunction!(materialization_workspace_create, m)?)?;
@@ -340,6 +369,11 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         materialization_workspace_apply_external_overlay_literal,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_copy_to_python_ast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(materialization_workspace_to_source, m)?)?;
     m.add(
         "HANDLE_KIND_MATERIALIZATION_WORKSPACE",
         HANDLE_KIND_WORKSPACE,
