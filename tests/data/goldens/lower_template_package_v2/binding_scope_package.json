@@ -203,5 +203,6 @@
       "scope_kind": "class"
     }
   ],
-  "markers": []
+  "markers": [],
+  "pyimport_markers": []
 }

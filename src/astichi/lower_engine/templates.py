@@ -56,6 +56,17 @@ class TemplateMarkerSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplatePyImportMarkerSpec:
+    """Typed source facts for one ``astichi_pyimport`` marker row."""
+
+    marker_id: int
+    module_path: tuple[str, ...] | None
+    names: tuple[str, ...] = ()
+    as_name: str = ""
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId

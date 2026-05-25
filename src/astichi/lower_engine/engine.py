@@ -33,6 +33,7 @@ from astichi.lower_engine.templates import (
     SourceLocator,
     Template,
     TemplateMarkerSpec,
+    TemplatePyImportMarkerSpec,
     TemplateRecord,
     TemplateRecordSpec,
     TemplateScopeSpec,
@@ -59,6 +60,7 @@ class LowerEngine:
         records: tuple[TemplateRecordSpec, ...],
         scopes: tuple[TemplateScopeSpec, ...] = (),
         markers: tuple[TemplateMarkerSpec, ...] = (),
+        pyimport_markers: tuple[TemplatePyImportMarkerSpec, ...] = (),
     ) -> TemplateId:
         """Register immutable template metadata and return its handle."""
         template_id = TemplateId(owner=self._owner, index=len(self._templates))
@@ -144,6 +146,14 @@ class LowerEngine:
                 source_order=spec.source_order,
                 resource_name=spec.resource_name,
                 operation_key=spec.operation_key,
+                flags=spec.flags,
+            )
+        for spec in pyimport_markers:
+            package.add_pyimport_marker(
+                marker_id=spec.marker_id,
+                module_path=spec.module_path,
+                names=spec.names,
+                as_name=spec.as_name,
                 flags=spec.flags,
             )
         self._templates.append(

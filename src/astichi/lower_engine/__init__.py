@@ -47,7 +47,11 @@ from astichi.lower_engine.native import (
     requested_lower_engine,
     select_lower_engine,
 )
-from astichi.lower_engine.package_extract import extract_marker_specs, extract_scope_specs
+from astichi.lower_engine.package_extract import (
+    extract_marker_specs,
+    extract_pyimport_marker_specs,
+    extract_scope_specs,
+)
 from astichi.lower_engine.package_v2 import (
     LowerTemplatePackageV2,
     PackageSchemaMismatchError,
@@ -72,6 +76,7 @@ from astichi.lower_engine.registry import (
 )
 from astichi.lower_engine.templates import (
     TemplateMarkerSpec,
+    TemplatePyImportMarkerSpec,
     TemplateRecordSpec,
     TemplateScopeSpec,
 )
@@ -113,6 +118,7 @@ __all__ = [
     "SurfaceSpec",
     "TemplateId",
     "TemplateMarkerSpec",
+    "TemplatePyImportMarkerSpec",
     "TemplateRecordId",
     "TemplateRecordSpec",
     "TemplateScopeSpec",
@@ -125,6 +131,7 @@ __all__ = [
     "ensure_current_native_surface_bundle",
     "ensure_current_surface_bundle",
     "extract_marker_specs",
+    "extract_pyimport_marker_specs",
     "extract_scope_specs",
     "load_native_extension",
     "native_capabilities",

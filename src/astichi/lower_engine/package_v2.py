@@ -24,6 +24,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "records",
     "scopes",
     "markers",
+    "pyimport_markers",
 )
 
 _LIST_SECTIONS = frozenset(
@@ -36,6 +37,7 @@ _LIST_SECTIONS = frozenset(
         "records",
         "scopes",
         "markers",
+        "pyimport_markers",
     }
 )
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -119,6 +121,16 @@ class MarkerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class PyImportMarkerRow:
+    pyimport_marker_id: int
+    marker_id: int
+    module_path_id: int | None
+    name_ids: tuple[int, ...]
+    as_name_id: int | None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PackageBindingIndex:
     bindings_by_scope_id: dict[int, frozenset[str]]
     arguments_by_scope_id: dict[int, frozenset[str]]
@@ -155,6 +167,7 @@ class LowerTemplatePackageV2:
         self.records: list[RecordRow] = []
         self.scopes: list[ScopeRow] = []
         self.markers: list[MarkerRow] = []
+        self.pyimport_markers: list[PyImportMarkerRow] = []
         self._binding_index: PackageBindingIndex | None = None
         self._marker_ids_by_kind: dict[str, tuple[int, ...]] | None = None
         self._marker_ids_by_scope_id: dict[int, tuple[int, ...]] | None = None
@@ -344,6 +357,31 @@ class LowerTemplatePackageV2:
         self._marker_ids_by_scope_id = None
         return marker_id
 
+    def add_pyimport_marker(
+        self,
+        *,
+        marker_id: int,
+        module_path: tuple[str, ...] | None,
+        names: tuple[str, ...] = (),
+        as_name: str = "",
+        flags: tuple[str, ...] = (),
+    ) -> int:
+        """Append typed source facts for an ``astichi_pyimport`` marker."""
+        pyimport_marker_id = len(self.pyimport_markers)
+        self.pyimport_markers.append(
+            PyImportMarkerRow(
+                pyimport_marker_id=pyimport_marker_id,
+                marker_id=marker_id,
+                module_path_id=(
+                    None if module_path is None else self.intern_path(module_path)
+                ),
+                name_ids=tuple(self.intern_string(name) for name in names),
+                as_name_id=None if as_name == "" else self.intern_string(as_name),
+                flags=tuple(flags),
+            )
+        )
+        return pyimport_marker_id
+
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
         """Return record rows owned by one package-local owner path."""
         path_id = self._path_index.get(owner_path)
@@ -486,6 +524,10 @@ class LowerTemplatePackageV2:
             "records": [self._record_snapshot(row) for row in self.records],
             "scopes": [self._scope_snapshot(row) for row in self.scopes],
             "markers": [self._marker_snapshot(row) for row in self.markers],
+            "pyimport_markers": [
+                self._pyimport_marker_snapshot(row)
+                for row in self.pyimport_markers
+            ],
         }
 
     def ast_path_segments(self, ast_path_id: int) -> tuple[AstPathSegment, ...]:
@@ -611,6 +653,23 @@ class LowerTemplatePackageV2:
                 if row.statement_path_id is None
                 else self._ast_path_text(row.statement_path_id)
             ),
+        }
+
+    def _pyimport_marker_snapshot(
+        self,
+        row: PyImportMarkerRow,
+    ) -> dict[str, object]:
+        return {
+            "as_name": self._optional_string(row.as_name_id),
+            "flags": list(row.flags),
+            "marker_id": row.marker_id,
+            "module_path": (
+                None
+                if row.module_path_id is None
+                else list(self._path(row.module_path_id))
+            ),
+            "names": [self._string(name_id) for name_id in row.name_ids],
+            "pyimport_marker_id": row.pyimport_marker_id,
         }
 
     def _binding_set_names(self, binding_set_id: int) -> list[str]:

@@ -43,5 +43,6 @@
     }
   ],
   "scopes": [],
-  "markers": []
+  "markers": [],
+  "pyimport_markers": []
 }

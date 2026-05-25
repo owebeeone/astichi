@@ -19,6 +19,7 @@ from astichi.lower_engine import (
     PackageSchemaMismatchError,
     PackageSnapshotFormatError,
     extract_marker_specs,
+    extract_pyimport_marker_specs,
     extract_scope_specs,
     round_trip_package_snapshot_text,
     write_package_snapshot,
@@ -282,6 +283,39 @@ value = astichi_pass(shared, outer_bind=True)
     _assert_package_snapshot_matches_golden(
         package,
         "boundary_marker_package.json",
+    )
+
+
+def test_keep_and_pyimport_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+astichi_keep(module_name)
+astichi_pyimport(module=foo, names=(a, b))
+astichi_pyimport(module=numpy, as_=np)
+astichi_pyimport(module=os)
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="keep_pyimport_template",
+        source_summary="keep pyimport source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+        pyimport_markers=extract_pyimport_marker_specs(tree),
+    )
+    package = engine.template_package(template_id)
+
+    assert package.marker_ids_by_kind("keep") == (0,)
+    assert package.marker_ids_by_kind("pyimport") == (1, 2, 3)
+    assert [row.marker_id for row in package.pyimport_markers] == [1, 2, 3]
+    assert package.pyimport_markers[0].flags == ("from_import",)
+    assert package.pyimport_markers[1].flags == ("plain_import",)
+    assert package.pyimport_markers[2].flags == ("plain_import",)
+    _assert_package_snapshot_matches_golden(
+        package,
+        "keep_pyimport_package.json",
     )
 
 

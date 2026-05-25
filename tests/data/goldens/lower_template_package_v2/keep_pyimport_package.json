@@ -1,0 +1,169 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "keep_pyimport_template",
+  "source_summary": "keep pyimport source",
+  "string_table": [
+    "",
+    "keep_pyimport_template",
+    "keep pyimport source",
+    "module",
+    "keep",
+    "astichi_keep",
+    "module_name",
+    "pyimport",
+    "astichi_pyimport",
+    "foo",
+    "a",
+    "b",
+    "numpy",
+    "np",
+    "os"
+  ],
+  "path_table": [
+    [],
+    [
+      "foo"
+    ],
+    [
+      "numpy"
+    ],
+    [
+      "os"
+    ]
+  ],
+  "ast_path_table": [
+    "",
+    "body[0]/value",
+    "body[0]",
+    "body[1]/value",
+    "body[1]",
+    "body[2]/value",
+    "body[2]",
+    "body[3]/value",
+    "body[3]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": []
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/value",
+      "flags": [
+        "call_context",
+        "is_metadata_marker"
+      ],
+      "marker_id": 0,
+      "marker_kind": "keep",
+      "operation_key": "astichi_keep",
+      "owner_path": [],
+      "resource_name": "module_name",
+      "scope_id": 0,
+      "source_name": "astichi_keep",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[1]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 1,
+      "marker_kind": "pyimport",
+      "operation_key": "astichi_pyimport",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_pyimport",
+      "source_order": 1,
+      "statement_path": "body[1]"
+    },
+    {
+      "ast_path": "body[2]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 2,
+      "marker_kind": "pyimport",
+      "operation_key": "astichi_pyimport",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_pyimport",
+      "source_order": 2,
+      "statement_path": "body[2]"
+    },
+    {
+      "ast_path": "body[3]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 3,
+      "marker_kind": "pyimport",
+      "operation_key": "astichi_pyimport",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_pyimport",
+      "source_order": 3,
+      "statement_path": "body[3]"
+    }
+  ],
+  "pyimport_markers": [
+    {
+      "as_name": "",
+      "flags": [
+        "from_import"
+      ],
+      "marker_id": 1,
+      "module_path": [
+        "foo"
+      ],
+      "names": [
+        "a",
+        "b"
+      ],
+      "pyimport_marker_id": 0
+    },
+    {
+      "as_name": "np",
+      "flags": [
+        "plain_import"
+      ],
+      "marker_id": 2,
+      "module_path": [
+        "numpy"
+      ],
+      "names": [],
+      "pyimport_marker_id": 1
+    },
+    {
+      "as_name": "",
+      "flags": [
+        "plain_import"
+      ],
+      "marker_id": 3,
+      "module_path": [
+        "os"
+      ],
+      "names": [],
+      "pyimport_marker_id": 2
+    }
+  ]
+}

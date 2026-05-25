@@ -14,11 +14,16 @@ from astichi.lower_engine.errors import LowerEngineError
 from astichi.lower_engine.catalog import current_surface_bundle_spec
 from astichi.lower_engine.engine import LowerEngine
 from astichi.lower_engine.handles import TemplateId
-from astichi.lower_engine.package_extract import extract_marker_specs, extract_scope_specs
+from astichi.lower_engine.package_extract import (
+    extract_marker_specs,
+    extract_pyimport_marker_specs,
+    extract_scope_specs,
+)
 from astichi.lower_engine.package_v2 import LowerTemplatePackageV2
 from astichi.lower_engine.registry import RegisteredSurfaceBundle
 from astichi.lower_engine.templates import (
     TemplateMarkerSpec,
+    TemplatePyImportMarkerSpec,
     TemplateRecordSpec,
     TemplateScopeSpec,
 )
@@ -48,6 +53,7 @@ class LowerTemplateBinding:
     record_specs: tuple[TemplateRecordSpec, ...]
     scope_specs: tuple[TemplateScopeSpec, ...]
     marker_specs: tuple[TemplateMarkerSpec, ...]
+    pyimport_marker_specs: tuple[TemplatePyImportMarkerSpec, ...]
     surface_bundle_signature: str
     package_v2: LowerTemplatePackageV2
     backend: str = "python"
@@ -87,6 +93,7 @@ def register_inventory_template(
     )
     scope_specs = extract_scope_specs(tree)
     marker_specs = extract_marker_specs(tree, scope_specs)
+    pyimport_marker_specs = extract_pyimport_marker_specs(tree)
     source_summary = _source_summary(origin=origin, record_count=len(record_specs))
     template_key = _template_key(tree=tree, source_summary=source_summary)
     template_id = engine.register_template(
@@ -95,6 +102,7 @@ def register_inventory_template(
         records=record_specs,
         scopes=scope_specs,
         markers=marker_specs,
+        pyimport_markers=pyimport_marker_specs,
     )
     return LowerTemplateBinding(
         engine=engine,
@@ -104,6 +112,7 @@ def register_inventory_template(
         record_specs=record_specs,
         scope_specs=scope_specs,
         marker_specs=marker_specs,
+        pyimport_marker_specs=pyimport_marker_specs,
         surface_bundle_signature=bundle.bundle_signature,
         package_v2=engine.template_package(template_id),
     )
@@ -288,6 +297,7 @@ def register_lower_template_binding(
         records=rebound_specs,
         scopes=binding.scope_specs,
         markers=binding.marker_specs,
+        pyimport_markers=binding.pyimport_marker_specs,
     )
     return template_id
 

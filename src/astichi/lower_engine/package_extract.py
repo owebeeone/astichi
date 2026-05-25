@@ -11,7 +11,12 @@ from astichi.lowering.markers import (
     boundary_explicit_bind_enabled,
     boundary_outer_bind_enabled,
 )
-from astichi.lower_engine.templates import TemplateMarkerSpec, TemplateScopeSpec
+from astichi.lowering.pyimport import validate_pyimport_declarations
+from astichi.lower_engine.templates import (
+    TemplateMarkerSpec,
+    TemplatePyImportMarkerSpec,
+    TemplateScopeSpec,
+)
 
 
 def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
@@ -134,6 +139,38 @@ def extract_marker_specs(
             )
         )
     return tuple(marker_specs)
+
+
+def extract_pyimport_marker_specs(
+    tree: ast.Module,
+) -> tuple[TemplatePyImportMarkerSpec, ...]:
+    """Extract typed source facts for ``astichi_pyimport`` markers."""
+    markers = recognize_markers(tree)
+    marker_ids_by_node_id = {
+        id(marker.node): marker_id for marker_id, marker in enumerate(markers)
+    }
+    specs: list[TemplatePyImportMarkerSpec] = []
+    for declaration in validate_pyimport_declarations(tree, markers):
+        marker_id = marker_ids_by_node_id[id(declaration.marker.node)]
+        flags: list[str] = []
+        if declaration.is_from_import:
+            flags.append("from_import")
+        if declaration.is_plain_import:
+            flags.append("plain_import")
+        if declaration.module_path is None:
+            flags.append("dynamic_module")
+        specs.append(
+            TemplatePyImportMarkerSpec(
+                marker_id=marker_id,
+                module_path=declaration.module_path,
+                names=tuple(name.id for name in declaration.names),
+                as_name=(
+                    "" if declaration.as_name is None else declaration.as_name.id
+                ),
+                flags=tuple(flags),
+            )
+        )
+    return tuple(specs)
 
 
 def _iter_ast_children(

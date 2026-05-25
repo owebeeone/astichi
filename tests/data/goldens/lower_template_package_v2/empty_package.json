@@ -14,5 +14,6 @@
   "locators": [],
   "records": [],
   "scopes": [],
-  "markers": []
+  "markers": [],
+  "pyimport_markers": []
 }
