@@ -889,7 +889,40 @@ class AssemblyScope:
             target_record_id=record_id,
         )
         self._lower_engine.mark_satisfied(self._lower_state, record_id)
+        if kind == "external":
+            self._append_native_overlay(
+                record_id,
+                kind=kind,
+                source_label=source_label,
+            )
+            self._mark_native_record_satisfied(record_id)
         return record_id, overlay_id
+
+    def _append_native_overlay(
+        self,
+        target_record_id: RecordId,
+        *,
+        kind: str,
+        source_label: str,
+    ) -> object | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return None
+        target_record = self._native_record_handle_for(target_record_id)
+        overlay = self._native_module.assembly_state_append_overlay(
+            self._native_engine_handle,
+            self._native_state_handle,
+            target_record,
+            kind,
+            source_label,
+        )
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_scope_append_overlay")
+        return overlay
 
     def _try_lower_materialize_expression_overlay_subset(
         self,

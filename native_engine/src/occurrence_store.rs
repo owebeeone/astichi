@@ -11,6 +11,7 @@ const HANDLE_KIND_ASSEMBLY_STATE: &str = "assembly-state";
 const HANDLE_KIND_OCCURRENCE: &str = "occurrence";
 const HANDLE_KIND_RECORD: &str = "record";
 const HANDLE_KIND_EDGE: &str = "edge";
+const HANDLE_KIND_OVERLAY: &str = "overlay";
 
 #[derive(Clone)]
 pub struct NativeTemplate {
@@ -58,6 +59,7 @@ pub struct NativeTemplateRecord {
 pub struct NativeAssemblyState {
     occurrences: Vec<NativeOccurrence>,
     edges: Vec<NativeEdge>,
+    overlays: Vec<NativeOverlay>,
     indexes: NativeIndexes,
     satisfied_records: BTreeSet<RecordKey>,
     dead_records: BTreeSet<RecordKey>,
@@ -68,6 +70,7 @@ impl NativeAssemblyState {
         Self {
             occurrences: Vec::new(),
             edges: Vec::new(),
+            overlays: Vec::new(),
             indexes: NativeIndexes::default(),
             satisfied_records: BTreeSet::new(),
             dead_records: BTreeSet::new(),
@@ -123,6 +126,21 @@ impl NativeAssemblyState {
         });
         edge_index
     }
+
+    fn append_overlay(
+        &mut self,
+        kind: String,
+        source_label: String,
+        target_record: RecordKey,
+    ) -> usize {
+        let overlay_index = self.overlays.len();
+        self.overlays.push(NativeOverlay {
+            kind,
+            source_label,
+            target_record,
+        });
+        overlay_index
+    }
 }
 
 #[derive(Clone)]
@@ -139,6 +157,13 @@ struct NativeEdge {
     source_occurrence_index: usize,
     operation_key: String,
     order: usize,
+}
+
+#[derive(Clone)]
+struct NativeOverlay {
+    kind: String,
+    source_label: String,
+    target_record: RecordKey,
 }
 
 #[derive(Clone, Default)]
@@ -285,6 +310,25 @@ pub struct NativeEdgeHandle {
 }
 
 impl NativeEdgeHandle {
+    fn new(owner_id: u64, state_index: usize, index: usize) -> Self {
+        Self {
+            owner_id,
+            state_index,
+            index,
+            generation: 0,
+        }
+    }
+}
+
+#[pyclass(module = "_astichi_native_engine", skip_from_py_object)]
+pub struct NativeOverlayHandle {
+    owner_id: u64,
+    state_index: usize,
+    index: usize,
+    generation: u64,
+}
+
+impl NativeOverlayHandle {
     fn new(owner_id: u64, state_index: usize, index: usize) -> Self {
         Self {
             owner_id,
@@ -462,6 +506,41 @@ fn assembly_state_mark_satisfied(
     let state_ref = engine.state_mut(state.index)?;
     state_ref.satisfied_records.insert(record_key);
     Ok(())
+}
+
+#[pyfunction(name = "assembly_state_append_overlay")]
+fn assembly_state_append_overlay(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    target: PyRef<'_, NativeRecordHandle>,
+    kind: String,
+    source_label: String,
+) -> PyResult<NativeOverlayHandle> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    ensure_owner(engine.owner_id(), target.owner_id)?;
+    if target.state_index != state.index {
+        return Err(crate::errors::schema_error(
+            "overlay target belongs to another native assembly state",
+        ));
+    }
+    let target_key = RecordKey {
+        occurrence_index: target.occurrence_index,
+        template_record_index: target.template_record_index,
+    };
+    {
+        let state_ref = engine.state(state.index)?;
+        validate_record_key(&engine, state_ref, target_key)?;
+    }
+    let owner_id = engine.owner_id();
+    let state_index = state.index;
+    let state_ref = engine.state_mut(state.index)?;
+    let overlay_index = state_ref.append_overlay(kind, source_label, target_key);
+    Ok(NativeOverlayHandle::new(
+        owner_id,
+        state_index,
+        overlay_index,
+    ))
 }
 
 #[pyfunction(name = "assembly_state_snapshot")]
@@ -690,12 +769,14 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeOccurrenceHandle>()?;
     m.add_class::<NativeRecordHandle>()?;
     m.add_class::<NativeEdgeHandle>()?;
+    m.add_class::<NativeOverlayHandle>()?;
     m.add_function(wrap_pyfunction!(register_template_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_create, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_append_occurrence, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_record_handle, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_append_edge, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_mark_satisfied, m)?)?;
+    m.add_function(wrap_pyfunction!(assembly_state_append_overlay, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_index_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(
@@ -796,7 +877,7 @@ fn structural_snapshot(
     snapshot.set_item("occurrences", occurrence_list(py, state)?)?;
     snapshot.set_item("records", record_list(py, engine.templates(), state)?)?;
     snapshot.set_item("edges", edge_list(py, state)?)?;
-    snapshot.set_item("overlays", PyList::empty(py))?;
+    snapshot.set_item("overlays", overlay_list(py, state)?)?;
     snapshot.set_item("materialization", materialization(py)?)?;
     snapshot.set_item("diagnostics", PyList::empty(py))?;
     Ok(snapshot.into_any().unbind())
@@ -907,6 +988,25 @@ fn edge_list(py: Python<'_>, state: &NativeAssemblyState) -> PyResult<Py<PyAny>>
             vec![
                 edge.target_record.occurrence_index,
                 edge.target_record.template_record_index,
+            ],
+        )?;
+        list.append(item)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
+fn overlay_list(py: Python<'_>, state: &NativeAssemblyState) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
+    for (index, overlay) in state.overlays.iter().enumerate() {
+        let item = PyDict::new(py);
+        item.set_item("kind", &overlay.kind)?;
+        item.set_item("overlay_id", index)?;
+        item.set_item("source_label", &overlay.source_label)?;
+        item.set_item(
+            "target_record_id",
+            vec![
+                overlay.target_record.occurrence_index,
+                overlay.target_record.template_record_index,
             ],
         )?;
         list.append(item)?;
@@ -1385,6 +1485,34 @@ impl NativeEdgeHandle {
         let snapshot = PyDict::new(py);
         snapshot.set_item("owner_id", self.owner_id)?;
         snapshot.set_item("kind", HANDLE_KIND_EDGE)?;
+        snapshot.set_item("state_index", self.state_index)?;
+        snapshot.set_item("index", self.index)?;
+        snapshot.set_item("generation", self.generation)?;
+        Ok(snapshot.into_any().unbind())
+    }
+}
+
+#[pymethods]
+impl NativeOverlayHandle {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        HANDLE_KIND_OVERLAY
+    }
+
+    #[getter]
+    fn index(&self) -> usize {
+        self.index
+    }
+
+    #[getter]
+    fn state_index(&self) -> usize {
+        self.state_index
+    }
+
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let snapshot = PyDict::new(py);
+        snapshot.set_item("owner_id", self.owner_id)?;
+        snapshot.set_item("kind", HANDLE_KIND_OVERLAY)?;
         snapshot.set_item("state_index", self.state_index)?;
         snapshot.set_item("index", self.index)?;
         snapshot.set_item("generation", self.generation)?;

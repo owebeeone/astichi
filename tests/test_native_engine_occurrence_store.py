@@ -163,6 +163,56 @@ def test_native_occurrence_store_appends_edge_and_satisfied_state_when_available
     }
 
 
+def test_native_occurrence_store_appends_external_overlay_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    handle = _engine_with_current_bundle(module)
+    root_template = _register_template_source(
+        module,
+        handle,
+        "value = astichi_bind_external(value)\n",
+    )
+    state = module.assembly_state_create(handle)
+    root_occurrence = module.assembly_state_append_occurrence(
+        handle,
+        state,
+        root_template,
+        ("Root",),
+    )
+    target_record = module.assembly_state_record_handle(
+        handle,
+        state,
+        root_occurrence,
+        0,
+    )
+
+    overlay = module.assembly_state_append_overlay(
+        handle,
+        state,
+        target_record,
+        "external",
+        "value",
+    )
+    module.assembly_state_mark_satisfied(handle, state, target_record)
+    snapshot = module.assembly_state_snapshot(handle, state)
+
+    assert overlay.snapshot()["kind"] == "overlay"
+    assert snapshot["overlays"] == [
+        {
+            "kind": "external",
+            "overlay_id": 0,
+            "source_label": "value",
+            "target_record_id": [0, 0],
+        }
+    ]
+    assert snapshot["records"][0]["state"] == {
+        "satisfied": True,
+        "visible": False,
+    }
+
+
 def test_native_occurrence_store_rejects_cross_engine_handles_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
@@ -407,15 +457,29 @@ def test_native_scope_external_and_identifier_lookup_use_native_query(
                 owner_match=("GeneratedClass",),
             )
         )
+    with collect_perf_counters() as apply_counters:
+        scope.apply(external)
 
     identifier_counts = identifier_counters.snapshot()["counts"]
     external_counts = external_counters.snapshot()["counts"]
+    apply_counts = apply_counters.snapshot()["counts"]
+    snapshot = scope.native_lower_structural_snapshot()
 
     assert identifier.demand_record.name.logical_name() == "class_name"
     assert external.demand_record.name.logical_name() == "default_value"
     assert str(external.demand_record.code_owner) == "GeneratedClass"
+    assert snapshot["overlays"] == [
+        {
+            "kind": "external",
+            "overlay_id": 0,
+            "source_label": "default_value",
+            "target_record_id": [0, 1],
+        }
+    ]
     assert identifier_counts["native_candidate_query_identifier"] == 1
     assert external_counts["native_candidate_query_external"] == 1
+    assert apply_counts["native_scope_append_overlay"] == 1
+    assert apply_counts["native_scope_mark_satisfied"] == 1
     assert external_counts.get("debug_inventory_projection", 0) == 0
 
 
