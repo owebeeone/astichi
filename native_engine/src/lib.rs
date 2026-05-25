@@ -5,6 +5,7 @@ mod capabilities;
 mod engine;
 mod errors;
 mod handles;
+mod materialize_ir;
 mod occurrence_store;
 mod parser_ir;
 mod surface_registry;
@@ -35,6 +36,7 @@ fn _astichi_native_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(capabilities_py, m)?)?;
     m.add_function(wrap_pyfunction!(self_test, m)?)?;
     engine::register_module_functions(m)?;
+    materialize_ir::register_module_functions(m)?;
     occurrence_store::register_module_functions(m)?;
     parser_ir::register_module_functions(m)?;
     surface_registry::register_module_functions(m)?;

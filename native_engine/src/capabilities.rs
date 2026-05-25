@@ -30,6 +30,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.overlay_store.v1",
             "native.materialization_operation_stream.v1",
             "native.materialization_overlay_stream.v1",
+            "native.materialization_workspace.v1",
             "native.hygiene_gate.v1",
             "native.lower_template_package_v2.snapshot.partial.v1",
             "native.lower_template_package_v2.v1",

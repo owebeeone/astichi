@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
 use crate::template_package_v2::PackageBuilder;
@@ -22,10 +23,15 @@ pub struct NativeTemplate {
     locators: Vec<NativeLocator>,
     records: Vec<NativeTemplateRecord>,
     package_v2: Option<PackageBuilder>,
+    module: Option<ast::ModModule>,
 }
 
 impl NativeTemplate {
-    pub(crate) fn from_package(package: PackageBuilder, locator_base: usize) -> Self {
+    pub(crate) fn from_package(
+        package: PackageBuilder,
+        module: Option<ast::ModModule>,
+        locator_base: usize,
+    ) -> Self {
         let template_key = package.strings[1].clone();
         let source_summary = package.strings[2].clone();
         let locators = package
@@ -61,6 +67,7 @@ impl NativeTemplate {
             locators,
             records,
             package_v2: Some(package),
+            module,
         }
     }
 
@@ -78,6 +85,21 @@ impl NativeTemplate {
 
     fn package_v2(&self) -> Option<&PackageBuilder> {
         self.package_v2.as_ref()
+    }
+
+    pub(crate) fn module(&self) -> Option<&ast::ModModule> {
+        self.module.as_ref()
+    }
+
+    pub(crate) fn locator_count(&self) -> usize {
+        self.locators.len()
+    }
+
+    pub(crate) fn locator_ast_path(&self, locator_id: usize) -> PyResult<&str> {
+        self.locators
+            .get(locator_id)
+            .map(|locator| locator.ast_path.as_str())
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native locator"))
     }
 }
 
@@ -282,6 +304,14 @@ impl NativeTemplateHandle {
             generation: 0,
         }
     }
+
+    pub(crate) fn owner_id(&self) -> u64 {
+        self.owner_id
+    }
+
+    pub(crate) fn template_index(&self) -> usize {
+        self.index
+    }
 }
 
 #[pyclass(module = "_astichi_native_engine", skip_from_py_object)]
@@ -411,6 +441,7 @@ fn register_template_snapshot(
 pub(crate) fn register_template_package(
     mut engine: PyRefMut<'_, EngineHandle>,
     package: PackageBuilder,
+    module: Option<ast::ModModule>,
 ) -> PyResult<NativeTemplateHandle> {
     engine.ensure_open()?;
     if engine.surface_bundle().is_none() {
@@ -424,7 +455,7 @@ pub(crate) fn register_template_package(
         .iter()
         .map(|template| template.locators().len())
         .sum();
-    let template = NativeTemplate::from_package(package, locator_base);
+    let template = NativeTemplate::from_package(package, module, locator_base);
     let index = engine.push_template(template)?;
     debug_assert_eq!(index, template_index);
     Ok(NativeTemplateHandle::new(engine.owner_id(), index))
@@ -918,6 +949,7 @@ fn parse_template_snapshot(
         locators,
         records,
         package_v2: None,
+        module: None,
     })
 }
 

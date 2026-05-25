@@ -1113,6 +1113,10 @@ Acceptance:
 - bad locators fail with useful diagnostics;
 - unchanged native IR can still be copied to artifacts later.
 
+Status: implemented for source-backed template IR cloning, locator resolution
+diagnostics, root/module locator resolution, and a statement replacement
+primitive over cloned native IR.
+
 ### N10b: Native Expression And External/Ref Materializer
 
 Goal: materialize expression replacement and external/ref overlays.
@@ -1272,6 +1276,32 @@ Acceptance:
 - Python reference remains available for comparison but is not needed on the
   native success path;
 - explicit native selection fails if any required capability gate is missing.
+
+### N12c: Final Integration Verification
+
+Goal: prove the complete native route through the real Astichi and YIDL entry
+points before treating the capability gate as product-ready.
+
+Work:
+
+- run native-selected `astichi.compile`, `astichi.build`, and scope API calls
+  through the same facade surfaces used by YIDL;
+- run YIDL lifecycle generation and the lifecycle-shaped runtime workload with
+  native selected explicitly and with `auto`;
+- verify that final generated source, executable artifacts, diagnostics, and
+  golden snapshots match the Python lower engine;
+- verify that the native route does not read or mutate Python lower-engine
+  inventory/package state after native template registration;
+- document any intentionally remaining Python facade responsibilities.
+
+Acceptance:
+
+- explicit native selection succeeds for YIDL lifecycle generation without
+  Python lower-state fallback;
+- `auto` selects native only when the full native capability gate is present;
+- generated YIDL source and runtime behavior match the Python reference;
+- remaining Python-owned behavior is boundary/facade work, not lower-engine hot
+  path work.
 
 ### N13: Performance And Default Selection
 

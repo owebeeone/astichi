@@ -53,6 +53,11 @@ pub(crate) struct ManagedImportHygieneSpec {
     pub(crate) original_symbol: Option<String>,
 }
 
+pub(crate) struct BuiltPackage {
+    pub(crate) package: PackageBuilder,
+    pub(crate) module: ast::ModModule,
+}
+
 #[derive(Clone)]
 pub(crate) struct LocatorRow {
     pub(crate) locator_id: usize,
@@ -166,8 +171,8 @@ fn extract_template_package_v2_snapshot(
     line_number: u32,
 ) -> PyResult<Py<PyAny>> {
     engine.ensure_open()?;
-    let package = build_package(py, &engine, source, filename, line_number)?;
-    package.snapshot(py)
+    let built = build_package(py, &engine, source, filename, line_number)?;
+    built.package.snapshot(py)
 }
 
 #[pyfunction(name = "register_template_package_v2_source")]
@@ -180,8 +185,8 @@ fn register_template_package_v2_source(
     line_number: u32,
 ) -> PyResult<NativeTemplateHandle> {
     engine.ensure_open()?;
-    let package = build_package(py, &engine, source, filename, line_number)?;
-    crate::occurrence_store::register_template_package(engine, package)
+    let built = build_package(py, &engine, source, filename, line_number)?;
+    crate::occurrence_store::register_template_package(engine, built.package, Some(built.module))
 }
 
 #[pyfunction(name = "template_package_v2_snapshot")]
@@ -200,7 +205,7 @@ fn build_package(
     source: String,
     filename: Option<String>,
     line_number: u32,
-) -> PyResult<PackageBuilder> {
+) -> PyResult<BuiltPackage> {
     let surface_bundle = engine
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
@@ -251,7 +256,7 @@ fn build_package(
     for (index, stmt) in module.body.iter().enumerate() {
         extract_typed_marker_rows_stmt(stmt, &format!("body[{index}]"), &mut package)?;
     }
-    Ok(package)
+    Ok(BuiltPackage { package, module })
 }
 
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {

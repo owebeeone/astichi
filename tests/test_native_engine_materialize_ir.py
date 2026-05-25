@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from copy import deepcopy
+
+import pytest
+
+from astichi.lower_engine import LowerEngine, current_surface_bundle_spec
+from astichi.lower_engine.native import load_native_extension, native_capabilities
+
+
+def test_native_materialization_workspace_capability_when_available() -> None:
+    capabilities = native_capabilities()
+    if capabilities is None:
+        pytest.skip("native engine extension is not built")
+
+    assert "native.materialization_workspace.v1" in capabilities["engine_features"]
+
+
+def test_native_materialization_workspace_clones_and_resolves_locator_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "result = astichi_hole(value)\n",
+        "workspace.py",
+        1,
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    snapshot = module.materialization_workspace_snapshot(engine, workspace)
+    resolved = module.materialization_workspace_resolve_locator(engine, workspace, 0)
+    root = module.materialization_workspace_resolve_locator(engine, workspace, 1)
+
+    assert snapshot == {
+        "body_kinds": ["Assign"],
+        "body_len": 1,
+        "kind": "materialization-workspace",
+        "locator_count": 2,
+        "template_id": 0,
+    }
+    assert resolved == {
+        "ast_path": "body[0]/value",
+        "locator_id": 0,
+        "resolved_kind": "Call",
+        "template_id": 0,
+    }
+    assert root == {
+        "ast_path": ".",
+        "locator_id": 1,
+        "resolved_kind": "Module",
+        "template_id": 0,
+    }
+
+
+def test_native_materialization_workspace_replaces_statement_with_pass_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "astichi_hole(body)\n",
+        "workspace.py",
+        1,
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    assert module.materialization_workspace_snapshot(engine, workspace)["body_kinds"] == [
+        "Expr"
+    ]
+    module.materialization_workspace_replace_statement_with_pass(engine, workspace, 0)
+
+    assert module.materialization_workspace_snapshot(engine, workspace)["body_kinds"] == [
+        "Pass"
+    ]
+
+
+def test_native_materialization_workspace_bad_locator_diagnostic_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "result = astichi_hole(value)\n",
+        "workspace.py",
+        1,
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    with pytest.raises(RuntimeError, match="unknown native locator"):
+        module.materialization_workspace_resolve_locator(engine, workspace, 99)
+
+
+def test_native_materialization_workspace_requires_source_registered_template_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    structural = module.extract_template_snapshot(
+        engine,
+        "result = astichi_hole(value)\n",
+        "workspace.py",
+        1,
+    )
+    template = module.register_template_snapshot(engine, structural)
+
+    with pytest.raises(ValueError, match="does not carry native parser IR"):
+        module.materialization_workspace_create(engine, template)
+
+
+def _engine_with_current_bundle(module: object) -> object:
+    handle = module.engine_create()
+    engine = LowerEngine()
+    bundle = engine.surface_registry.register_bundle(
+        current_surface_bundle_spec()
+    ).snapshot()
+    module.register_surface_bundle(handle, deepcopy(bundle))
+    return handle

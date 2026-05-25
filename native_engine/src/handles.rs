@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::materialize_ir::NativeMaterializationWorkspace;
 use crate::occurrence_store::{NativeAssemblyState, NativeTemplate};
 use crate::surface_registry::RegisteredSurfaceBundle;
 
@@ -16,6 +17,7 @@ pub struct EngineHandle {
     surface_bundle: Option<RegisteredSurfaceBundle>,
     templates: Vec<NativeTemplate>,
     states: Vec<NativeAssemblyState>,
+    workspaces: Vec<NativeMaterializationWorkspace>,
 }
 
 impl EngineHandle {
@@ -29,6 +31,7 @@ impl EngineHandle {
             surface_bundle: None,
             templates: Vec::new(),
             states: Vec::new(),
+            workspaces: Vec::new(),
         }
     }
 
@@ -94,6 +97,27 @@ impl EngineHandle {
         self.ensure_open()?;
         self.states.get_mut(index).ok_or_else(|| {
             crate::errors::stale_handle_error("unknown native assembly state handle")
+        })
+    }
+
+    pub fn push_workspace(&mut self, workspace: NativeMaterializationWorkspace) -> PyResult<usize> {
+        self.ensure_open()?;
+        let index = self.workspaces.len();
+        self.workspaces.push(workspace);
+        Ok(index)
+    }
+
+    pub fn workspace(&self, index: usize) -> PyResult<&NativeMaterializationWorkspace> {
+        self.ensure_open()?;
+        self.workspaces.get(index).ok_or_else(|| {
+            crate::errors::stale_handle_error("unknown native materialization workspace handle")
+        })
+    }
+
+    pub fn workspace_mut(&mut self, index: usize) -> PyResult<&mut NativeMaterializationWorkspace> {
+        self.ensure_open()?;
+        self.workspaces.get_mut(index).ok_or_else(|| {
+            crate::errors::stale_handle_error("unknown native materialization workspace handle")
         })
     }
 
