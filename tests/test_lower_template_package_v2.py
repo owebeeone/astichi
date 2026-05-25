@@ -8,9 +8,11 @@ import pytest
 
 from astichi.assembler.scope import (
     _lower_boundary_available_names,
+    _lower_boundary_marker_tuple_supported,
     _lower_pyimport_existing_binding_names,
     _lower_scope_binding_names,
 )
+from astichi.lowering import recognize_markers
 from astichi.lower_engine import (
     LowerEngine,
     LowerTemplatePackageV2,
@@ -229,6 +231,57 @@ class Box:
     _assert_package_snapshot_matches_golden(
         package,
         "marker_order_package.json",
+    )
+
+
+def test_boundary_marker_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+astichi_import(inbound, bound=True)
+astichi_export(outbound)
+value = astichi_pass(shared, outer_bind=True)
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="boundary_marker_template",
+        source_summary="boundary marker source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+    )
+    package = engine.template_package(template_id)
+
+    import_marker = package.markers[0]
+    pass_marker = package.markers[2]
+    assert "explicit_bind_enabled" in import_marker.flags
+    assert "outer_bind_enabled" in pass_marker.flags
+    assert package.boundary_markers_supported(frozenset())
+    assert package.boundary_markers_supported(
+        frozenset(),
+        scope_id=0,
+    ) == _lower_boundary_marker_tuple_supported(
+        recognize_markers(tree),
+        frozenset(),
+    )
+
+    unresolved_tree = ast.parse("astichi_import(missing)\n")
+    unresolved_scope_specs = extract_scope_specs(unresolved_tree)
+    unresolved_package_id = engine.register_template(
+        template_key="boundary_unresolved_template",
+        source_summary="boundary unresolved source",
+        records=(),
+        scopes=unresolved_scope_specs,
+        markers=extract_marker_specs(unresolved_tree, unresolved_scope_specs),
+    )
+    unresolved_package = engine.template_package(unresolved_package_id)
+    assert not unresolved_package.boundary_markers_supported(frozenset())
+    assert unresolved_package.boundary_markers_supported(frozenset({"missing"}))
+
+    _assert_package_snapshot_matches_golden(
+        package,
+        "boundary_marker_package.json",
     )
 
 

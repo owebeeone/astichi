@@ -1,0 +1,110 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "boundary_marker_template",
+  "source_summary": "boundary marker source",
+  "string_table": [
+    "",
+    "boundary_marker_template",
+    "boundary marker source",
+    "module",
+    "value",
+    "import",
+    "astichi_import",
+    "inbound",
+    "export",
+    "astichi_export",
+    "outbound",
+    "pass",
+    "astichi_pass",
+    "shared"
+  ],
+  "path_table": [
+    []
+  ],
+  "ast_path_table": [
+    "",
+    "body[0]/value",
+    "body[0]",
+    "body[1]/value",
+    "body[1]",
+    "body[2]/value",
+    "body[2]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "value"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "value"
+      ],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/value",
+      "flags": [
+        "call_context",
+        "explicit_bind_enabled"
+      ],
+      "marker_id": 0,
+      "marker_kind": "import",
+      "operation_key": "astichi_import",
+      "owner_path": [],
+      "resource_name": "inbound",
+      "scope_id": 0,
+      "source_name": "astichi_import",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[1]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 1,
+      "marker_kind": "export",
+      "operation_key": "astichi_export",
+      "owner_path": [],
+      "resource_name": "outbound",
+      "scope_id": 0,
+      "source_name": "astichi_export",
+      "source_order": 1,
+      "statement_path": "body[1]"
+    },
+    {
+      "ast_path": "body[2]/value",
+      "flags": [
+        "call_context",
+        "outer_bind_enabled"
+      ],
+      "marker_id": 2,
+      "marker_kind": "pass",
+      "operation_key": "astichi_pass",
+      "owner_path": [],
+      "resource_name": "shared",
+      "scope_id": 0,
+      "source_name": "astichi_pass",
+      "source_order": 2,
+      "statement_path": "body[2]"
+    }
+  ]
+}

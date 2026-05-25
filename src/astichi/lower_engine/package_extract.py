@@ -7,6 +7,10 @@ from collections.abc import Iterable
 
 from astichi.asttools import import_statement_binding_names
 from astichi.lowering import RecognizedMarker, recognize_markers
+from astichi.lowering.markers import (
+    boundary_explicit_bind_enabled,
+    boundary_outer_bind_enabled,
+)
 from astichi.lower_engine.templates import TemplateMarkerSpec, TemplateScopeSpec
 
 
@@ -232,6 +236,14 @@ def _marker_flags(
         flags.append("is_statement_marker")
     if marker.spec.is_hygiene_directive():
         flags.append("is_metadata_marker")
+    if isinstance(marker.node, ast.Call) and marker.source_name in {
+        "astichi_import",
+        "astichi_pass",
+    }:
+        if boundary_explicit_bind_enabled(marker.node):
+            flags.append("explicit_bind_enabled")
+        if boundary_outer_bind_enabled(marker.node):
+            flags.append("outer_bind_enabled")
     return tuple(flags)
 
 

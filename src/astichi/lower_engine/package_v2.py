@@ -387,6 +387,36 @@ class LowerTemplatePackageV2:
         """Return marker ids owned by one scope id."""
         return self._markers_by_scope_id().get(scope_id, ())
 
+    def boundary_markers_supported(
+        self,
+        available_names: frozenset[str],
+        *,
+        scope_id: int | None = None,
+    ) -> bool:
+        """Return whether boundary markers can connect to available names."""
+        marker_rows = self.markers
+        if scope_id is not None:
+            marker_ids = set(self.marker_ids_by_scope_id(scope_id))
+            marker_rows = [row for row in marker_rows if row.marker_id in marker_ids]
+        for row in marker_rows:
+            source_name = self._string(row.source_name_id)
+            if source_name in {"astichi_elif", "astichi_export"}:
+                continue
+            if source_name not in {"astichi_import", "astichi_pass"}:
+                return False
+            name = self._optional_string(row.resource_name_id)
+            if name == "":
+                return False
+            flags = frozenset(row.flags)
+            if (
+                "explicit_bind_enabled" in flags
+                or "outer_bind_enabled" in flags
+                or name in available_names
+            ):
+                continue
+            return False
+        return True
+
     def structural_template_snapshot(self, *, template_id: int = 0) -> dict[str, object]:
         """Render the v1 structural template row from package data."""
         return {
