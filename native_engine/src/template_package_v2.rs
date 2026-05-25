@@ -5,6 +5,7 @@ use pyo3::types::{PyAny, PyDict, PyList, PyModule};
 use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
+use crate::occurrence_store::NativeTemplateHandle;
 
 const PACKAGE_SCHEMA: &str = "astichi.lower-template-package.v2";
 
@@ -19,17 +20,18 @@ struct ScopeSpec {
     arguments: Vec<String>,
 }
 
-struct PackageBuilder {
-    strings: Vec<String>,
+#[derive(Clone)]
+pub(crate) struct PackageBuilder {
+    pub(crate) strings: Vec<String>,
     string_index: BTreeMap<String, usize>,
-    paths: Vec<Vec<String>>,
+    pub(crate) paths: Vec<Vec<String>>,
     path_index: BTreeMap<Vec<String>, usize>,
-    ast_paths: Vec<String>,
+    pub(crate) ast_paths: Vec<String>,
     ast_path_index: BTreeMap<String, usize>,
     binding_sets: Vec<(usize, Vec<usize>)>,
     binding_set_index: BTreeMap<Vec<String>, usize>,
-    locators: Vec<LocatorRow>,
-    records: Vec<RecordRow>,
+    pub(crate) locators: Vec<LocatorRow>,
+    pub(crate) records: Vec<RecordRow>,
     scopes: Vec<ScopeRow>,
     markers: Vec<MarkerRow>,
     pyimport_markers: Vec<PyImportMarkerRow>,
@@ -39,25 +41,28 @@ struct PackageBuilder {
     unroll_markers: Vec<UnrollMarkerRow>,
 }
 
-struct LocatorRow {
-    locator_id: usize,
-    ast_path_id: usize,
-    role_key_id: usize,
-    parent_locator_id: Option<usize>,
-    authored_summary_id: usize,
-    materialization_anchor_id: usize,
+#[derive(Clone)]
+pub(crate) struct LocatorRow {
+    pub(crate) locator_id: usize,
+    pub(crate) ast_path_id: usize,
+    pub(crate) role_key_id: usize,
+    pub(crate) parent_locator_id: Option<usize>,
+    pub(crate) authored_summary_id: usize,
+    pub(crate) materialization_anchor_id: usize,
 }
 
-struct RecordRow {
-    template_record_id: usize,
-    surface_key_id: usize,
-    locator_id: usize,
-    resource_name_id: Option<usize>,
-    inventory_kind_id: usize,
-    owner_path_id: usize,
-    semantic_summary_id: usize,
+#[derive(Clone)]
+pub(crate) struct RecordRow {
+    pub(crate) template_record_id: usize,
+    pub(crate) surface_key_id: usize,
+    pub(crate) locator_id: usize,
+    pub(crate) resource_name_id: Option<usize>,
+    pub(crate) inventory_kind_id: usize,
+    pub(crate) owner_path_id: usize,
+    pub(crate) semantic_summary_id: usize,
 }
 
+#[derive(Clone)]
 struct ScopeRow {
     scope_id: usize,
     parent_scope_id: Option<usize>,
@@ -68,6 +73,7 @@ struct ScopeRow {
     argument_set_id: usize,
 }
 
+#[derive(Clone)]
 struct MarkerRow {
     marker_id: usize,
     source_order: usize,
@@ -82,6 +88,7 @@ struct MarkerRow {
     flags: Vec<String>,
 }
 
+#[derive(Clone)]
 struct PyImportMarkerRow {
     pyimport_marker_id: usize,
     marker_id: usize,
@@ -91,6 +98,7 @@ struct PyImportMarkerRow {
     flags: Vec<String>,
 }
 
+#[derive(Clone)]
 struct ManagedImportRow {
     managed_import_id: usize,
     marker_id: usize,
@@ -102,6 +110,7 @@ struct ManagedImportRow {
     flags: Vec<String>,
 }
 
+#[derive(Clone)]
 struct CommentMarkerRow {
     comment_marker_id: usize,
     marker_id: usize,
@@ -109,6 +118,7 @@ struct CommentMarkerRow {
     flags: Vec<String>,
 }
 
+#[derive(Clone)]
 struct RefMarkerRow {
     ref_marker_id: usize,
     marker_id: usize,
@@ -119,6 +129,7 @@ struct RefMarkerRow {
     flags: Vec<String>,
 }
 
+#[derive(Clone)]
 struct UnrollMarkerRow {
     unroll_marker_id: usize,
     marker_id: usize,
@@ -143,6 +154,41 @@ fn extract_template_package_v2_snapshot(
     line_number: u32,
 ) -> PyResult<Py<PyAny>> {
     engine.ensure_open()?;
+    let package = build_package(py, &engine, source, filename, line_number)?;
+    package.snapshot(py)
+}
+
+#[pyfunction(name = "register_template_package_v2_source")]
+#[pyo3(signature = (engine, source, filename = None, line_number = 1))]
+fn register_template_package_v2_source(
+    py: Python<'_>,
+    engine: PyRefMut<'_, EngineHandle>,
+    source: String,
+    filename: Option<String>,
+    line_number: u32,
+) -> PyResult<NativeTemplateHandle> {
+    engine.ensure_open()?;
+    let package = build_package(py, &engine, source, filename, line_number)?;
+    crate::occurrence_store::register_template_package(engine, package)
+}
+
+#[pyfunction(name = "template_package_v2_snapshot")]
+fn template_package_v2_snapshot(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    template: PyRef<'_, NativeTemplateHandle>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    crate::occurrence_store::template_package_v2_snapshot(py, engine, template)
+}
+
+fn build_package(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    source: String,
+    filename: Option<String>,
+    line_number: u32,
+) -> PyResult<PackageBuilder> {
     let surface_bundle = engine
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
@@ -193,11 +239,13 @@ fn extract_template_package_v2_snapshot(
     for (index, stmt) in module.body.iter().enumerate() {
         extract_typed_marker_rows_stmt(stmt, &format!("body[{index}]"), &mut package)?;
     }
-    package.snapshot(py)
+    Ok(package)
 }
 
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_template_package_v2_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(register_template_package_v2_source, m)?)?;
+    m.add_function(wrap_pyfunction!(template_package_v2_snapshot, m)?)?;
     Ok(())
 }
 
@@ -577,7 +625,7 @@ impl PackageBuilder {
             })
     }
 
-    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    pub(crate) fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let snapshot = PyDict::new(py);
         snapshot.set_item("schema", PACKAGE_SCHEMA)?;
         snapshot.set_item("surface_bundle_signature", &self.strings[0])?;

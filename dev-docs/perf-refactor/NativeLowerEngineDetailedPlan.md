@@ -1045,6 +1045,10 @@ Acceptance:
 
 ### N9b3c: Native Package Rows In Template Store
 
+Status: implemented for source-backed native template registration. Structural
+snapshot registration remains a parity/import harness and intentionally does
+not synthesize stored package rows.
+
 Goal: stop treating package-v2 snapshots as a standalone diagnostic and store
 package rows with native templates.
 

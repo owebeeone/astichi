@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyModule};
 
 use crate::handles::EngineHandle;
+use crate::template_package_v2::PackageBuilder;
 
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
 const HANDLE_KIND_TEMPLATE: &str = "template";
@@ -20,9 +21,49 @@ pub struct NativeTemplate {
     locator_base: usize,
     locators: Vec<NativeLocator>,
     records: Vec<NativeTemplateRecord>,
+    package_v2: Option<PackageBuilder>,
 }
 
 impl NativeTemplate {
+    pub(crate) fn from_package(package: PackageBuilder, locator_base: usize) -> Self {
+        let template_key = package.strings[1].clone();
+        let source_summary = package.strings[2].clone();
+        let locators = package
+            .locators
+            .iter()
+            .map(|locator| NativeLocator {
+                ast_path: package.ast_paths[locator.ast_path_id].clone(),
+                authored_summary: package.strings[locator.authored_summary_id].clone(),
+                materialization_anchor: package.strings[locator.materialization_anchor_id].clone(),
+                parent_locator_id: locator.parent_locator_id,
+                role_key: package.strings[locator.role_key_id].clone(),
+            })
+            .collect::<Vec<_>>();
+        let records = package
+            .records
+            .iter()
+            .map(|record| NativeTemplateRecord {
+                code_owner: package.paths[record.owner_path_id].clone(),
+                inventory_kind: package.strings[record.inventory_kind_id].clone(),
+                locator_id: record.locator_id,
+                resource_name: record
+                    .resource_name_id
+                    .map(|id| package.strings[id].clone())
+                    .unwrap_or_default(),
+                semantic_summary: package.strings[record.semantic_summary_id].clone(),
+                surface_key: package.strings[record.surface_key_id].clone(),
+            })
+            .collect::<Vec<_>>();
+        Self {
+            template_key,
+            source_summary,
+            locator_base,
+            locators,
+            records,
+            package_v2: Some(package),
+        }
+    }
+
     fn locator_base(&self) -> usize {
         self.locator_base
     }
@@ -33,6 +74,10 @@ impl NativeTemplate {
 
     fn records(&self) -> &[NativeTemplateRecord] {
         &self.records
+    }
+
+    fn package_v2(&self) -> Option<&PackageBuilder> {
+        self.package_v2.as_ref()
     }
 }
 
@@ -361,6 +406,42 @@ fn register_template_snapshot(
     let index = engine.push_template(template)?;
     debug_assert_eq!(index, template_index);
     Ok(NativeTemplateHandle::new(engine.owner_id(), index))
+}
+
+pub(crate) fn register_template_package(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    package: PackageBuilder,
+) -> PyResult<NativeTemplateHandle> {
+    engine.ensure_open()?;
+    if engine.surface_bundle().is_none() {
+        return Err(crate::errors::schema_error(
+            "surface bundle has not been registered",
+        ));
+    }
+    let template_index = engine.template_count();
+    let locator_base = engine
+        .templates()
+        .iter()
+        .map(|template| template.locators().len())
+        .sum();
+    let template = NativeTemplate::from_package(package, locator_base);
+    let index = engine.push_template(template)?;
+    debug_assert_eq!(index, template_index);
+    Ok(NativeTemplateHandle::new(engine.owner_id(), index))
+}
+
+pub(crate) fn template_package_v2_snapshot(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    template: PyRef<'_, NativeTemplateHandle>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), template.owner_id)?;
+    let template = engine.template(template.index)?;
+    let package = template.package_v2().ok_or_else(|| {
+        crate::errors::schema_error("native template does not carry package-v2 rows")
+    })?;
+    package.snapshot(py)
 }
 
 #[pyfunction(name = "assembly_state_create")]
@@ -836,6 +917,7 @@ fn parse_template_snapshot(
         locator_base,
         locators,
         records,
+        package_v2: None,
     })
 }
 

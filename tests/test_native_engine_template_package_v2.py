@@ -119,6 +119,69 @@ def test_native_template_package_v2_rejects_ref_statement_context_when_available
         )
 
 
+def test_native_template_package_v2_source_registration_stores_package_rows_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    source = (
+        "def run():\n"
+        "    result = astichi_hole(value)\n"
+        "    return astichi_ref(\"pkg.value\")\n"
+    )
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        source,
+        "package_v2.py",
+        1,
+    )
+    actual = module.template_package_v2_snapshot(engine, template)
+    expected = astichi.compile(source)._lower_template.package_v2.snapshot()
+
+    assert actual == expected
+
+    state = module.assembly_state_create(engine)
+    module.assembly_state_append_occurrence(engine, state, template, ("Root",))
+    structural = module.assembly_state_snapshot(engine, state)
+    assert structural["templates"][0]["record_count"] == len(expected["records"])
+    assert structural["records"][0]["resource_name"] == "value"
+
+
+def test_native_template_package_v2_source_registration_is_deterministic_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    source = "result = astichi_hole(value)\n"
+    engine = _engine_with_current_bundle(module)
+    first = module.register_template_package_v2_source(engine, source, "package_v2.py", 1)
+    second = module.register_template_package_v2_source(engine, source, "package_v2.py", 1)
+
+    assert module.template_package_v2_snapshot(
+        engine,
+        first,
+    ) == module.template_package_v2_snapshot(engine, second)
+
+
+def test_native_template_package_v2_snapshot_harness_has_no_stored_package_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    structural = module.extract_template_snapshot(
+        engine,
+        "result = astichi_hole(value)\n",
+        "package_v2.py",
+        1,
+    )
+    template = module.register_template_snapshot(engine, structural)
+
+    with pytest.raises(ValueError, match="does not carry package-v2 rows"):
+        module.template_package_v2_snapshot(engine, template)
+
+
 def _engine_with_current_bundle(module: object) -> object:
     handle = module.engine_create()
     engine = LowerEngine()
