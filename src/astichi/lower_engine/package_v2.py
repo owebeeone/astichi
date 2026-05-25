@@ -101,6 +101,13 @@ class ScopeRow:
     argument_set_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class PackageBindingIndex:
+    bindings_by_scope_id: dict[int, frozenset[str]]
+    arguments_by_scope_id: dict[int, frozenset[str]]
+    scope_ids_by_owner_path: dict[tuple[str, ...], tuple[int, ...]]
+
+
 class LowerTemplatePackageV2:
     """Canonical lower-template package rows for one registered template."""
 
@@ -130,6 +137,7 @@ class LowerTemplatePackageV2:
         self.locators: list[LocatorRow] = []
         self.records: list[RecordRow] = []
         self.scopes: list[ScopeRow] = []
+        self._binding_index: PackageBindingIndex | None = None
 
     def intern_string(self, value: str) -> int:
         """Return a package-local string id, assigning it if needed."""
@@ -272,6 +280,7 @@ class LowerTemplatePackageV2:
                 argument_set_id=self.intern_binding_set(arguments),
             )
         )
+        self._binding_index = None
         return scope_id
 
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
@@ -280,6 +289,34 @@ class LowerTemplatePackageV2:
         if path_id is None:
             return ()
         return tuple(record for record in self.records if record.owner_path_id == path_id)
+
+    def binding_names_for_scope_id(self, scope_id: int) -> frozenset[str]:
+        """Return local binding names for one scope row."""
+        return self._bindings_index().bindings_by_scope_id.get(scope_id, frozenset())
+
+    def argument_names_for_scope_id(self, scope_id: int) -> frozenset[str]:
+        """Return argument binding names for one function scope row."""
+        return self._bindings_index().arguments_by_scope_id.get(scope_id, frozenset())
+
+    def scope_ids_for_owner_path(self, owner_path: tuple[str, ...]) -> tuple[int, ...]:
+        """Return scope ids with one owner path."""
+        return self._bindings_index().scope_ids_by_owner_path.get(owner_path, ())
+
+    def boundary_available_names_for_statement_path(
+        self,
+        statement_path: str,
+    ) -> frozenset[str]:
+        """Return the binding view used by lower boundary collision checks."""
+        scope_id = self._scope_id_for_statement_path(statement_path)
+        if scope_id is None:
+            return frozenset()
+        return self.binding_names_for_scope_id(scope_id)
+
+    def pyimport_existing_binding_names(self) -> frozenset[str]:
+        """Return the module binding view used for pyimport collision checks."""
+        if not self.scopes:
+            return frozenset()
+        return self.binding_names_for_scope_id(self.scopes[0].scope_id)
 
     def structural_template_snapshot(self, *, template_id: int = 0) -> dict[str, object]:
         """Render the v1 structural template row from package data."""
@@ -354,6 +391,43 @@ class LowerTemplatePackageV2:
     def ast_path_segments(self, ast_path_id: int) -> tuple[AstPathSegment, ...]:
         """Return parsed AST path segments for hot-path users."""
         return self._ast_paths[ast_path_id]
+
+    def _bindings_index(self) -> PackageBindingIndex:
+        if self._binding_index is None:
+            scope_ids_by_owner: dict[tuple[str, ...], list[int]] = {}
+            bindings_by_scope_id: dict[int, frozenset[str]] = {}
+            arguments_by_scope_id: dict[int, frozenset[str]] = {}
+            for row in self.scopes:
+                owner_path = self._path(row.owner_path_id)
+                scope_ids_by_owner.setdefault(owner_path, []).append(row.scope_id)
+                bindings_by_scope_id[row.scope_id] = frozenset(
+                    self._binding_set_names(row.local_binding_set_id)
+                )
+                arguments_by_scope_id[row.scope_id] = frozenset(
+                    self._binding_set_names(row.argument_set_id)
+                )
+            self._binding_index = PackageBindingIndex(
+                bindings_by_scope_id=bindings_by_scope_id,
+                arguments_by_scope_id=arguments_by_scope_id,
+                scope_ids_by_owner_path={
+                    owner_path: tuple(scope_ids)
+                    for owner_path, scope_ids in scope_ids_by_owner.items()
+                },
+            )
+        return self._binding_index
+
+    def _scope_id_for_statement_path(self, statement_path: str) -> int | None:
+        best_scope_id: int | None = None
+        best_depth = -1
+        for row in self.scopes:
+            scope_path = self._ast_path_text(row.ast_path_id)
+            if not _ast_path_is_prefix(scope_path, statement_path):
+                continue
+            depth = _ast_path_depth(scope_path)
+            if depth > best_depth:
+                best_scope_id = row.scope_id
+                best_depth = depth
+        return best_scope_id
 
     def _binding_set_snapshot(self, row: BindingSetRow) -> dict[str, object]:
         return {
@@ -515,6 +589,20 @@ def _parse_ast_path(ast_path: str) -> tuple[AstPathSegment, ...]:
             )
         )
     return tuple(segments)
+
+
+def _ast_path_is_prefix(scope_path: str, statement_path: str) -> bool:
+    if scope_path == "":
+        return True
+    return statement_path == scope_path or statement_path.startswith(
+        f"{scope_path}/"
+    )
+
+
+def _ast_path_depth(ast_path: str) -> int:
+    if ast_path == "":
+        return 0
+    return len(tuple(part for part in ast_path.split("/") if part))
 
 
 def _validate_stable_string(value: str, *, path: tuple[str, ...]) -> None:

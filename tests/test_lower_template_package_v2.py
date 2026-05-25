@@ -6,7 +6,11 @@ import sys
 
 import pytest
 
-from astichi.assembler.scope import _lower_scope_binding_names
+from astichi.assembler.scope import (
+    _lower_boundary_available_names,
+    _lower_pyimport_existing_binding_names,
+    _lower_scope_binding_names,
+)
 from astichi.lower_engine import (
     LowerEngine,
     LowerTemplatePackageV2,
@@ -173,6 +177,21 @@ class Box:
     _assert_package_snapshot_matches_golden(
         engine.template_package(template_id),
         "binding_scope_package.json",
+    )
+    package = engine.template_package(template_id)
+    assert "binding_indexes" not in package.snapshot()
+    assert package.scope_ids_for_owner_path(("Box", "make")) == (2,)
+    assert package.binding_names_for_scope_id(2) == _lower_scope_binding_names(
+        tree.body[5].body[2]
+    )
+    assert package.argument_names_for_scope_id(2) == frozenset(
+        ("args", "kw", "self", "x", "y")
+    )
+    assert package.boundary_available_names_for_statement_path(
+        "body[5]/body[2]/body[6]"
+    ) == _lower_boundary_available_names(tree, "body[5]/body[2]/body[6]")
+    assert package.pyimport_existing_binding_names() == frozenset(
+        _lower_pyimport_existing_binding_names(tree)
     )
 
 
