@@ -763,6 +763,73 @@ def test_native_scope_materialization_edge_stream_matches_python_when_available(
     assert native_plan["root_occurrence_id"] == python_plan["root_occurrence_id"] == 0
 
 
+@pytest.mark.parametrize(
+    ("root_source", "body_source", "expected_hygiene_keys"),
+    [
+        pytest.param(
+            "astichi_pyimport(module=foo, names=(a,))\na = 1\n",
+            None,
+            (
+                "astichi.operation.rename_if_collides",
+                "astichi.operation.managed_import_request",
+                "astichi.operation.gate_no_unresolved",
+            ),
+            id="pyimport-collision",
+        ),
+        pytest.param(
+            (
+                "def run():\n"
+                "    value = 1\n"
+                "    astichi_keep(value)\n"
+                "    astichi_hole(body)\n"
+                "    return value\n"
+            ),
+            "value = 2\nseen = value\n",
+            (
+                "astichi.operation.rename_if_collides",
+                "astichi.operation.keep_name",
+                "astichi.operation.gate_no_unresolved",
+            ),
+            id="boundary-keep-collision",
+        ),
+    ],
+)
+def test_native_scope_package_hygiene_stream_matches_python_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+    root_source: str,
+    body_source: str | None,
+    expected_hygiene_keys: tuple[str, ...],
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", astichi.compile(root_source))
+    if body_source is not None:
+        body = astichi.compile(body_source)
+        scope.apply(
+            require_one(
+                scope.find_candidates(
+                    as_composable(body, build_name="Body"),
+                    name="body",
+                    build_match=("Root",),
+                    owner_match=("run",),
+                )
+            )
+        )
+
+    native_plan = scope.native_lower_materialization_snapshot()
+    python_plan = scope.lower_structural_snapshot(
+        materialization_plan=scope.lower_materialization_plan()
+    )["materialization"]
+
+    assert native_plan == python_plan
+    assert tuple(
+        operation["operation_key"] for operation in native_plan["hygiene_stream"]
+    ) == expected_hygiene_keys
+
+
 def _register_template_source(module: object, handle: object, source: str) -> object:
     snapshot = module.extract_template_snapshot(handle, source, "occurrence_store.py", 1)
     return module.register_template_snapshot(handle, snapshot)

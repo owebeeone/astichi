@@ -199,8 +199,6 @@ class NativeTemplateCache:
 
     def template_handle_for(self, binding: LowerTemplateBinding) -> object:
         """Return the destination native template handle for ``binding``."""
-        if binding.native_snapshot is None:
-            raise TypeError("binding does not carry a native template snapshot")
         cache_key = (
             binding.backend,
             binding.surface_bundle_signature,
@@ -209,10 +207,20 @@ class NativeTemplateCache:
         cached = self._template_handles_by_key.get(cache_key)
         if cached is not None:
             return cached
-        handle = self.module.register_template_snapshot(
-            self.engine_handle,
-            deepcopy(binding.native_snapshot),
-        )
+        if binding.native_source is not None and binding.native_origin is not None:
+            handle = self.module.register_template_package_v2_source(
+                self.engine_handle,
+                binding.native_source,
+                binding.native_origin.file_name,
+                binding.native_origin.line_number,
+            )
+        else:
+            if binding.native_snapshot is None:
+                raise TypeError("binding does not carry native template metadata")
+            handle = self.module.register_template_snapshot(
+                self.engine_handle,
+                deepcopy(binding.native_snapshot),
+            )
         self._template_handles_by_key[cache_key] = handle
         return handle
 

@@ -19,7 +19,7 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
         "native.lower_template_package_v2.snapshot.partial.v1"
         in capabilities["engine_features"]
     )
-    assert "native.lower_template_package_v2.v1" not in capabilities["engine_features"]
+    assert "native.lower_template_package_v2.v1" in capabilities["engine_features"]
 
 
 @pytest.mark.parametrize(

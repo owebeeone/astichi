@@ -402,43 +402,7 @@ class AssemblyScope:
         )
         if not isinstance(snapshot, dict):
             raise TypeError("native materialization snapshot must be a dict")
-        self._merge_package_gate_captures_into_native_snapshot(snapshot)
         return snapshot
-
-    def _merge_package_gate_captures_into_native_snapshot(
-        self,
-        snapshot: dict[str, object],
-    ) -> None:
-        """Bridge package-v2 gate captures until native owns package rows."""
-        package_plan = self._lower_engine.build_materialization_plan(self._lower_state)
-        package_gate = next(
-            (
-                operation
-                for operation in package_plan.hygiene_stream
-                if operation.operation_key == "astichi.operation.gate_no_unresolved"
-            ),
-            None,
-        )
-        if package_gate is None:
-            return
-        stream = snapshot.get("hygiene_stream")
-        if not isinstance(stream, list):
-            return
-        for operation in stream:
-            if not isinstance(operation, dict):
-                continue
-            if operation.get("operation_key") != "astichi.operation.gate_no_unresolved":
-                continue
-            captures = operation.get("captures")
-            if not isinstance(captures, dict):
-                continue
-            captures.update(
-                {
-                    key: value
-                    for key, value in package_gate.captures.items()
-                    if key.startswith("unresolved_")
-                }
-            )
 
     @counted_perf_call("debug_inventory_projection")
     def project_lower_inventory(self) -> Inventory:

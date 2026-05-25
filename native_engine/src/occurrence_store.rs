@@ -1142,11 +1142,18 @@ fn materialization_plan_snapshot(
     let debug_views = PyDict::new(py);
     debug_views.set_item("edge_count", state.edges.len())?;
     debug_views.set_item("overlay_count", state.overlays.len())?;
+    let hygiene = hygiene_operation_stream(py, engine, state, root_occurrence_index)?;
+    if hygiene.boundary_marker_count > 0 {
+        debug_views.set_item("boundary_marker_count", hygiene.boundary_marker_count)?;
+    }
+    if hygiene.managed_import_request_count > 0 {
+        debug_views.set_item(
+            "managed_import_request_count",
+            hygiene.managed_import_request_count,
+        )?;
+    }
     item.set_item("debug_views", debug_views)?;
-    item.set_item(
-        "hygiene_stream",
-        hygiene_operation_stream(py, state, root_occurrence_index)?,
-    )?;
+    item.set_item("hygiene_stream", hygiene.stream)?;
     item.set_item(
         "operation_stream",
         materialization_operation_stream(py, state)?,
@@ -1176,6 +1183,16 @@ fn validate_materialization_operation_keys(
     }
     if !surface_bundle.has_operation_key("astichi.operation.gate_no_unresolved") {
         missing.insert("astichi.operation.gate_no_unresolved".to_string());
+    }
+    for operation_key in [
+        "astichi.operation.keep_name",
+        "astichi.operation.managed_import_request",
+        "astichi.operation.rename_if_collides",
+        "astichi.operation.strip_marker",
+    ] {
+        if !surface_bundle.has_operation_key(operation_key) {
+            missing.insert(operation_key.to_string());
+        }
     }
     if !missing.is_empty() {
         return Err(crate::errors::schema_error(&format!(
@@ -1234,23 +1251,269 @@ fn materialization_operation_stream(
     Ok(list.into_any().unbind())
 }
 
+struct HygieneStreamSnapshot {
+    stream: Py<PyAny>,
+    boundary_marker_count: usize,
+    managed_import_request_count: usize,
+}
+
 fn hygiene_operation_stream(
     py: Python<'_>,
+    engine: &EngineHandle,
     state: &NativeAssemblyState,
     root_occurrence_index: Option<usize>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<HygieneStreamSnapshot> {
     let list = PyList::empty(py);
+    let mut boundary_marker_count = 0;
+    let managed_import_request_count =
+        append_managed_import_hygiene(py, engine, state, root_occurrence_index, &list)?;
+    boundary_marker_count += append_boundary_hygiene(py, engine, state, &list)?;
+    boundary_marker_count += append_package_marker_hygiene(py, engine, state, &list)?;
+
     let item = PyDict::new(py);
     let captures = PyDict::new(py);
     captures.set_item("live_record_count", live_record_count(state)?)?;
     captures.set_item("root_occurrence_id", root_occurrence_index)?;
     captures.set_item("satisfied_record_count", state.satisfied_records.len())?;
+    let (unresolved_capable, unresolved_live) = unresolved_capable_counts(engine, state)?;
+    captures.set_item("unresolved_capable_record_count", unresolved_capable)?;
+    captures.set_item("unresolved_live_record_count", unresolved_live)?;
     item.set_item("captures", captures)?;
     item.set_item("operation_key", "astichi.operation.gate_no_unresolved")?;
     item.set_item("record_id", py.None())?;
     item.set_item("target_scope_id", 0)?;
     list.append(item)?;
-    Ok(list.into_any().unbind())
+    Ok(HygieneStreamSnapshot {
+        stream: list.into_any().unbind(),
+        boundary_marker_count,
+        managed_import_request_count,
+    })
+}
+
+fn append_managed_import_hygiene(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    root_occurrence_index: Option<usize>,
+    list: &Bound<'_, PyList>,
+) -> PyResult<usize> {
+    let Some(root_occurrence_index) = root_occurrence_index else {
+        return Ok(0);
+    };
+    let occurrence = state.occurrence(root_occurrence_index)?;
+    let template = engine.template(occurrence.template_index)?;
+    let Some(package) = template.package_v2() else {
+        return Ok(0);
+    };
+    let records = package.managed_import_hygiene_specs();
+    if records.is_empty() {
+        return Ok(0);
+    }
+    let final_names = records
+        .iter()
+        .map(|record| record.final_local_name.clone())
+        .collect::<BTreeSet<_>>();
+    let collisions = final_names
+        .intersection(&package.pyimport_existing_binding_names())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !collisions.is_empty() {
+        let captures = PyDict::new(py);
+        captures.set_item("colliding_names", collisions)?;
+        captures.set_item("root_occurrence_id", root_occurrence_index)?;
+        append_hygiene_item(
+            py,
+            list,
+            "astichi.operation.rename_if_collides",
+            0,
+            None,
+            &captures,
+        )?;
+    }
+    for record in &records {
+        let captures = PyDict::new(py);
+        captures.set_item("final_local_name", &record.final_local_name)?;
+        captures.set_item("module_path", record.module_path.join("."))?;
+        match &record.original_symbol {
+            Some(original_symbol) => captures.set_item("original_symbol", original_symbol)?,
+            None => captures.set_item("original_symbol", py.None())?,
+        };
+        captures.set_item("root_occurrence_id", root_occurrence_index)?;
+        append_hygiene_item(
+            py,
+            list,
+            "astichi.operation.managed_import_request",
+            0,
+            None,
+            &captures,
+        )?;
+    }
+    Ok(records.len())
+}
+
+fn append_boundary_hygiene(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    list: &Bound<'_, PyList>,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for edge in &state.edges {
+        if edge.operation_key != "astichi.operation.splice_body_at_marker" {
+            continue;
+        }
+        let source_occurrence = state.occurrence(edge.source_occurrence_index)?;
+        let source_template = engine.template(source_occurrence.template_index)?;
+        let Some(source_package) = source_template.package_v2() else {
+            continue;
+        };
+        let source_scope_id = source_package.root_scope_id().unwrap_or(0);
+        let source_bindings = source_package.binding_names_for_scope_id(source_scope_id);
+        let target_occurrence = state.occurrence(edge.target_record.occurrence_index)?;
+        let target_template = engine.template(target_occurrence.template_index)?;
+        let Some(target_package) = target_template.package_v2() else {
+            continue;
+        };
+        let locator_path = target_package
+            .locator_ast_path_for_record(edge.target_record.template_record_index)
+            .ok_or_else(|| crate::errors::schema_error("target record locator is missing"))?;
+        let target_statement_path = block_statement_path_for_locator_path(locator_path)?;
+        let boundary_names =
+            target_package.boundary_available_names_for_statement_path(&target_statement_path);
+        let collisions = boundary_names
+            .intersection(&source_bindings)
+            .cloned()
+            .collect::<Vec<_>>();
+        if collisions.is_empty() {
+            continue;
+        }
+        let captures = PyDict::new(py);
+        captures.set_item("colliding_names", collisions)?;
+        captures.set_item("source_occurrence_id", edge.source_occurrence_index)?;
+        let target_scope_id = target_package
+            .scope_id_for_statement_path(&target_statement_path)
+            .unwrap_or(0);
+        append_hygiene_item(
+            py,
+            list,
+            "astichi.operation.rename_if_collides",
+            target_scope_id,
+            Some(edge.target_record),
+            &captures,
+        )?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn append_package_marker_hygiene(
+    py: Python<'_>,
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    list: &Bound<'_, PyList>,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for (occurrence_index, occurrence) in state.occurrences.iter().enumerate() {
+        if !occurrence.live {
+            continue;
+        }
+        let template = engine.template(occurrence.template_index)?;
+        let Some(package) = template.package_v2() else {
+            continue;
+        };
+        for marker in package.package_marker_hygiene_specs() {
+            let operation_key = if marker.source_name == "astichi_keep" {
+                "astichi.operation.keep_name"
+            } else {
+                "astichi.operation.strip_marker"
+            };
+            let captures = PyDict::new(py);
+            captures.set_item("marker", &marker.source_name)?;
+            captures.set_item("name", &marker.resource_name)?;
+            captures.set_item("occurrence_id", occurrence_index)?;
+            append_hygiene_item(py, list, operation_key, marker.scope_id, None, &captures)?;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn append_hygiene_item(
+    py: Python<'_>,
+    list: &Bound<'_, PyList>,
+    operation_key: &str,
+    target_scope_id: usize,
+    record_id: Option<RecordKey>,
+    captures: &Bound<'_, PyDict>,
+) -> PyResult<()> {
+    let item = PyDict::new(py);
+    item.set_item("captures", captures)?;
+    item.set_item("operation_key", operation_key)?;
+    match record_id {
+        Some(record_id) => item.set_item(
+            "record_id",
+            vec![record_id.occurrence_index, record_id.template_record_index],
+        )?,
+        None => item.set_item("record_id", py.None())?,
+    };
+    item.set_item("target_scope_id", target_scope_id)?;
+    list.append(item)?;
+    Ok(())
+}
+
+fn unresolved_capable_counts(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+) -> PyResult<(usize, usize)> {
+    let mut capable = 0;
+    let mut live = 0;
+    for (occurrence_index, occurrence) in state.occurrences.iter().enumerate() {
+        let template = engine.template(occurrence.template_index)?;
+        let record_indexes = match template.package_v2() {
+            Some(package) => package.unresolved_capable_record_indexes(),
+            None => template
+                .records()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, record)| {
+                    if is_unresolved_capable_inventory_kind(&record.inventory_kind) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>(),
+        };
+        for template_record_index in record_indexes {
+            capable += 1;
+            let key = RecordKey {
+                occurrence_index,
+                template_record_index,
+            };
+            if record_state(state, key)? == "live" {
+                live += 1;
+            }
+        }
+    }
+    Ok((capable, live))
+}
+
+fn block_statement_path_for_locator_path(path: &str) -> PyResult<String> {
+    if path.ends_with("/value") {
+        let Some((statement_path, _)) = path.rsplit_once('/') else {
+            return Err(crate::errors::schema_error(
+                "marker locator does not include a statement path",
+            ));
+        };
+        return Ok(statement_path.to_string());
+    }
+    Ok(path.to_string())
+}
+
+fn is_unresolved_capable_inventory_kind(inventory_kind: &str) -> bool {
+    inventory_kind.starts_with("hole.")
+        || inventory_kind.ends_with(".demand")
+        || inventory_kind == "external.bind"
 }
 
 fn overlay_operation_key(kind: &str) -> String {

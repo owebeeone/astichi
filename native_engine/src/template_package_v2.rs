@@ -41,6 +41,18 @@ pub(crate) struct PackageBuilder {
     unroll_markers: Vec<UnrollMarkerRow>,
 }
 
+pub(crate) struct PackageMarkerHygieneSpec {
+    pub(crate) source_name: String,
+    pub(crate) resource_name: String,
+    pub(crate) scope_id: usize,
+}
+
+pub(crate) struct ManagedImportHygieneSpec {
+    pub(crate) final_local_name: String,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) original_symbol: Option<String>,
+}
+
 #[derive(Clone)]
 pub(crate) struct LocatorRow {
     pub(crate) locator_id: usize,
@@ -862,6 +874,128 @@ impl PackageBuilder {
     fn binding_set_names(&self, binding_set_id: usize) -> Vec<&str> {
         self.strings_for_ids(&self.binding_sets[binding_set_id].1)
     }
+
+    pub(crate) fn package_marker_hygiene_specs(&self) -> Vec<PackageMarkerHygieneSpec> {
+        self.markers
+            .iter()
+            .filter_map(|marker| {
+                let source_name = self.strings[marker.source_name_id].as_str();
+                if !matches!(
+                    source_name,
+                    "astichi_export" | "astichi_import" | "astichi_keep" | "astichi_pass"
+                ) {
+                    return None;
+                }
+                Some(PackageMarkerHygieneSpec {
+                    source_name: source_name.to_string(),
+                    resource_name: marker
+                        .resource_name_id
+                        .map(|id| self.strings[id].clone())
+                        .unwrap_or_default(),
+                    scope_id: marker.scope_id,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn managed_import_hygiene_specs(&self) -> Vec<ManagedImportHygieneSpec> {
+        self.managed_imports
+            .iter()
+            .filter_map(|row| {
+                let module_path_id = row.module_path_id?;
+                Some(ManagedImportHygieneSpec {
+                    final_local_name: self.strings[row.final_local_name_id].clone(),
+                    module_path: self.paths[module_path_id].clone(),
+                    original_symbol: row.original_symbol_id.map(|id| self.strings[id].clone()),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn pyimport_existing_binding_names(&self) -> BTreeSet<String> {
+        self.scopes
+            .first()
+            .map(|scope| self.binding_name_set(scope.local_binding_set_id))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn binding_names_for_scope_id(&self, scope_id: usize) -> BTreeSet<String> {
+        self.scopes
+            .iter()
+            .find(|scope| scope.scope_id == scope_id)
+            .map(|scope| self.binding_name_set(scope.local_binding_set_id))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn root_scope_id(&self) -> Option<usize> {
+        self.scopes.first().map(|scope| scope.scope_id)
+    }
+
+    pub(crate) fn boundary_available_names_for_statement_path(
+        &self,
+        statement_path: &str,
+    ) -> BTreeSet<String> {
+        self.scope_id_for_statement_path(statement_path)
+            .map(|scope_id| self.binding_names_for_scope_id(scope_id))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn scope_id_for_statement_path(&self, statement_path: &str) -> Option<usize> {
+        let mut best_scope_id = None;
+        let mut best_depth = 0;
+        for scope in &self.scopes {
+            let scope_path = &self.ast_paths[scope.ast_path_id];
+            if !ast_path_is_prefix(scope_path, statement_path) {
+                continue;
+            }
+            let depth = ast_path_depth(scope_path);
+            if best_scope_id.is_none() || depth > best_depth {
+                best_scope_id = Some(scope.scope_id);
+                best_depth = depth;
+            }
+        }
+        best_scope_id
+    }
+
+    pub(crate) fn locator_ast_path_for_record(&self, template_record_index: usize) -> Option<&str> {
+        let record = self
+            .records
+            .iter()
+            .find(|record| record.template_record_id == template_record_index)?;
+        let locator = self
+            .locators
+            .iter()
+            .find(|locator| locator.locator_id == record.locator_id)?;
+        Some(self.ast_paths[locator.ast_path_id].as_str())
+    }
+
+    pub(crate) fn unresolved_capable_record_indexes(&self) -> Vec<usize> {
+        self.records
+            .iter()
+            .filter_map(|record| {
+                let inventory_kind = &self.strings[record.inventory_kind_id];
+                if is_unresolved_capable_inventory_kind(inventory_kind) {
+                    Some(record.template_record_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn binding_name_set(&self, binding_set_id: usize) -> BTreeSet<String> {
+        self.binding_sets[binding_set_id]
+            .1
+            .iter()
+            .map(|id| self.strings[*id].clone())
+            .collect()
+    }
+}
+
+fn is_unresolved_capable_inventory_kind(inventory_kind: &str) -> bool {
+    inventory_kind.starts_with("hole.")
+        || inventory_kind.ends_with(".demand")
+        || inventory_kind == "external.bind"
 }
 
 fn extract_scopes(module: &ast::ModModule) -> Vec<ScopeSpec> {

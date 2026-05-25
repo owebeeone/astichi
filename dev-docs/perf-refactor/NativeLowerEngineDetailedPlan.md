@@ -1069,6 +1069,11 @@ Acceptance:
 
 ### N9b3d: Native Package-Derived Hygiene Streams
 
+Status: implemented for package-owned gate captures, marker hygiene,
+managed-import requests, pyimport collision renames, and block-boundary
+collision renames. Native now advertises `native.lower_template_package_v2.v1`;
+the full lower-engine capability remains disabled.
+
 Goal: make marker-local hygiene and managed import planning native-owned using
 the v2 lower-template package.
 

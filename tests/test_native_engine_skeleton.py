@@ -237,6 +237,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.materialization_overlay_stream.v1",
         "native.hygiene_gate.v1",
         "native.lower_template_package_v2.snapshot.partial.v1",
+        "native.lower_template_package_v2.v1",
     ]
     assert capabilities["supported_bundle_schema_versions"] == [1]
     assert native_self_test() is True
@@ -296,8 +297,7 @@ def test_native_engine_auto_falls_back_for_core_extension_when_available() -> No
         "fallback_scope": "engine",
         "reason_detail": (
             "native extension is available but does not advertise required "
-            "features: "
-            + ", ".join(REQUIRED_NATIVE_LOWER_ENGINE_FEATURES)
+            f"features: {FULL_LOWER_ENGINE_FEATURE}"
         ),
         "reason_key": "native_required_features_unavailable",
         "requested_engine": "auto",
