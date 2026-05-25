@@ -127,6 +127,8 @@ class LowerEngine:
                 scope_kind=spec.scope_kind,
                 ast_path=spec.ast_path,
                 owner_path=spec.owner_path,
+                local_bindings=spec.local_bindings,
+                arguments=spec.arguments,
                 parent_scope_id=spec.parent_scope_id,
             )
         self._templates.append(

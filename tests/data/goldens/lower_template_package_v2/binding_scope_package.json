@@ -1,21 +1,36 @@
 {
   "schema": "astichi.lower-template-package.v2",
   "surface_bundle_signature": "",
-  "template_key": "scope_template",
-  "source_summary": "nested scope source",
+  "template_key": "binding_scope_template",
+  "source_summary": "binding scope source",
   "string_table": [
     "",
-    "scope_template",
-    "nested scope source",
+    "binding_scope_template",
+    "binding scope source",
     "module",
     "Box",
-    "outer",
+    "alias",
+    "item",
+    "loop_value",
+    "os",
+    "stale",
+    "value",
     "class",
+    "field",
+    "m",
     "make",
     "function",
-    "load",
+    "Inner",
+    "args",
+    "child",
+    "helper",
+    "js",
+    "kw",
+    "local",
+    "old",
     "self",
-    "async_function"
+    "x",
+    "y"
   ],
   "path_table": [
     [],
@@ -29,25 +44,32 @@
     [
       "Box",
       "make",
-      "load"
+      "helper"
     ],
     [
-      "outer"
+      "Box",
+      "make",
+      "Inner"
     ]
   ],
   "ast_path_table": [
     "",
-    "body[0]",
-    "body[0]/body[0]",
-    "body[0]/body[0]/body[0]",
-    "body[1]"
+    "body[5]",
+    "body[5]/body[2]",
+    "body[5]/body[2]/body[4]",
+    "body[5]/body[2]/body[5]"
   ],
   "binding_sets": [
     {
       "binding_set_id": 0,
       "names": [
         "Box",
-        "outer"
+        "alias",
+        "item",
+        "loop_value",
+        "os",
+        "stale",
+        "value"
       ]
     },
     {
@@ -57,20 +79,35 @@
     {
       "binding_set_id": 2,
       "names": [
+        "field",
+        "m",
         "make"
       ]
     },
     {
       "binding_set_id": 3,
       "names": [
-        "load",
-        "self"
+        "Inner",
+        "args",
+        "child",
+        "helper",
+        "js",
+        "kw",
+        "local",
+        "old",
+        "self",
+        "x",
+        "y"
       ]
     },
     {
       "binding_set_id": 4,
       "names": [
-        "self"
+        "args",
+        "kw",
+        "self",
+        "x",
+        "y"
       ]
     }
   ],
@@ -82,7 +119,12 @@
       "ast_path": "",
       "local_bindings": [
         "Box",
-        "outer"
+        "alias",
+        "item",
+        "loop_value",
+        "os",
+        "stale",
+        "value"
       ],
       "owner_path": [],
       "parent_scope_id": null,
@@ -91,8 +133,10 @@
     },
     {
       "arguments": [],
-      "ast_path": "body[0]",
+      "ast_path": "body[5]",
       "local_bindings": [
+        "field",
+        "m",
         "make"
       ],
       "owner_path": [
@@ -104,12 +148,25 @@
     },
     {
       "arguments": [
-        "self"
+        "args",
+        "kw",
+        "self",
+        "x",
+        "y"
       ],
-      "ast_path": "body[0]/body[0]",
+      "ast_path": "body[5]/body[2]",
       "local_bindings": [
-        "load",
-        "self"
+        "Inner",
+        "args",
+        "child",
+        "helper",
+        "js",
+        "kw",
+        "local",
+        "old",
+        "self",
+        "x",
+        "y"
       ],
       "owner_path": [
         "Box",
@@ -121,27 +178,29 @@
     },
     {
       "arguments": [],
-      "ast_path": "body[0]/body[0]/body[0]",
+      "ast_path": "body[5]/body[2]/body[4]",
       "local_bindings": [],
       "owner_path": [
         "Box",
         "make",
-        "load"
+        "helper"
       ],
       "parent_scope_id": 2,
       "scope_id": 3,
-      "scope_kind": "async_function"
+      "scope_kind": "function"
     },
     {
       "arguments": [],
-      "ast_path": "body[1]",
+      "ast_path": "body[5]/body[2]/body[5]",
       "local_bindings": [],
       "owner_path": [
-        "outer"
+        "Box",
+        "make",
+        "Inner"
       ],
-      "parent_scope_id": 0,
+      "parent_scope_id": 2,
       "scope_id": 4,
-      "scope_kind": "async_function"
+      "scope_kind": "class"
     }
   ]
 }

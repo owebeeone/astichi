@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from astichi.assembler.scope import _lower_scope_binding_names
 from astichi.lower_engine import (
     LowerEngine,
     LowerTemplatePackageV2,
@@ -109,6 +110,69 @@ async def outer():
     _assert_package_snapshot_matches_golden(
         engine.template_package(template_id),
         "scope_package.json",
+    )
+
+
+def test_binding_extraction_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+import os
+from pkg import thing as alias
+value = 1
+del stale
+for item in items:
+    loop_value = item
+
+class Box:
+    import math as m
+    field = 1
+
+    def make(self, x, *args, y, **kw):
+        local = x
+        del old
+        import json as js
+        for child in args:
+            pass
+
+        def helper():
+            return local
+
+        class Inner:
+            pass
+
+        return child
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="binding_scope_template",
+        source_summary="binding scope source",
+        records=(),
+        scopes=scope_specs,
+    )
+
+    specs_by_owner = {spec.owner_path: spec for spec in scope_specs}
+    assert frozenset(specs_by_owner[()].local_bindings) == _lower_scope_binding_names(
+        tree
+    )
+    assert frozenset(
+        specs_by_owner[("Box",)].local_bindings
+    ) == _lower_scope_binding_names(tree.body[5])
+    assert frozenset(
+        specs_by_owner[("Box", "make")].local_bindings
+    ) == _lower_scope_binding_names(tree.body[5].body[2])
+    assert specs_by_owner[("Box", "make")].arguments == (
+        "args",
+        "kw",
+        "self",
+        "x",
+        "y",
+    )
+
+    _assert_package_snapshot_matches_golden(
+        engine.template_package(template_id),
+        "binding_scope_package.json",
     )
 
 

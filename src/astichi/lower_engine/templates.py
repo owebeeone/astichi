@@ -34,6 +34,8 @@ class TemplateScopeSpec:
     scope_kind: str
     ast_path: str
     owner_path: tuple[str, ...]
+    local_bindings: tuple[str, ...] = ()
+    arguments: tuple[str, ...] = ()
     parent_scope_id: int | None = None
 
 
