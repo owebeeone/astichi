@@ -151,6 +151,12 @@ pub struct NativeTemplateRecord {
     surface_key: String,
 }
 
+impl NativeTemplateRecord {
+    pub(crate) fn resource_name(&self) -> &str {
+        &self.resource_name
+    }
+}
+
 #[derive(Clone)]
 pub struct NativeAssemblyState {
     occurrences: Vec<NativeOccurrence>,
@@ -301,6 +307,10 @@ impl NativeOverlay {
 
     pub(crate) fn source_label(&self) -> &str {
         &self.source_label
+    }
+
+    pub(crate) fn target_record(&self) -> RecordKey {
+        self.target_record
     }
 }
 

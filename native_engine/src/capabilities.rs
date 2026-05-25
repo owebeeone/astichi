@@ -35,6 +35,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.materialization_block.v1",
             "native.materialization_parameters.v1",
             "native.materialization_call_arguments.v1",
+            "native.materialization_identifier_overlay.v1",
             "native.materialization_literal_ref.v1",
             "native.materialization_external_overlay_literal.v1",
             "native.hygiene_gate.v1",

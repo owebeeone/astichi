@@ -416,6 +416,55 @@ fn materialization_workspace_apply_external_overlay_literal(
     substitute_external_literal_in_module(workspace_ref.module_mut(), &external_name, &replacement)
 }
 
+#[pyfunction(name = "materialization_workspace_apply_identifier_overlay")]
+fn materialization_workspace_apply_identifier_overlay(
+    mut engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    overlay: PyRef<'_, NativeOverlayHandle>,
+) -> PyResult<usize> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    ensure_owner(engine.owner_id(), overlay.owner_id())?;
+    if overlay.overlay_state_index() != state.state_index() {
+        return Err(crate::errors::stale_handle_error(
+            "overlay belongs to another native assembly state",
+        ));
+    }
+    let (authored_name, resolved_name) = {
+        let workspace_ref = engine.workspace(workspace.index)?;
+        let state_ref = engine.state(state.state_index())?;
+        let overlay_ref = state_ref.overlay(overlay.overlay_index())?;
+        if overlay_ref.kind() != "identifier" {
+            return Err(crate::errors::schema_error(&format!(
+                "native identifier materializer cannot apply `{}` overlay",
+                overlay_ref.kind()
+            )));
+        }
+        let target_key = overlay_ref.target_record();
+        let target_occurrence = state_ref.occurrence(target_key.occurrence_index())?;
+        if target_occurrence.template_index() != workspace_ref.template_index {
+            return Err(crate::errors::schema_error(
+                "workspace template does not match identifier overlay target occurrence",
+            ));
+        }
+        let target_template = engine.template(target_occurrence.template_index())?;
+        let record = target_template
+            .records()
+            .get(target_key.template_record_index())
+            .ok_or_else(|| {
+                crate::errors::stale_handle_error("unknown native template record handle")
+            })?;
+        (
+            record.resource_name().to_string(),
+            overlay_ref.source_label().to_string(),
+        )
+    };
+    let workspace_ref = engine.workspace_mut(workspace.index)?;
+    rewrite_identifier_in_module(workspace_ref.module_mut(), &authored_name, &resolved_name)
+}
+
 #[pyfunction(name = "materialization_workspace_copy_to_python_ast")]
 #[pyo3(signature = (engine, workspace, location_policy = "fix_missing"))]
 fn materialization_workspace_copy_to_python_ast(
@@ -483,6 +532,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(
         materialization_workspace_apply_external_overlay_literal,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        materialization_workspace_apply_identifier_overlay,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
@@ -2145,6 +2198,324 @@ fn load_name_matches(expr: &ast::Expr, name: &str) -> bool {
         ast::Expr::Name(node) => node.id.as_str() == name && node.ctx == ast::ExprContext::Load,
         _ => false,
     }
+}
+
+fn rewrite_identifier_in_module(
+    module: &mut ast::ModModule,
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    rewrite_identifier_in_stmt_list(&mut module.body, authored_name, resolved_name)
+}
+
+fn rewrite_identifier_in_stmt_list(
+    body: &mut [ast::Stmt],
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for stmt in body {
+        count += rewrite_identifier_in_stmt(stmt, authored_name, resolved_name)?;
+    }
+    Ok(count)
+}
+
+fn rewrite_identifier_in_stmt(
+    stmt: &mut ast::Stmt,
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    let mut count = 0;
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            count += rewrite_identifier_text(&mut node.name, authored_name, resolved_name);
+            count += rewrite_identifier_in_arguments(&mut node.args, authored_name, resolved_name);
+            count += rewrite_identifier_in_expr_list(
+                &mut node.decorator_list,
+                authored_name,
+                resolved_name,
+            )?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            count += rewrite_identifier_text(&mut node.name, authored_name, resolved_name);
+            count += rewrite_identifier_in_arguments(&mut node.args, authored_name, resolved_name);
+            count += rewrite_identifier_in_expr_list(
+                &mut node.decorator_list,
+                authored_name,
+                resolved_name,
+            )?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+        }
+        ast::Stmt::ClassDef(node) => {
+            count += rewrite_identifier_text(&mut node.name, authored_name, resolved_name);
+            count += rewrite_identifier_in_expr_list(
+                &mut node.decorator_list,
+                authored_name,
+                resolved_name,
+            )?;
+            count +=
+                rewrite_identifier_in_expr_list(&mut node.bases, authored_name, resolved_name)?;
+            for keyword in &mut node.keywords {
+                count +=
+                    rewrite_identifier_in_expr(&mut keyword.value, authored_name, resolved_name)?;
+            }
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+        }
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_mut() {
+                count += rewrite_identifier_in_expr(value, authored_name, resolved_name)?;
+            }
+        }
+        ast::Stmt::Delete(node) => {
+            count +=
+                rewrite_identifier_in_expr_list(&mut node.targets, authored_name, resolved_name)?;
+        }
+        ast::Stmt::Assign(node) => {
+            count +=
+                rewrite_identifier_in_expr_list(&mut node.targets, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+        }
+        ast::Stmt::AugAssign(node) => {
+            count += rewrite_identifier_in_expr(&mut node.target, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+        }
+        ast::Stmt::AnnAssign(node) => {
+            count += rewrite_identifier_in_expr(&mut node.target, authored_name, resolved_name)?;
+            count +=
+                rewrite_identifier_in_expr(&mut node.annotation, authored_name, resolved_name)?;
+            if let Some(value) = node.value.as_mut() {
+                count += rewrite_identifier_in_expr(value, authored_name, resolved_name)?;
+            }
+        }
+        ast::Stmt::For(node) => {
+            count += rewrite_identifier_in_expr(&mut node.target, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.iter, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+            count +=
+                rewrite_identifier_in_stmt_list(&mut node.orelse, authored_name, resolved_name)?;
+        }
+        ast::Stmt::AsyncFor(node) => {
+            count += rewrite_identifier_in_expr(&mut node.target, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.iter, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+            count +=
+                rewrite_identifier_in_stmt_list(&mut node.orelse, authored_name, resolved_name)?;
+        }
+        ast::Stmt::While(node) => {
+            count += rewrite_identifier_in_expr(&mut node.test, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+            count +=
+                rewrite_identifier_in_stmt_list(&mut node.orelse, authored_name, resolved_name)?;
+        }
+        ast::Stmt::If(node) => {
+            count += rewrite_identifier_in_expr(&mut node.test, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+            count +=
+                rewrite_identifier_in_stmt_list(&mut node.orelse, authored_name, resolved_name)?;
+        }
+        ast::Stmt::Expr(node) => {
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+        }
+        ast::Stmt::With(node) => {
+            for item in &mut node.items {
+                count += rewrite_identifier_in_expr(
+                    &mut item.context_expr,
+                    authored_name,
+                    resolved_name,
+                )?;
+                if let Some(optional_vars) = item.optional_vars.as_mut() {
+                    count +=
+                        rewrite_identifier_in_expr(optional_vars, authored_name, resolved_name)?;
+                }
+            }
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+        }
+        ast::Stmt::AsyncWith(node) => {
+            for item in &mut node.items {
+                count += rewrite_identifier_in_expr(
+                    &mut item.context_expr,
+                    authored_name,
+                    resolved_name,
+                )?;
+                if let Some(optional_vars) = item.optional_vars.as_mut() {
+                    count +=
+                        rewrite_identifier_in_expr(optional_vars, authored_name, resolved_name)?;
+                }
+            }
+            count += rewrite_identifier_in_stmt_list(&mut node.body, authored_name, resolved_name)?;
+        }
+        ast::Stmt::Raise(node) => {
+            if let Some(exc) = node.exc.as_mut() {
+                count += rewrite_identifier_in_expr(exc, authored_name, resolved_name)?;
+            }
+            if let Some(cause) = node.cause.as_mut() {
+                count += rewrite_identifier_in_expr(cause, authored_name, resolved_name)?;
+            }
+        }
+        ast::Stmt::Assert(node) => {
+            count += rewrite_identifier_in_expr(&mut node.test, authored_name, resolved_name)?;
+            if let Some(msg) = node.msg.as_mut() {
+                count += rewrite_identifier_in_expr(msg, authored_name, resolved_name)?;
+            }
+        }
+        ast::Stmt::Match(_)
+        | ast::Stmt::Try(_)
+        | ast::Stmt::TryStar(_)
+        | ast::Stmt::TypeAlias(_)
+        | ast::Stmt::Import(_)
+        | ast::Stmt::ImportFrom(_)
+        | ast::Stmt::Global(_)
+        | ast::Stmt::Nonlocal(_)
+        | ast::Stmt::Pass(_)
+        | ast::Stmt::Break(_)
+        | ast::Stmt::Continue(_) => {}
+    }
+    Ok(count)
+}
+
+fn rewrite_identifier_in_arguments(
+    args: &mut Box<ast::Arguments>,
+    authored_name: &str,
+    resolved_name: &str,
+) -> usize {
+    let mut count = 0;
+    for arg in args
+        .posonlyargs
+        .iter_mut()
+        .chain(args.args.iter_mut())
+        .chain(args.kwonlyargs.iter_mut())
+    {
+        count += rewrite_identifier_text(&mut arg.def.arg, authored_name, resolved_name);
+    }
+    if let Some(arg) = args.vararg.as_mut() {
+        count += rewrite_identifier_text(&mut arg.arg, authored_name, resolved_name);
+    }
+    if let Some(arg) = args.kwarg.as_mut() {
+        count += rewrite_identifier_text(&mut arg.arg, authored_name, resolved_name);
+    }
+    count
+}
+
+fn rewrite_identifier_in_expr_list(
+    items: &mut [ast::Expr],
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for item in items {
+        count += rewrite_identifier_in_expr(item, authored_name, resolved_name)?;
+    }
+    Ok(count)
+}
+
+fn rewrite_identifier_in_expr(
+    expr: &mut ast::Expr,
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    let mut count = 0;
+    match expr {
+        ast::Expr::Name(node) => {
+            count += rewrite_identifier_text(&mut node.id, authored_name, resolved_name);
+        }
+        ast::Expr::Attribute(node) => {
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+        }
+        ast::Expr::Call(node) => {
+            count += rewrite_identifier_in_expr(&mut node.func, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr_list(&mut node.args, authored_name, resolved_name)?;
+            for keyword in &mut node.keywords {
+                count +=
+                    rewrite_identifier_in_expr(&mut keyword.value, authored_name, resolved_name)?;
+            }
+        }
+        ast::Expr::BinOp(node) => {
+            count += rewrite_identifier_in_expr(&mut node.left, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.right, authored_name, resolved_name)?;
+        }
+        ast::Expr::BoolOp(node) => {
+            count +=
+                rewrite_identifier_in_expr_list(&mut node.values, authored_name, resolved_name)?;
+        }
+        ast::Expr::UnaryOp(node) => {
+            count += rewrite_identifier_in_expr(&mut node.operand, authored_name, resolved_name)?;
+        }
+        ast::Expr::IfExp(node) => {
+            count += rewrite_identifier_in_expr(&mut node.test, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.body, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.orelse, authored_name, resolved_name)?;
+        }
+        ast::Expr::Compare(node) => {
+            count += rewrite_identifier_in_expr(&mut node.left, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr_list(
+                &mut node.comparators,
+                authored_name,
+                resolved_name,
+            )?;
+        }
+        ast::Expr::List(node) => {
+            count += rewrite_identifier_in_expr_list(&mut node.elts, authored_name, resolved_name)?;
+        }
+        ast::Expr::Tuple(node) => {
+            count += rewrite_identifier_in_expr_list(&mut node.elts, authored_name, resolved_name)?;
+        }
+        ast::Expr::Dict(node) => {
+            for key in &mut node.keys {
+                if let Some(key) = key.as_mut() {
+                    count += rewrite_identifier_in_expr(key, authored_name, resolved_name)?;
+                }
+            }
+            count +=
+                rewrite_identifier_in_expr_list(&mut node.values, authored_name, resolved_name)?;
+        }
+        ast::Expr::Subscript(node) => {
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+            count += rewrite_identifier_in_expr(&mut node.slice, authored_name, resolved_name)?;
+        }
+        ast::Expr::Starred(node) => {
+            count += rewrite_identifier_in_expr(&mut node.value, authored_name, resolved_name)?;
+        }
+        ast::Expr::Slice(node) => {
+            if let Some(lower) = node.lower.as_mut() {
+                count += rewrite_identifier_in_expr(lower, authored_name, resolved_name)?;
+            }
+            if let Some(upper) = node.upper.as_mut() {
+                count += rewrite_identifier_in_expr(upper, authored_name, resolved_name)?;
+            }
+            if let Some(step) = node.step.as_mut() {
+                count += rewrite_identifier_in_expr(step, authored_name, resolved_name)?;
+            }
+        }
+        ast::Expr::Constant(_)
+        | ast::Expr::NamedExpr(_)
+        | ast::Expr::Lambda(_)
+        | ast::Expr::Set(_)
+        | ast::Expr::ListComp(_)
+        | ast::Expr::SetComp(_)
+        | ast::Expr::GeneratorExp(_)
+        | ast::Expr::DictComp(_)
+        | ast::Expr::Await(_)
+        | ast::Expr::Yield(_)
+        | ast::Expr::YieldFrom(_)
+        | ast::Expr::FormattedValue(_)
+        | ast::Expr::JoinedStr(_) => {}
+    }
+    Ok(count)
+}
+
+fn rewrite_identifier_text(
+    value: &mut ast::Identifier,
+    authored_name: &str,
+    resolved_name: &str,
+) -> usize {
+    let current = value.as_str();
+    let suffixed = format!("{authored_name}__astichi_arg__");
+    if current == authored_name || current == suffixed {
+        *value = resolved_name.into();
+        return 1;
+    }
+    0
 }
 
 fn set_ref_chain_context(expr: &mut ast::Expr, ctx: ast::ExprContext) -> PyResult<()> {

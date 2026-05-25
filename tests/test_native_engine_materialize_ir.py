@@ -316,6 +316,49 @@ def test_native_materialization_workspace_applies_call_argument_edge_when_availa
     )
 
 
+def test_native_materialization_workspace_applies_identifier_overlay_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "class class_name__astichi_arg__:\n"
+        "    pass\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        template,
+        ("Root",),
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    overlay = module.assembly_state_append_overlay(
+        engine,
+        state,
+        target,
+        "identifier",
+        "GeneratedClass",
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    count = module.materialization_workspace_apply_identifier_overlay(
+        engine,
+        workspace,
+        state,
+        overlay,
+    )
+
+    assert count == 1
+    assert module.materialization_workspace_to_source(engine, workspace) == (
+        "class GeneratedClass:\n    pass"
+    )
+
+
 @pytest.mark.parametrize(
     ("source", "probe_path", "before_kind", "after_kind"),
     [

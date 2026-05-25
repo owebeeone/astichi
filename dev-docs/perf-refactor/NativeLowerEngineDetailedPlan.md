@@ -1257,7 +1257,26 @@ Acceptance:
 - payload diagnostics match the Python oracle;
 - no legacy `_=` carrier is accepted.
 
-### N10e: Native Elif, Pyimport, Identifier Rewrite, And Unroll Materializer
+### N10e1: Native Identifier Rewrite Materializer
+
+Goal: apply identifier overlays over native IR.
+
+Work:
+
+- rewrite identifier suffix surfaces such as `name__astichi_arg__`;
+- rewrite matching native `Name`/argument/function/class identifiers;
+- preserve the source-label ownership model from native overlays.
+
+Acceptance:
+
+- identifier-overlay materialized snapshots match Python reference for the
+  supported subset;
+- Python lower state is not read during the native rewrite.
+
+Status: implemented for identifier overlays over cloned native IR, including
+class/function names, argument names, and expression names.
+
+### N10e2: Native Elif, Pyimport, Identifier Completion, And Unroll Materializer
 
 Goal: close the remaining current materialization surfaces in native IR.
 
@@ -1265,7 +1284,7 @@ Work:
 
 - implement elif/clause append materialization;
 - implement managed import placement after module docstring/future imports;
-- apply identifier rewrites from native overlays;
+- finish identifier rewrite cases not covered by N10e1;
 - implement compile-time unroll using native IR;
 - run surface-family focused goldens before broad closure.
 
