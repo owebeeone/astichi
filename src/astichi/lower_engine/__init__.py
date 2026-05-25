@@ -48,6 +48,7 @@ from astichi.lower_engine.native import (
     select_lower_engine,
 )
 from astichi.lower_engine.package_extract import (
+    extract_comment_marker_specs,
     extract_marker_specs,
     extract_pyimport_marker_specs,
     extract_scope_specs,
@@ -75,6 +76,7 @@ from astichi.lower_engine.registry import (
     SurfaceSpec,
 )
 from astichi.lower_engine.templates import (
+    TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
     TemplatePyImportMarkerSpec,
     TemplateRecordSpec,
@@ -117,6 +119,7 @@ __all__ = [
     "SurfaceRegistry",
     "SurfaceSpec",
     "TemplateId",
+    "TemplateCommentMarkerSpec",
     "TemplateMarkerSpec",
     "TemplatePyImportMarkerSpec",
     "TemplateRecordId",
@@ -130,6 +133,7 @@ __all__ = [
     "current_surface_bundle_spec",
     "ensure_current_native_surface_bundle",
     "ensure_current_surface_bundle",
+    "extract_comment_marker_specs",
     "extract_marker_specs",
     "extract_pyimport_marker_specs",
     "extract_scope_specs",

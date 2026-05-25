@@ -1,0 +1,125 @@
+{
+  "schema": "astichi.lower-template-package.v2",
+  "surface_bundle_signature": "",
+  "template_key": "comment_marker_template",
+  "source_summary": "comment marker source",
+  "string_table": [
+    "",
+    "comment_marker_template",
+    "comment marker source",
+    "module",
+    "Box",
+    "class",
+    "comment",
+    "astichi_comment",
+    "module note",
+    "class note"
+  ],
+  "path_table": [
+    [],
+    [
+      "Box"
+    ]
+  ],
+  "ast_path_table": [
+    "",
+    "body[1]",
+    "body[0]/value",
+    "body[0]",
+    "body[1]/body[0]/value",
+    "body[1]/body[0]"
+  ],
+  "binding_sets": [
+    {
+      "binding_set_id": 0,
+      "names": [
+        "Box"
+      ]
+    },
+    {
+      "binding_set_id": 1,
+      "names": []
+    }
+  ],
+  "locators": [],
+  "records": [],
+  "scopes": [
+    {
+      "arguments": [],
+      "ast_path": "",
+      "local_bindings": [
+        "Box"
+      ],
+      "owner_path": [],
+      "parent_scope_id": null,
+      "scope_id": 0,
+      "scope_kind": "module"
+    },
+    {
+      "arguments": [],
+      "ast_path": "body[1]",
+      "local_bindings": [],
+      "owner_path": [
+        "Box"
+      ],
+      "parent_scope_id": 0,
+      "scope_id": 1,
+      "scope_kind": "class"
+    }
+  ],
+  "markers": [
+    {
+      "ast_path": "body[0]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 0,
+      "marker_kind": "comment",
+      "operation_key": "astichi_comment",
+      "owner_path": [],
+      "resource_name": "",
+      "scope_id": 0,
+      "source_name": "astichi_comment",
+      "source_order": 0,
+      "statement_path": "body[0]"
+    },
+    {
+      "ast_path": "body[1]/body[0]/value",
+      "flags": [
+        "call_context"
+      ],
+      "marker_id": 1,
+      "marker_kind": "comment",
+      "operation_key": "astichi_comment",
+      "owner_path": [
+        "Box"
+      ],
+      "resource_name": "",
+      "scope_id": 1,
+      "source_name": "astichi_comment",
+      "source_order": 1,
+      "statement_path": "body[1]/body[0]"
+    }
+  ],
+  "pyimport_markers": [],
+  "comment_markers": [
+    {
+      "comment_marker_id": 0,
+      "flags": [
+        "strip_for_executable",
+        "preserve_for_commented_source"
+      ],
+      "marker_id": 0,
+      "payload": "module note"
+    },
+    {
+      "comment_marker_id": 1,
+      "flags": [
+        "strip_for_executable",
+        "preserve_for_commented_source"
+      ],
+      "marker_id": 1,
+      "payload": "class note"
+    }
+  ]
+}

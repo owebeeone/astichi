@@ -185,5 +185,6 @@
       "statement_path": "body[1]/body[1]/body[1]"
     }
   ],
-  "pyimport_markers": []
+  "pyimport_markers": [],
+  "comment_markers": []
 }

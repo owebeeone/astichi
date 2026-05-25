@@ -13,6 +13,7 @@ from astichi.lowering.markers import (
 )
 from astichi.lowering.pyimport import validate_pyimport_declarations
 from astichi.lower_engine.templates import (
+    TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
     TemplatePyImportMarkerSpec,
     TemplateScopeSpec,
@@ -168,6 +169,33 @@ def extract_pyimport_marker_specs(
                     "" if declaration.as_name is None else declaration.as_name.id
                 ),
                 flags=tuple(flags),
+            )
+        )
+    return tuple(specs)
+
+
+def extract_comment_marker_specs(
+    tree: ast.Module,
+) -> tuple[TemplateCommentMarkerSpec, ...]:
+    """Extract typed source facts for ``astichi_comment`` markers."""
+    specs: list[TemplateCommentMarkerSpec] = []
+    for marker_id, marker in enumerate(recognize_markers(tree)):
+        if marker.source_name != "astichi_comment":
+            continue
+        node = marker.node
+        if not isinstance(node, ast.Call):
+            continue
+        payload = node.args[0]
+        if not isinstance(payload, ast.Constant) or not isinstance(payload.value, str):
+            continue
+        specs.append(
+            TemplateCommentMarkerSpec(
+                marker_id=marker_id,
+                payload=payload.value,
+                flags=(
+                    "strip_for_executable",
+                    "preserve_for_commented_source",
+                ),
             )
         )
     return tuple(specs)

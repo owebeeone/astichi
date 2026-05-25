@@ -25,6 +25,7 @@ SECTION_KEYS: tuple[str, ...] = (
     "scopes",
     "markers",
     "pyimport_markers",
+    "comment_markers",
 )
 
 _LIST_SECTIONS = frozenset(
@@ -38,6 +39,7 @@ _LIST_SECTIONS = frozenset(
         "scopes",
         "markers",
         "pyimport_markers",
+        "comment_markers",
     }
 )
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -131,6 +133,14 @@ class PyImportMarkerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class CommentMarkerRow:
+    comment_marker_id: int
+    marker_id: int
+    payload_id: int
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PackageBindingIndex:
     bindings_by_scope_id: dict[int, frozenset[str]]
     arguments_by_scope_id: dict[int, frozenset[str]]
@@ -168,6 +178,7 @@ class LowerTemplatePackageV2:
         self.scopes: list[ScopeRow] = []
         self.markers: list[MarkerRow] = []
         self.pyimport_markers: list[PyImportMarkerRow] = []
+        self.comment_markers: list[CommentMarkerRow] = []
         self._binding_index: PackageBindingIndex | None = None
         self._marker_ids_by_kind: dict[str, tuple[int, ...]] | None = None
         self._marker_ids_by_scope_id: dict[int, tuple[int, ...]] | None = None
@@ -382,6 +393,25 @@ class LowerTemplatePackageV2:
         )
         return pyimport_marker_id
 
+    def add_comment_marker(
+        self,
+        *,
+        marker_id: int,
+        payload: str,
+        flags: tuple[str, ...] = (),
+    ) -> int:
+        """Append typed source facts for an ``astichi_comment`` marker."""
+        comment_marker_id = len(self.comment_markers)
+        self.comment_markers.append(
+            CommentMarkerRow(
+                comment_marker_id=comment_marker_id,
+                marker_id=marker_id,
+                payload_id=self.intern_string(payload),
+                flags=tuple(flags),
+            )
+        )
+        return comment_marker_id
+
     def records_by_owner_path(self, owner_path: tuple[str, ...]) -> tuple[RecordRow, ...]:
         """Return record rows owned by one package-local owner path."""
         path_id = self._path_index.get(owner_path)
@@ -528,6 +558,10 @@ class LowerTemplatePackageV2:
                 self._pyimport_marker_snapshot(row)
                 for row in self.pyimport_markers
             ],
+            "comment_markers": [
+                self._comment_marker_snapshot(row)
+                for row in self.comment_markers
+            ],
         }
 
     def ast_path_segments(self, ast_path_id: int) -> tuple[AstPathSegment, ...]:
@@ -670,6 +704,17 @@ class LowerTemplatePackageV2:
             ),
             "names": [self._string(name_id) for name_id in row.name_ids],
             "pyimport_marker_id": row.pyimport_marker_id,
+        }
+
+    def _comment_marker_snapshot(
+        self,
+        row: CommentMarkerRow,
+    ) -> dict[str, object]:
+        return {
+            "comment_marker_id": row.comment_marker_id,
+            "flags": list(row.flags),
+            "marker_id": row.marker_id,
+            "payload": self._string(row.payload_id),
         }
 
     def _binding_set_names(self, binding_set_id: int) -> list[str]:

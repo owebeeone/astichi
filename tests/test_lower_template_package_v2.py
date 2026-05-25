@@ -18,6 +18,7 @@ from astichi.lower_engine import (
     LowerTemplatePackageV2,
     PackageSchemaMismatchError,
     PackageSnapshotFormatError,
+    extract_comment_marker_specs,
     extract_marker_specs,
     extract_pyimport_marker_specs,
     extract_scope_specs,
@@ -316,6 +317,40 @@ astichi_pyimport(module=os)
     _assert_package_snapshot_matches_golden(
         package,
         "keep_pyimport_package.json",
+    )
+
+
+def test_comment_marker_package_snapshot_matches_golden() -> None:
+    tree = ast.parse(
+        """
+astichi_comment("module note")
+
+class Box:
+    astichi_comment("class note")
+"""
+    )
+    scope_specs = extract_scope_specs(tree)
+    engine = LowerEngine()
+    template_id = engine.register_template(
+        template_key="comment_marker_template",
+        source_summary="comment marker source",
+        records=(),
+        scopes=scope_specs,
+        markers=extract_marker_specs(tree, scope_specs),
+        comment_markers=extract_comment_marker_specs(tree),
+    )
+    package = engine.template_package(template_id)
+
+    assert package.marker_ids_by_kind("comment") == (0, 1)
+    assert [row.marker_id for row in package.comment_markers] == [0, 1]
+    assert [row.payload_id for row in package.comment_markers]
+    assert package.comment_markers[0].flags == (
+        "strip_for_executable",
+        "preserve_for_commented_source",
+    )
+    _assert_package_snapshot_matches_golden(
+        package,
+        "comment_marker_package.json",
     )
 
 

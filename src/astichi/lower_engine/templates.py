@@ -67,6 +67,15 @@ class TemplatePyImportMarkerSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateCommentMarkerSpec:
+    """Typed source facts for one ``astichi_comment`` marker row."""
+
+    marker_id: int
+    payload: str
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceLocator:
     locator_id: LocatorId
     template_id: TemplateId
