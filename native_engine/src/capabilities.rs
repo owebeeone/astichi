@@ -31,6 +31,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.materialization_operation_stream.v1",
             "native.materialization_overlay_stream.v1",
             "native.hygiene_gate.v1",
+            "native.lower_template_package_v2.snapshot.partial.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

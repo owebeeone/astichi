@@ -105,6 +105,10 @@ impl RegisteredSurfaceBundle {
         self.patterns.len()
     }
 
+    pub fn bundle_signature(&self) -> &str {
+        &self.bundle_signature
+    }
+
     pub fn has_operation_key(&self, operation_key: &str) -> bool {
         self.operations
             .iter()

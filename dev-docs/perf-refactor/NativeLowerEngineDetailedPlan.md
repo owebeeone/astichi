@@ -138,6 +138,13 @@ policy. Explicit `native` fails early with a diagnostic if any gate is missing.
 The first native roll-build slice should correct any selection behavior that
 treats an importable skeleton as a usable native lower engine.
 
+Partial implementation capabilities may be advertised for tests and roll-build
+progress, but they must not satisfy the production native selection gate. For
+package-v2 work, `native.lower_template_package_v2.snapshot.partial.v1` means
+the extension can emit a parity snapshot for a supported subset. Only
+`native.lower_template_package_v2.v1` means package rows are complete enough for
+native hygiene/materialization planning.
+
 ## Native Data Structures
 
 ### Engine
@@ -930,6 +937,10 @@ Acceptance:
 
 ### N9b2: Lower Template Package V2 Contract
 
+Status: Python contract landed through the package-only materialization-plan
+guard. Native has a package-v2 snapshot entry point for the first subset, but
+does not yet advertise `native.lower_template_package_v2.v1`.
+
 Goal: promote marker, scope, managed-import, and local-binding facts into the
 shared lower-engine contract before native hygiene implementation.
 
@@ -962,7 +973,9 @@ Implementation detail:
 
 - the Python-first roll-build slices are specified in
   `dev-docs/perf-refactor/PythonLowerTemplatePackageV2Plan.md`;
-- native N9b3 must not start until the Python plan is complete through P5d.
+- the Python plan is complete through the package-only plan-construction guard;
+- native N9b3 resumes from the package-v2 snapshot grammar rather than from
+  structural template snapshots alone.
 
 Native parallel work:
 
@@ -977,16 +990,82 @@ Native parallel work:
   `native.lower_template_package_v2.v1`; package-v2 rows are now the
   materialization/hygiene contract.
 
-### N9b3: Native Marker, Import, And Hygiene Streams
+### N9b3a: Native Package V2 Builder And Snapshot API
+
+Status: introduced for records, scopes, generic marker rows, pyimport rows,
+managed-import rows, and comment rows. Ref and unroll typed rows are deliberately
+left to the following splits.
+
+Goal: give native a first-class package-v2 output surface that can be compared
+directly with the Python oracle.
+
+Work:
+
+- implement native package-v2 row storage and deterministic snapshot writing;
+- extract template records/locators into package rows from the native parser
+  path;
+- extract lexical scopes, local bindings, argument bindings, generic marker
+  rows, `astichi_pyimport` typed rows, managed-import rows, and
+  `astichi_comment` typed rows;
+- advertise only
+  `native.lower_template_package_v2.snapshot.partial.v1`, not the complete
+  package-v2 capability.
+
+Acceptance:
+
+- native package snapshots match the Python package-v2 oracle for expression
+  holes, binding/scope rows, boundary markers, managed imports, and comments;
+- complete native selection remains blocked because
+  `native.lower_template_package_v2.v1` is not advertised;
+- no Python `Inventory` object is used to construct the native package snapshot.
+
+### N9b3b: Native Ref And Unroll Package Rows
+
+Goal: finish the typed package rows that are needed by current materialization
+and future surface extension.
+
+Work:
+
+- extract `astichi_ref` value and sentinel-attribute typed rows, including
+  context and literal path;
+- extract `astichi_for` statement-context typed rows, including target, domain,
+  body, orelse, target binding set, domain shape, and flags;
+- keep generic marker source ordering identical to the Python oracle.
+
+Acceptance:
+
+- native package snapshots match Python package-v2 goldens for ref and unroll
+  fixtures;
+- marker ids line up between generic rows and typed ref/unroll rows;
+- unsupported ref/unroll shapes fail before returning partial package state.
+
+### N9b3c: Native Package Rows In Template Store
+
+Goal: stop treating package-v2 snapshots as a standalone diagnostic and store
+package rows with native templates.
+
+Work:
+
+- attach package-v2 row storage to native template handles;
+- register source-backed templates with native IR, structural records, and
+  package rows in one native template store;
+- keep `register_template_snapshot` as a parity/import harness only;
+- expose template package snapshots from stored template handles.
+
+Acceptance:
+
+- scope-owned native template registration does not need a Python structural
+  snapshot on the success path;
+- native template handles carry both structural records and package rows;
+- package snapshots remain deterministic after template-cache reuse.
+
+### N9b3d: Native Package-Derived Hygiene Streams
 
 Goal: make marker-local hygiene and managed import planning native-owned using
 the v2 lower-template package.
 
 Work:
 
-- produce native package rows for `astichi_keep`, `astichi_import`,
-  `astichi_export`, `astichi_pass`, `astichi_pyimport`, and relevant scope
-  bindings;
 - build native package-derived indexes for marker lookup, scope binding lookup,
   and managed import lookup;
 - emit keep-name, strip-marker, managed-import, and rename-if-collides hygiene
@@ -1000,7 +1079,8 @@ Acceptance:
 - hygiene/materialization planning no longer needs Python builder-state
   mutation;
 - native capabilities include `native.lower_template_package_v2.v1`, allowing
-  explicit native lower-engine selection to pass the package-v2 gate.
+  explicit native lower-engine selection to pass the package-v2 gate once the
+  rest of the native lower-engine gate is also closed.
 
 ### N10a: Native IR Clone And Locator Mutation Primitives
 
@@ -1129,7 +1209,35 @@ Acceptance:
 - artifact construction remains an explicit boundary, not a materialization
   dependency.
 
-### N12: Current Surface Closure And Native Capability Gate
+### N12a: Scope API Native Route
+
+Goal: route the existing Python-facing scope API through native lower-engine
+handles once native package, hygiene, materialization, and artifact copy are
+complete.
+
+Work:
+
+- make `astichi.compile(...)` attach native package/template handles without
+  requiring Python `LowerEngine` registration on the native success path;
+- make `AssemblyScope` candidate lookup, edge application, overlay binding,
+  materialization, and artifact copy use native state as the authoritative
+  state when explicit native selection is active;
+- keep Python package/lower-engine snapshots available as oracle diagnostics
+  and fallback-only artifacts, not as required success-path inputs;
+- run YIDL lifecycle generation with explicit native selection through the
+  existing `astichi.compile` and `astichi.build` surfaces.
+
+Acceptance:
+
+- YIDL generation succeeds with `ASTICHI_LOWER_ENGINE=native` through the scope
+  API and produces the same generated source as the Python lower engine;
+- explicit native scope builds do not mutate Python lower state after template
+  registration;
+- native route diagnostics identify the first missing native surface or artifact
+  boundary instead of silently falling back to Python;
+- Python reference routing still works unchanged.
+
+### N12b: Current Surface Closure And Native Capability Gate
 
 Goal: close parity for all currently supported Astichi/YIDL surfaces and only
 then advertise the full native lower-engine capability.

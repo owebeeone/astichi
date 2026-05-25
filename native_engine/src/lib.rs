@@ -9,6 +9,7 @@ mod occurrence_store;
 mod parser_ir;
 mod surface_registry;
 mod template_extract;
+mod template_package_v2;
 
 #[pyfunction]
 fn version() -> &'static str {
@@ -38,5 +39,6 @@ fn _astichi_native_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     parser_ir::register_module_functions(m)?;
     surface_registry::register_module_functions(m)?;
     template_extract::register_module_functions(m)?;
+    template_package_v2::register_module_functions(m)?;
     Ok(())
 }

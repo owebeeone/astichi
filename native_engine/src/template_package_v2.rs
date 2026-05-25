@@ -1,0 +1,1985 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use rustpython_parser::ast;
+
+use crate::handles::EngineHandle;
+
+const PACKAGE_SCHEMA: &str = "astichi.lower-template-package.v2";
+
+#[derive(Clone)]
+struct ScopeSpec {
+    scope_id: usize,
+    parent_scope_id: Option<usize>,
+    scope_kind: String,
+    ast_path: String,
+    owner_path: Vec<String>,
+    local_bindings: Vec<String>,
+    arguments: Vec<String>,
+}
+
+struct PackageBuilder {
+    strings: Vec<String>,
+    string_index: BTreeMap<String, usize>,
+    paths: Vec<Vec<String>>,
+    path_index: BTreeMap<Vec<String>, usize>,
+    ast_paths: Vec<String>,
+    ast_path_index: BTreeMap<String, usize>,
+    binding_sets: Vec<(usize, Vec<usize>)>,
+    binding_set_index: BTreeMap<Vec<String>, usize>,
+    locators: Vec<LocatorRow>,
+    records: Vec<RecordRow>,
+    scopes: Vec<ScopeRow>,
+    markers: Vec<MarkerRow>,
+    pyimport_markers: Vec<PyImportMarkerRow>,
+    managed_imports: Vec<ManagedImportRow>,
+    comment_markers: Vec<CommentMarkerRow>,
+}
+
+struct LocatorRow {
+    locator_id: usize,
+    ast_path_id: usize,
+    role_key_id: usize,
+    parent_locator_id: Option<usize>,
+    authored_summary_id: usize,
+    materialization_anchor_id: usize,
+}
+
+struct RecordRow {
+    template_record_id: usize,
+    surface_key_id: usize,
+    locator_id: usize,
+    resource_name_id: Option<usize>,
+    inventory_kind_id: usize,
+    owner_path_id: usize,
+    semantic_summary_id: usize,
+}
+
+struct ScopeRow {
+    scope_id: usize,
+    parent_scope_id: Option<usize>,
+    scope_kind_id: usize,
+    ast_path_id: usize,
+    owner_path_id: usize,
+    local_binding_set_id: usize,
+    argument_set_id: usize,
+}
+
+struct MarkerRow {
+    marker_id: usize,
+    source_order: usize,
+    marker_kind_id: usize,
+    source_name_id: usize,
+    operation_key_id: usize,
+    scope_id: usize,
+    owner_path_id: usize,
+    ast_path_id: usize,
+    statement_path_id: Option<usize>,
+    resource_name_id: Option<usize>,
+    flags: Vec<String>,
+}
+
+struct PyImportMarkerRow {
+    pyimport_marker_id: usize,
+    marker_id: usize,
+    module_path_id: Option<usize>,
+    name_ids: Vec<usize>,
+    as_name_id: Option<usize>,
+    flags: Vec<String>,
+}
+
+struct ManagedImportRow {
+    managed_import_id: usize,
+    marker_id: usize,
+    source_order: usize,
+    scope_id: usize,
+    module_path_id: Option<usize>,
+    final_local_name_id: usize,
+    original_symbol_id: Option<usize>,
+    flags: Vec<String>,
+}
+
+struct CommentMarkerRow {
+    comment_marker_id: usize,
+    marker_id: usize,
+    payload_id: usize,
+    flags: Vec<String>,
+}
+
+#[pyfunction(name = "extract_template_package_v2_snapshot")]
+#[pyo3(signature = (engine, source, filename = None, line_number = 1))]
+fn extract_template_package_v2_snapshot(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    source: String,
+    filename: Option<String>,
+    line_number: u32,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    let surface_bundle = engine
+        .surface_bundle()
+        .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
+    let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
+    let module = crate::parser_ir::parse_native_module(&source, &filename)?;
+    let records = crate::template_extract::extract_template_records(&source, &module, line_number)?;
+    let source_summary = format!("compile line={line_number} records={}", records.len());
+    let template_key =
+        crate::template_extract::native_template_key(py, &source, &module, &source_summary)?;
+
+    let mut package = PackageBuilder::new(
+        surface_bundle.bundle_signature(),
+        &template_key,
+        &source_summary,
+    );
+    for (index, record) in records.iter().enumerate() {
+        package.add_locator(
+            index,
+            &record.ast_path,
+            &record.role_key,
+            &record.authored_summary,
+            &record.materialization_anchor,
+        );
+        package.add_record(
+            index,
+            &record.surface_key,
+            index,
+            &record.resource_name,
+            &record.inventory_kind,
+            &record.code_owner,
+            &record.semantic_summary,
+        );
+    }
+    let scopes = extract_scopes(&module);
+    for scope in &scopes {
+        package.add_scope(scope);
+    }
+    let mut marker_state = MarkerState { source_order: 0 };
+    for (index, stmt) in module.body.iter().enumerate() {
+        visit_stmt_markers(
+            stmt,
+            &format!("body[{index}]"),
+            &scopes,
+            &mut package,
+            &mut marker_state,
+        )?;
+    }
+    package.snapshot(py)
+}
+
+pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(extract_template_package_v2_snapshot, m)?)?;
+    Ok(())
+}
+
+impl PackageBuilder {
+    fn new(surface_bundle_signature: &str, template_key: &str, source_summary: &str) -> Self {
+        let mut package = Self {
+            strings: Vec::new(),
+            string_index: BTreeMap::new(),
+            paths: Vec::new(),
+            path_index: BTreeMap::new(),
+            ast_paths: Vec::new(),
+            ast_path_index: BTreeMap::new(),
+            binding_sets: Vec::new(),
+            binding_set_index: BTreeMap::new(),
+            locators: Vec::new(),
+            records: Vec::new(),
+            scopes: Vec::new(),
+            markers: Vec::new(),
+            pyimport_markers: Vec::new(),
+            managed_imports: Vec::new(),
+            comment_markers: Vec::new(),
+        };
+        package.intern_string(surface_bundle_signature);
+        package.intern_string(template_key);
+        package.intern_string(source_summary);
+        package
+    }
+
+    fn intern_string(&mut self, value: &str) -> usize {
+        if let Some(existing) = self.string_index.get(value) {
+            return *existing;
+        }
+        let string_id = self.strings.len();
+        self.strings.push(value.to_string());
+        self.string_index.insert(value.to_string(), string_id);
+        string_id
+    }
+
+    fn intern_path(&mut self, parts: &[String]) -> usize {
+        if let Some(existing) = self.path_index.get(parts) {
+            return *existing;
+        }
+        for part in parts {
+            self.intern_string(part);
+        }
+        let path_id = self.paths.len();
+        let owned = parts.to_vec();
+        self.paths.push(owned.clone());
+        self.path_index.insert(owned, path_id);
+        path_id
+    }
+
+    fn intern_ast_path(&mut self, ast_path: &str) -> usize {
+        if let Some(existing) = self.ast_path_index.get(ast_path) {
+            return *existing;
+        }
+        let ast_path_id = self.ast_paths.len();
+        self.ast_paths.push(ast_path.to_string());
+        self.ast_path_index
+            .insert(ast_path.to_string(), ast_path_id);
+        ast_path_id
+    }
+
+    fn intern_binding_set(&mut self, names: &[String]) -> usize {
+        let canonical = sorted_unique(names);
+        if let Some(existing) = self.binding_set_index.get(&canonical) {
+            return *existing;
+        }
+        let name_ids = canonical
+            .iter()
+            .map(|name| self.intern_string(name))
+            .collect::<Vec<_>>();
+        let binding_set_id = self.binding_sets.len();
+        self.binding_sets.push((binding_set_id, name_ids));
+        self.binding_set_index.insert(canonical, binding_set_id);
+        binding_set_id
+    }
+
+    fn add_locator(
+        &mut self,
+        locator_id: usize,
+        ast_path: &str,
+        role_key: &str,
+        authored_summary: &str,
+        materialization_anchor: &str,
+    ) {
+        let ast_path_id = self.intern_ast_path(ast_path);
+        let role_key_id = self.intern_string(role_key);
+        let authored_summary_id = self.intern_string(authored_summary);
+        let materialization_anchor_id = self.intern_string(materialization_anchor);
+        self.locators.push(LocatorRow {
+            locator_id,
+            ast_path_id,
+            role_key_id,
+            parent_locator_id: None,
+            authored_summary_id,
+            materialization_anchor_id,
+        });
+    }
+
+    fn add_record(
+        &mut self,
+        template_record_id: usize,
+        surface_key: &str,
+        locator_id: usize,
+        resource_name: &str,
+        inventory_kind: &str,
+        owner_path: &[String],
+        semantic_summary: &str,
+    ) {
+        let surface_key_id = self.intern_string(surface_key);
+        let resource_name_id = if resource_name.is_empty() {
+            None
+        } else {
+            Some(self.intern_string(resource_name))
+        };
+        let inventory_kind_id = self.intern_string(inventory_kind);
+        let owner_path_id = self.intern_path(owner_path);
+        let semantic_summary_id = self.intern_string(semantic_summary);
+        self.records.push(RecordRow {
+            template_record_id,
+            surface_key_id,
+            locator_id,
+            resource_name_id,
+            inventory_kind_id,
+            owner_path_id,
+            semantic_summary_id,
+        });
+    }
+
+    fn add_scope(&mut self, scope: &ScopeSpec) {
+        let scope_kind_id = self.intern_string(&scope.scope_kind);
+        let ast_path_id = self.intern_ast_path(&scope.ast_path);
+        let owner_path_id = self.intern_path(&scope.owner_path);
+        let local_binding_set_id = self.intern_binding_set(&scope.local_bindings);
+        let argument_set_id = self.intern_binding_set(&scope.arguments);
+        self.scopes.push(ScopeRow {
+            scope_id: scope.scope_id,
+            parent_scope_id: scope.parent_scope_id,
+            scope_kind_id,
+            ast_path_id,
+            owner_path_id,
+            local_binding_set_id,
+            argument_set_id,
+        });
+    }
+
+    fn add_marker(
+        &mut self,
+        source_order: usize,
+        marker_kind: &str,
+        source_name: &str,
+        ast_path: &str,
+        statement_path: Option<&str>,
+        scope: &ScopeSpec,
+        resource_name: &str,
+        flags: Vec<String>,
+    ) -> usize {
+        let marker_id = self.markers.len();
+        let marker_kind_id = self.intern_string(marker_kind);
+        let source_name_id = self.intern_string(source_name);
+        let operation_key_id = self.intern_string(source_name);
+        let owner_path_id = self.intern_path(&scope.owner_path);
+        let ast_path_id = self.intern_ast_path(ast_path);
+        let statement_path_id = statement_path.map(|path| self.intern_ast_path(path));
+        let resource_name_id = if resource_name.is_empty() {
+            None
+        } else {
+            Some(self.intern_string(resource_name))
+        };
+        self.markers.push(MarkerRow {
+            marker_id,
+            source_order,
+            marker_kind_id,
+            source_name_id,
+            operation_key_id,
+            scope_id: scope.scope_id,
+            owner_path_id,
+            ast_path_id,
+            statement_path_id,
+            resource_name_id,
+            flags,
+        });
+        marker_id
+    }
+
+    fn add_pyimport_marker(
+        &mut self,
+        marker_id: usize,
+        source_order: usize,
+        scope_id: usize,
+        module_path: Option<Vec<String>>,
+        names: Vec<String>,
+        as_name: Option<String>,
+        flags: Vec<String>,
+    ) {
+        let pyimport_marker_id = self.pyimport_markers.len();
+        let module_path_id = module_path
+            .as_ref()
+            .map(|path| self.intern_path(path.as_slice()));
+        let name_ids = names
+            .iter()
+            .map(|name| self.intern_string(name))
+            .collect::<Vec<_>>();
+        let as_name_id = as_name.as_ref().map(|name| self.intern_string(name));
+        self.pyimport_markers.push(PyImportMarkerRow {
+            pyimport_marker_id,
+            marker_id,
+            module_path_id,
+            name_ids,
+            as_name_id,
+            flags: flags.clone(),
+        });
+        if !names.is_empty() {
+            for name in names {
+                self.add_managed_import(
+                    marker_id,
+                    source_order,
+                    scope_id,
+                    module_path.as_deref(),
+                    &name,
+                    Some(&name),
+                    flags.clone(),
+                );
+            }
+            return;
+        }
+        if let Some(as_name) = as_name {
+            self.add_managed_import(
+                marker_id,
+                source_order,
+                scope_id,
+                module_path.as_deref(),
+                &as_name,
+                None,
+                flags,
+            );
+            return;
+        }
+        if let Some(module_path) = module_path {
+            if module_path.len() == 1 {
+                self.add_managed_import(
+                    marker_id,
+                    source_order,
+                    scope_id,
+                    Some(module_path.as_slice()),
+                    &module_path[0],
+                    None,
+                    flags,
+                );
+            }
+        }
+    }
+
+    fn add_managed_import(
+        &mut self,
+        marker_id: usize,
+        source_order: usize,
+        scope_id: usize,
+        module_path: Option<&[String]>,
+        final_local_name: &str,
+        original_symbol: Option<&str>,
+        flags: Vec<String>,
+    ) {
+        let managed_import_id = self.managed_imports.len();
+        let module_path_id = module_path.map(|path| self.intern_path(path));
+        let final_local_name_id = self.intern_string(final_local_name);
+        let original_symbol_id = original_symbol.map(|symbol| self.intern_string(symbol));
+        self.managed_imports.push(ManagedImportRow {
+            managed_import_id,
+            marker_id,
+            source_order,
+            scope_id,
+            module_path_id,
+            final_local_name_id,
+            original_symbol_id,
+            flags,
+        });
+    }
+
+    fn add_comment_marker(&mut self, marker_id: usize, payload: &str) {
+        let comment_marker_id = self.comment_markers.len();
+        let payload_id = self.intern_string(payload);
+        self.comment_markers.push(CommentMarkerRow {
+            comment_marker_id,
+            marker_id,
+            payload_id,
+            flags: vec![
+                "strip_for_executable".to_string(),
+                "preserve_for_commented_source".to_string(),
+            ],
+        });
+    }
+
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let snapshot = PyDict::new(py);
+        snapshot.set_item("schema", PACKAGE_SCHEMA)?;
+        snapshot.set_item("surface_bundle_signature", &self.strings[0])?;
+        snapshot.set_item("template_key", &self.strings[1])?;
+        snapshot.set_item("source_summary", &self.strings[2])?;
+        snapshot.set_item("string_table", &self.strings)?;
+        snapshot.set_item("path_table", &self.paths)?;
+        snapshot.set_item("ast_path_table", &self.ast_paths)?;
+        snapshot.set_item("binding_sets", self.binding_set_list(py)?)?;
+        snapshot.set_item("locators", self.locator_list(py)?)?;
+        snapshot.set_item("records", self.record_list(py)?)?;
+        snapshot.set_item("scopes", self.scope_list(py)?)?;
+        snapshot.set_item("markers", self.marker_list(py)?)?;
+        snapshot.set_item("pyimport_markers", self.pyimport_marker_list(py)?)?;
+        snapshot.set_item("managed_imports", self.managed_import_list(py)?)?;
+        snapshot.set_item("comment_markers", self.comment_marker_list(py)?)?;
+        snapshot.set_item("ref_markers", PyList::empty(py))?;
+        snapshot.set_item("unroll_markers", PyList::empty(py))?;
+        Ok(snapshot.into_any().unbind())
+    }
+
+    fn binding_set_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for (binding_set_id, name_ids) in &self.binding_sets {
+            let item = PyDict::new(py);
+            item.set_item("binding_set_id", binding_set_id)?;
+            item.set_item("names", self.strings_for_ids(name_ids))?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn locator_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.locators {
+            let item = PyDict::new(py);
+            item.set_item("ast_path", &self.ast_paths[row.ast_path_id])?;
+            item.set_item("authored_summary", &self.strings[row.authored_summary_id])?;
+            item.set_item("locator_id", row.locator_id)?;
+            item.set_item(
+                "materialization_anchor",
+                &self.strings[row.materialization_anchor_id],
+            )?;
+            item.set_item("parent_locator_id", row.parent_locator_id)?;
+            item.set_item("role_key", &self.strings[row.role_key_id])?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn record_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.records {
+            let item = PyDict::new(py);
+            item.set_item("flags", Vec::<String>::new())?;
+            item.set_item("inventory_kind", &self.strings[row.inventory_kind_id])?;
+            item.set_item("locator_id", row.locator_id)?;
+            item.set_item("operation_key", "")?;
+            item.set_item("owner_path", &self.paths[row.owner_path_id])?;
+            item.set_item(
+                "resource_name",
+                row.resource_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            item.set_item("semantic_summary", &self.strings[row.semantic_summary_id])?;
+            item.set_item("surface_key", &self.strings[row.surface_key_id])?;
+            item.set_item("template_record_id", row.template_record_id)?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn scope_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.scopes {
+            let item = PyDict::new(py);
+            item.set_item("arguments", self.binding_set_names(row.argument_set_id))?;
+            item.set_item("ast_path", &self.ast_paths[row.ast_path_id])?;
+            item.set_item(
+                "local_bindings",
+                self.binding_set_names(row.local_binding_set_id),
+            )?;
+            item.set_item("owner_path", &self.paths[row.owner_path_id])?;
+            item.set_item("parent_scope_id", row.parent_scope_id)?;
+            item.set_item("scope_id", row.scope_id)?;
+            item.set_item("scope_kind", &self.strings[row.scope_kind_id])?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn marker_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.markers {
+            let item = PyDict::new(py);
+            item.set_item("ast_path", &self.ast_paths[row.ast_path_id])?;
+            item.set_item("flags", &row.flags)?;
+            item.set_item("marker_id", row.marker_id)?;
+            item.set_item("marker_kind", &self.strings[row.marker_kind_id])?;
+            item.set_item("operation_key", &self.strings[row.operation_key_id])?;
+            item.set_item("owner_path", &self.paths[row.owner_path_id])?;
+            item.set_item(
+                "resource_name",
+                row.resource_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            item.set_item("scope_id", row.scope_id)?;
+            item.set_item("source_name", &self.strings[row.source_name_id])?;
+            item.set_item("source_order", row.source_order)?;
+            match row.statement_path_id {
+                Some(path_id) => item.set_item("statement_path", &self.ast_paths[path_id])?,
+                None => item.set_item("statement_path", py.None())?,
+            };
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn pyimport_marker_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.pyimport_markers {
+            let item = PyDict::new(py);
+            item.set_item(
+                "as_name",
+                row.as_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            item.set_item("flags", &row.flags)?;
+            item.set_item("marker_id", row.marker_id)?;
+            match row.module_path_id {
+                Some(path_id) => item.set_item("module_path", &self.paths[path_id])?,
+                None => item.set_item("module_path", py.None())?,
+            };
+            item.set_item("names", self.strings_for_ids(&row.name_ids))?;
+            item.set_item("pyimport_marker_id", row.pyimport_marker_id)?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn managed_import_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.managed_imports {
+            let item = PyDict::new(py);
+            item.set_item("final_local_name", &self.strings[row.final_local_name_id])?;
+            item.set_item("flags", &row.flags)?;
+            item.set_item("managed_import_id", row.managed_import_id)?;
+            item.set_item("marker_id", row.marker_id)?;
+            match row.module_path_id {
+                Some(path_id) => item.set_item("module_path", &self.paths[path_id])?,
+                None => item.set_item("module_path", py.None())?,
+            };
+            match row.original_symbol_id {
+                Some(string_id) => item.set_item("original_symbol", &self.strings[string_id])?,
+                None => item.set_item("original_symbol", py.None())?,
+            };
+            item.set_item("scope_id", row.scope_id)?;
+            item.set_item("source_order", row.source_order)?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn comment_marker_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let list = PyList::empty(py);
+        for row in &self.comment_markers {
+            let item = PyDict::new(py);
+            item.set_item("comment_marker_id", row.comment_marker_id)?;
+            item.set_item("flags", &row.flags)?;
+            item.set_item("marker_id", row.marker_id)?;
+            item.set_item("payload", &self.strings[row.payload_id])?;
+            list.append(item)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn strings_for_ids(&self, ids: &[usize]) -> Vec<&str> {
+        ids.iter().map(|id| self.strings[*id].as_str()).collect()
+    }
+
+    fn binding_set_names(&self, binding_set_id: usize) -> Vec<&str> {
+        self.strings_for_ids(&self.binding_sets[binding_set_id].1)
+    }
+}
+
+fn extract_scopes(module: &ast::ModModule) -> Vec<ScopeSpec> {
+    let mut scopes = Vec::new();
+    let module_scope = ScopeSpec {
+        scope_id: 0,
+        parent_scope_id: None,
+        scope_kind: "module".to_string(),
+        ast_path: "".to_string(),
+        owner_path: Vec::new(),
+        local_bindings: scope_body_bindings(&module.body, Vec::new()),
+        arguments: Vec::new(),
+    };
+    scopes.push(module_scope);
+    for (index, stmt) in module.body.iter().enumerate() {
+        visit_stmt_scopes(stmt, &format!("body[{index}]"), 0, &[], &mut scopes);
+    }
+    scopes
+}
+
+fn visit_stmt_scopes(
+    stmt: &ast::Stmt,
+    path: &str,
+    parent_scope_id: usize,
+    owner_path: &[String],
+    scopes: &mut Vec<ScopeSpec>,
+) {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            let mut child_owner = owner_path.to_vec();
+            child_owner.push(node.name.to_string());
+            let arguments = argument_names(&node.args);
+            let scope_id = scopes.len();
+            scopes.push(ScopeSpec {
+                scope_id,
+                parent_scope_id: Some(parent_scope_id),
+                scope_kind: "function".to_string(),
+                ast_path: path.to_string(),
+                owner_path: child_owner.clone(),
+                local_bindings: scope_body_bindings(&node.body, arguments.clone()),
+                arguments,
+            });
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                scope_id,
+                &child_owner,
+                scopes,
+            );
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            let mut child_owner = owner_path.to_vec();
+            child_owner.push(node.name.to_string());
+            let arguments = argument_names(&node.args);
+            let scope_id = scopes.len();
+            scopes.push(ScopeSpec {
+                scope_id,
+                parent_scope_id: Some(parent_scope_id),
+                scope_kind: "async_function".to_string(),
+                ast_path: path.to_string(),
+                owner_path: child_owner.clone(),
+                local_bindings: scope_body_bindings(&node.body, arguments.clone()),
+                arguments,
+            });
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                scope_id,
+                &child_owner,
+                scopes,
+            );
+        }
+        ast::Stmt::ClassDef(node) => {
+            let mut child_owner = owner_path.to_vec();
+            child_owner.push(node.name.to_string());
+            let scope_id = scopes.len();
+            scopes.push(ScopeSpec {
+                scope_id,
+                parent_scope_id: Some(parent_scope_id),
+                scope_kind: "class".to_string(),
+                ast_path: path.to_string(),
+                owner_path: child_owner.clone(),
+                local_bindings: scope_body_bindings(&node.body, Vec::new()),
+                arguments: Vec::new(),
+            });
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                scope_id,
+                &child_owner,
+                scopes,
+            );
+        }
+        ast::Stmt::For(node) => {
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+            visit_body_scopes(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+        }
+        ast::Stmt::While(node) => {
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+            visit_body_scopes(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+        }
+        ast::Stmt::If(node) => {
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+            visit_body_scopes(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+        }
+        ast::Stmt::With(node) => {
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+        }
+        ast::Stmt::Try(node) => {
+            visit_body_scopes(
+                &node.body,
+                &format!("{path}/body"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+            for (index, handler) in node.handlers.iter().enumerate() {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                visit_body_scopes(
+                    &handler.body,
+                    &format!("{path}/handlers[{index}]/body"),
+                    parent_scope_id,
+                    owner_path,
+                    scopes,
+                );
+            }
+            visit_body_scopes(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+            visit_body_scopes(
+                &node.finalbody,
+                &format!("{path}/finalbody"),
+                parent_scope_id,
+                owner_path,
+                scopes,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn visit_body_scopes(
+    body: &[ast::Stmt],
+    parent_path: &str,
+    parent_scope_id: usize,
+    owner_path: &[String],
+    scopes: &mut Vec<ScopeSpec>,
+) {
+    for (index, stmt) in body.iter().enumerate() {
+        visit_stmt_scopes(
+            stmt,
+            &format!("{parent_path}[{index}]"),
+            parent_scope_id,
+            owner_path,
+            scopes,
+        );
+    }
+}
+
+fn scope_body_bindings(body: &[ast::Stmt], initial: Vec<String>) -> Vec<String> {
+    let mut names = initial.into_iter().collect::<BTreeSet<_>>();
+    for stmt in body {
+        collect_stmt_bindings(stmt, &mut names);
+    }
+    names.into_iter().collect()
+}
+
+fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::ClassDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::Assign(node) => {
+            for target in &node.targets {
+                collect_target_bindings(target, names);
+            }
+        }
+        ast::Stmt::AnnAssign(node) => collect_target_bindings(&node.target, names),
+        ast::Stmt::AugAssign(node) => collect_target_bindings(&node.target, names),
+        ast::Stmt::Delete(node) => {
+            for target in &node.targets {
+                collect_target_bindings(target, names);
+            }
+        }
+        ast::Stmt::For(node) => {
+            collect_target_bindings(&node.target, names);
+            for stmt in &node.body {
+                collect_stmt_bindings(stmt, names);
+            }
+            for stmt in &node.orelse {
+                collect_stmt_bindings(stmt, names);
+            }
+        }
+        ast::Stmt::While(node) => {
+            for stmt in &node.body {
+                collect_stmt_bindings(stmt, names);
+            }
+            for stmt in &node.orelse {
+                collect_stmt_bindings(stmt, names);
+            }
+        }
+        ast::Stmt::If(node) => {
+            for stmt in &node.body {
+                collect_stmt_bindings(stmt, names);
+            }
+            for stmt in &node.orelse {
+                collect_stmt_bindings(stmt, names);
+            }
+        }
+        ast::Stmt::With(node) => {
+            for item in &node.items {
+                if let Some(optional_vars) = item.optional_vars.as_ref() {
+                    collect_target_bindings(optional_vars, names);
+                }
+            }
+            for stmt in &node.body {
+                collect_stmt_bindings(stmt, names);
+            }
+        }
+        ast::Stmt::Try(node) => {
+            for stmt in &node.body {
+                collect_stmt_bindings(stmt, names);
+            }
+            for handler in &node.handlers {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                for stmt in &handler.body {
+                    collect_stmt_bindings(stmt, names);
+                }
+            }
+            for stmt in &node.orelse {
+                collect_stmt_bindings(stmt, names);
+            }
+            for stmt in &node.finalbody {
+                collect_stmt_bindings(stmt, names);
+            }
+        }
+        ast::Stmt::Import(node) => {
+            for alias in &node.names {
+                names.insert(import_alias_binding_name(alias, false));
+            }
+        }
+        ast::Stmt::ImportFrom(node) => {
+            for alias in &node.names {
+                names.insert(import_alias_binding_name(alias, true));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_target_bindings(expr: &ast::Expr, names: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Name(node) => {
+            names.insert(node.id.to_string());
+        }
+        ast::Expr::Tuple(node) => {
+            for item in &node.elts {
+                collect_target_bindings(item, names);
+            }
+        }
+        ast::Expr::List(node) => {
+            for item in &node.elts {
+                collect_target_bindings(item, names);
+            }
+        }
+        ast::Expr::Starred(node) => collect_target_bindings(&node.value, names),
+        _ => {}
+    }
+}
+
+fn argument_names(args: &ast::Arguments) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for arg in &args.posonlyargs {
+        names.insert(arg.def.arg.to_string());
+    }
+    for arg in &args.args {
+        names.insert(arg.def.arg.to_string());
+    }
+    for arg in &args.kwonlyargs {
+        names.insert(arg.def.arg.to_string());
+    }
+    if let Some(arg) = args.vararg.as_ref() {
+        names.insert(arg.arg.to_string());
+    }
+    if let Some(arg) = args.kwarg.as_ref() {
+        names.insert(arg.arg.to_string());
+    }
+    names.into_iter().collect()
+}
+
+fn import_alias_binding_name(alias: &ast::Alias, from_import: bool) -> String {
+    if let Some(asname) = alias.asname.as_ref() {
+        return asname.to_string();
+    }
+    if from_import {
+        return alias.name.to_string();
+    }
+    alias
+        .name
+        .as_str()
+        .split('.')
+        .next()
+        .unwrap_or(alias.name.as_str())
+        .to_string()
+}
+
+struct MarkerState {
+    source_order: usize,
+}
+
+fn visit_stmt_markers(
+    stmt: &ast::Stmt,
+    path: &str,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    match stmt {
+        ast::Stmt::Expr(node) => visit_expr_markers(
+            &node.value,
+            &format!("{path}/value"),
+            Some(path),
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Stmt::Assign(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                visit_expr_markers(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::AnnAssign(node) => {
+            visit_expr_markers(
+                &node.target,
+                &format!("{path}/target"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.annotation,
+                &format!("{path}/annotation"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            if let Some(value) = node.value.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/value"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::AugAssign(node) => {
+            visit_expr_markers(
+                &node.target,
+                &format!("{path}/target"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/value"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::For(node) => {
+            visit_expr_markers(
+                &node.target,
+                &format!("{path}/target"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.iter,
+                &format!("{path}/iter"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::While(node) => {
+            visit_expr_markers(
+                &node.test,
+                &format!("{path}/test"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::If(node) => {
+            visit_expr_markers(
+                &node.test,
+                &format!("{path}/test"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::With(node) => {
+            for (index, item) in node.items.iter().enumerate() {
+                visit_expr_markers(
+                    &item.context_expr,
+                    &format!("{path}/items[{index}]/context_expr"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+                if let Some(optional_vars) = item.optional_vars.as_ref() {
+                    visit_expr_markers(
+                        optional_vars,
+                        &format!("{path}/items[{index}]/optional_vars"),
+                        Some(path),
+                        scopes,
+                        package,
+                        marker_state,
+                    )?;
+                }
+            }
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::FunctionDef(node) => {
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::ClassDef(node) => {
+            for (index, base) in node.bases.iter().enumerate() {
+                visit_expr_markers(
+                    base,
+                    &format!("{path}/bases[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Stmt::Try(node) => {
+            visit_stmt_list_markers(
+                &node.body,
+                &format!("{path}/body"),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            for (index, handler) in node.handlers.iter().enumerate() {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                visit_stmt_list_markers(
+                    &handler.body,
+                    &format!("{path}/handlers[{index}]/body"),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_stmt_list_markers(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_stmt_list_markers(
+                &node.finalbody,
+                &format!("{path}/finalbody"),
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn visit_stmt_list_markers(
+    body: &[ast::Stmt],
+    parent_path: &str,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    for (index, stmt) in body.iter().enumerate() {
+        visit_stmt_markers(
+            stmt,
+            &format!("{parent_path}[{index}]"),
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    Ok(())
+}
+
+fn visit_expr_markers(
+    expr: &ast::Expr,
+    path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    match expr {
+        ast::Expr::Call(node) => {
+            if let Some(source_name) = call_name(&node.func) {
+                append_marker_for_call(
+                    source_name,
+                    node,
+                    path,
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            visit_expr_markers(
+                &node.func,
+                &format!("{path}/func"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            for (index, arg) in node.args.iter().enumerate() {
+                visit_expr_markers(
+                    arg,
+                    &format!("{path}/args[{index}]"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                visit_expr_markers(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::BoolOp(node) => {
+            for (index, value) in node.values.iter().enumerate() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::NamedExpr(node) => {
+            visit_expr_markers(
+                &node.target,
+                &format!("{path}/target"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::BinOp(node) => {
+            visit_expr_markers(
+                &node.left,
+                &format!("{path}/left"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.right,
+                &format!("{path}/right"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::UnaryOp(node) => visit_expr_markers(
+            &node.operand,
+            &format!("{path}/operand"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Lambda(node) => visit_expr_markers(
+            &node.body,
+            &format!("{path}/body"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::IfExp(node) => {
+            visit_expr_markers(
+                &node.test,
+                &format!("{path}/test"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.body,
+                &format!("{path}/body"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::Dict(node) => {
+            for (index, key) in node.keys.iter().enumerate() {
+                if let Some(key) = key {
+                    visit_expr_markers(
+                        key,
+                        &format!("{path}/keys[{index}]"),
+                        statement_path,
+                        scopes,
+                        package,
+                        marker_state,
+                    )?;
+                }
+            }
+            for (index, value) in node.values.iter().enumerate() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/values[{index}]"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Set(node) => visit_expr_list_markers(
+            &node.elts,
+            path,
+            "elts",
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::List(node) => visit_expr_list_markers(
+            &node.elts,
+            path,
+            "elts",
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Tuple(node) => visit_expr_list_markers(
+            &node.elts,
+            path,
+            "elts",
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Attribute(node) => visit_expr_markers(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Subscript(node) => {
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.slice,
+                &format!("{path}/slice"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::Starred(node) => visit_expr_markers(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Compare(node) => {
+            visit_expr_markers(
+                &node.left,
+                &format!("{path}/left"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            for (index, value) in node.comparators.iter().enumerate() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/comparators[{index}]"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::FormattedValue(node) => {
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            if let Some(value) = node.format_spec.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/format_spec"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::JoinedStr(node) => visit_expr_list_markers(
+            &node.values,
+            path,
+            "values",
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::ListComp(node) => visit_expr_markers(
+            &node.elt,
+            &format!("{path}/elt"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::SetComp(node) => visit_expr_markers(
+            &node.elt,
+            &format!("{path}/elt"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::GeneratorExp(node) => visit_expr_markers(
+            &node.elt,
+            &format!("{path}/elt"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::DictComp(node) => {
+            visit_expr_markers(
+                &node.key,
+                &format!("{path}/key"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.value,
+                &format!("{path}/value"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::Await(node) => visit_expr_markers(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Yield(node) => {
+            if let Some(value) = node.value.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/value"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::YieldFrom(node) => visit_expr_markers(
+            &node.value,
+            &format!("{path}/value"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        ),
+        ast::Expr::Slice(node) => {
+            if let Some(value) = node.lower.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/lower"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            if let Some(value) = node.upper.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/upper"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            if let Some(value) = node.step.as_ref() {
+                visit_expr_markers(
+                    value,
+                    &format!("{path}/step"),
+                    statement_path,
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => Ok(()),
+    }
+}
+
+fn visit_expr_list_markers(
+    values: &[ast::Expr],
+    path: &str,
+    field: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    for (index, value) in values.iter().enumerate() {
+        visit_expr_markers(
+            value,
+            &format!("{path}/{field}[{index}]"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    Ok(())
+}
+
+fn append_marker_for_call(
+    source_name: &str,
+    node: &ast::ExprCall,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    if !is_package_marker(source_name) {
+        return Ok(());
+    }
+    let scope = scope_for_ast_path(scopes, ast_path);
+    let mut flags = vec!["call_context".to_string()];
+    if source_name == "astichi_keep" {
+        flags.push("is_metadata_marker".to_string());
+    }
+    if matches!(source_name, "astichi_import" | "astichi_pass") {
+        if boundary_keyword_bool(node, "bound")? {
+            flags.push("explicit_bind_enabled".to_string());
+        }
+        if boundary_keyword_bool(node, "outer_bind")? {
+            flags.push("outer_bind_enabled".to_string());
+        }
+    }
+    let marker_id = package.add_marker(
+        marker_state.source_order,
+        marker_kind(source_name),
+        source_name,
+        ast_path,
+        statement_path,
+        scope,
+        &marker_resource_name(source_name, node),
+        flags,
+    );
+    if source_name == "astichi_pyimport" {
+        let (module_path, names, as_name, flags) = pyimport_marker_payload(node);
+        package.add_pyimport_marker(
+            marker_id,
+            marker_state.source_order,
+            scope.scope_id,
+            module_path,
+            names,
+            as_name,
+            flags,
+        );
+    } else if source_name == "astichi_comment" {
+        if let Some(payload) = string_arg(node, 0) {
+            package.add_comment_marker(marker_id, &payload);
+        }
+    }
+    marker_state.source_order += 1;
+    Ok(())
+}
+
+fn is_package_marker(source_name: &str) -> bool {
+    matches!(
+        source_name,
+        "astichi_hole"
+            | "astichi_bind_external"
+            | "astichi_ref"
+            | "astichi_export"
+            | "astichi_import"
+            | "astichi_pass"
+            | "astichi_insert"
+            | "astichi_comment"
+            | "astichi_funcargs"
+            | "astichi_keep"
+            | "astichi_pyimport"
+            | "astichi_for"
+    )
+}
+
+fn marker_kind(source_name: &str) -> &str {
+    match source_name {
+        "astichi_pyimport" => "pyimport",
+        "astichi_comment" => "comment",
+        "astichi_ref" => "ref",
+        "astichi_for" => "unroll",
+        other => other.strip_prefix("astichi_").unwrap_or(other),
+    }
+}
+
+fn marker_resource_name(source_name: &str, node: &ast::ExprCall) -> String {
+    match source_name {
+        "astichi_hole"
+        | "astichi_bind_external"
+        | "astichi_export"
+        | "astichi_import"
+        | "astichi_pass"
+        | "astichi_keep"
+        | "astichi_insert" => name_arg(node, 0).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn pyimport_marker_payload(
+    node: &ast::ExprCall,
+) -> (
+    Option<Vec<String>>,
+    Vec<String>,
+    Option<String>,
+    Vec<String>,
+) {
+    let module_path = keyword(node, "module").and_then(expr_path);
+    let names = keyword(node, "names")
+        .map(pyimport_names)
+        .unwrap_or_default();
+    let as_name = keyword(node, "as_").and_then(name_expr);
+    let mut flags = Vec::new();
+    if !names.is_empty() {
+        flags.push("from_import".to_string());
+    } else {
+        flags.push("plain_import".to_string());
+    }
+    if module_path.is_none() {
+        flags.push("dynamic_module".to_string());
+    }
+    (module_path, names, as_name, flags)
+}
+
+fn pyimport_names(expr: &ast::Expr) -> Vec<String> {
+    match expr {
+        ast::Expr::Tuple(node) => node.elts.iter().filter_map(name_expr).collect(),
+        ast::Expr::List(node) => node.elts.iter().filter_map(name_expr).collect(),
+        ast::Expr::Name(node) => vec![node.id.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn expr_path(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::Name(node) => Some(vec![node.id.to_string()]),
+        ast::Expr::Attribute(node) => {
+            let mut path = expr_path(&node.value)?;
+            path.push(node.attr.to_string());
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+fn name_expr(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.to_string()),
+        _ => None,
+    }
+}
+
+fn name_arg(node: &ast::ExprCall, index: usize) -> Option<String> {
+    node.args.get(index).and_then(name_expr)
+}
+
+fn string_arg(node: &ast::ExprCall, index: usize) -> Option<String> {
+    match node.args.get(index)? {
+        ast::Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Str(value) => Some(value.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn keyword<'a>(node: &'a ast::ExprCall, name: &str) -> Option<&'a ast::Expr> {
+    node.keywords.iter().find_map(|keyword| {
+        if keyword.arg.as_ref().map(|arg| arg.as_str()) == Some(name) {
+            Some(&keyword.value)
+        } else {
+            None
+        }
+    })
+}
+
+fn boundary_keyword_bool(node: &ast::ExprCall, name: &str) -> PyResult<bool> {
+    let Some(value) = keyword(node, name) else {
+        return Ok(false);
+    };
+    match value {
+        ast::Expr::Constant(constant) => match constant.value {
+            ast::Constant::Bool(value) => Ok(value),
+            _ => Err(crate::errors::schema_error(&format!(
+                "boundary keyword `{name}` must be a literal True/False"
+            ))),
+        },
+        _ => Err(crate::errors::schema_error(&format!(
+            "boundary keyword `{name}` must be a literal True/False"
+        ))),
+    }
+}
+
+fn scope_for_ast_path<'a>(scopes: &'a [ScopeSpec], ast_path: &str) -> &'a ScopeSpec {
+    let mut best = &scopes[0];
+    let mut best_depth = 0;
+    for scope in scopes {
+        if ast_path_is_prefix(&scope.ast_path, ast_path) {
+            let depth = ast_path_depth(&scope.ast_path);
+            if depth >= best_depth {
+                best = scope;
+                best_depth = depth;
+            }
+        }
+    }
+    best
+}
+
+fn ast_path_is_prefix(scope_path: &str, ast_path: &str) -> bool {
+    scope_path.is_empty()
+        || ast_path == scope_path
+        || ast_path.starts_with(&format!("{scope_path}/"))
+}
+
+fn ast_path_depth(ast_path: &str) -> usize {
+    if ast_path.is_empty() {
+        0
+    } else {
+        ast_path.split('/').filter(|part| !part.is_empty()).count()
+    }
+}
+
+fn sorted_unique(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.as_str()),
+        _ => None,
+    }
+}

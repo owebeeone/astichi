@@ -17,14 +17,14 @@ const DIRECTIVE_PLACEHOLDER_SUFFIX: &str = "__";
 const DEFAULTED_BLOCK_FALLBACK_NAME: &str = "astichi_fallback";
 
 #[derive(Clone)]
-struct SourceMap {
+pub(crate) struct SourceMap {
     line_starts: Vec<usize>,
     import_names: BTreeSet<String>,
     export_names: BTreeSet<String>,
 }
 
 impl SourceMap {
-    fn new(source: &str) -> Self {
+    pub(crate) fn new(source: &str) -> Self {
         let mut line_starts = vec![0];
         for (idx, byte) in source.bytes().enumerate() {
             if byte == b'\n' {
@@ -46,7 +46,7 @@ impl SourceMap {
         source_map
     }
 
-    fn line(&self, range: TextRange) -> usize {
+    pub(crate) fn line(&self, range: TextRange) -> usize {
         let offset = range.start().to_u32() as usize;
         match self.line_starts.binary_search(&offset) {
             Ok(idx) => idx + 1,
@@ -56,16 +56,16 @@ impl SourceMap {
 }
 
 #[derive(Clone)]
-struct ExtractedRecord {
-    ast_path: String,
-    authored_summary: String,
-    role_key: String,
-    materialization_anchor: String,
-    inventory_kind: String,
-    resource_name: String,
-    semantic_summary: String,
-    surface_key: String,
-    code_owner: Vec<String>,
+pub(crate) struct ExtractedRecord {
+    pub(crate) ast_path: String,
+    pub(crate) authored_summary: String,
+    pub(crate) role_key: String,
+    pub(crate) materialization_anchor: String,
+    pub(crate) inventory_kind: String,
+    pub(crate) resource_name: String,
+    pub(crate) semantic_summary: String,
+    pub(crate) surface_key: String,
+    pub(crate) code_owner: Vec<String>,
 }
 
 struct RootBodyEntry<'a> {
@@ -105,22 +105,13 @@ fn extract_template_snapshot(
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
     let module = crate::parser_ir::parse_native_module(&source, &filename)?;
     validate_special_surface_placement(&module, &SourceMap::new(&source))?;
-    let mut records = extract_records(&source, &module)?;
-    if should_include_block_production(&module) {
-        let source_map = SourceMap::new(&source);
-        records.push(block_production_record(block_production_line_number(
-            &module,
-            &source_map,
-            line_number,
-        )));
-    }
+    let records = extract_template_records(&source, &module, line_number)?;
 
     let source_summary = "compile line=".to_string()
         + &line_number.to_string()
         + " records="
         + &records.len().to_string();
-    let ast_dump = crate::parser_ir::ast_dump_without_attributes(py, &source, &module)?;
-    let template_key = template_key(py, &ast_dump, &source_summary)?;
+    let template_key = native_template_key(py, &source, &module, &source_summary)?;
 
     structural_snapshot(
         py,
@@ -143,6 +134,23 @@ fn reject_deferred_markers(source: &str) -> PyResult<()> {
 
 fn validate_deferred_marker_text(_source: &str) -> PyResult<()> {
     Ok(())
+}
+
+pub(crate) fn extract_template_records(
+    source: &str,
+    module: &ast::ModModule,
+    line_number: u32,
+) -> PyResult<Vec<ExtractedRecord>> {
+    let mut records = extract_records(source, module)?;
+    if should_include_block_production(module) {
+        let source_map = SourceMap::new(source);
+        records.push(block_production_record(block_production_line_number(
+            module,
+            &source_map,
+            line_number,
+        )));
+    }
+    Ok(records)
 }
 
 fn extract_records(source: &str, module: &ast::ModModule) -> PyResult<Vec<ExtractedRecord>> {
@@ -2653,6 +2661,16 @@ fn strip_known_suffix(value: &str) -> String {
         .or_else(|| value.strip_suffix(KEEP_SUFFIX))
         .unwrap_or(value)
         .to_string()
+}
+
+pub(crate) fn native_template_key(
+    py: Python<'_>,
+    source: &str,
+    module: &ast::ModModule,
+    source_summary: &str,
+) -> PyResult<String> {
+    let ast_dump = crate::parser_ir::ast_dump_without_attributes(py, source, module)?;
+    template_key(py, &ast_dump, source_summary)
 }
 
 fn template_key(py: Python<'_>, ast_dump: &str, source_summary: &str) -> PyResult<String> {
