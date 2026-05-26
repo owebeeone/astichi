@@ -153,22 +153,28 @@ on the success path.
 Work:
 
 - Introduce an explicit native-backed composable facade or extend the existing
-  facade with a native-authoritative lower binding.
+  facade with a native-owned lower package attachment.
 - The native binding must carry source/origin, native template handle or
   package handle, and enough debug projection hooks for existing diagnostics.
 - Keep public `emit`, `materialize`, `describe`, and structural snapshot APIs
   available, but allow them to call explicit slow-path projections.
 - Do not remove the Python reference engine.
-- Do not make Python `inventory` construction mandatory in native-selected
-  `compile(...)`.
+- Keep the current Python projection rows as compatibility data until native
+  package-v2 parity covers all rows needed by Python materialization and
+  diagnostics. This guard prevents P1 from regressing the lifecycle workload
+  by swapping in incomplete native projection rows too early.
+- Do not make Python `inventory` construction part of the native-owned package
+  contract; P2 owns removing it from native-selected `compile(...)`.
 
 Acceptance:
 
-- Native-selected compile can return a facade whose lower template is
-  native-authoritative.
+- Native-selected compile returns a facade with native source/origin, a native
+  structural snapshot, and a native package-v2 snapshot.
 - Python-selected compile is unchanged.
 - Existing public diagnostics still have a projection path.
 - Focused facade/template tests pass.
+- The lifecycle benchmark still reports native counters without introducing
+  builder-adapter fallback on the native route.
 - Full Astichi suite passes.
 
 Expected performance movement:

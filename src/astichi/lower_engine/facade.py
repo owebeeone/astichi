@@ -71,8 +71,20 @@ class LowerTemplateBinding:
         repr=False,
         compare=False,
     )
+    native_package_snapshot: dict[str, object] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     native_source: str | None = field(default=None, repr=False, compare=False)
     native_origin: CompileOrigin | None = field(default=None, repr=False, compare=False)
+
+    def has_native_lower_package(self) -> bool:
+        """Return whether a native-owned lower package is attached."""
+        return (
+            self.backend.startswith("native-")
+            and self.native_package_snapshot is not None
+        )
 
     def structural_snapshot(self) -> dict[str, object]:
         """Return a deterministic structural snapshot for this template."""
@@ -142,11 +154,16 @@ def register_native_template_source(
     origin: CompileOrigin,
     fallback_binding: LowerTemplateBinding,
 ) -> LowerTemplateBinding:
-    """Attach a native-extracted structural template snapshot to a binding."""
+    """Attach native-extracted lower metadata to a binding facade."""
     from astichi.lower_engine.native import load_native_extension
 
     module = load_native_extension(required=True)
     assert module is not None
+    native_package_snapshot = _extract_native_package_snapshot(
+        module=module,
+        source=source,
+        origin=origin,
+    )
     native_snapshot = _extract_native_template_snapshot(
         module=module,
         source=source,
@@ -156,6 +173,7 @@ def register_native_template_source(
         fallback_binding,
         backend=_native_backend_name(module),
         native_snapshot=native_snapshot,
+        native_package_snapshot=native_package_snapshot,
         native_source=source,
         native_origin=origin,
     )
@@ -281,6 +299,29 @@ def _extract_native_template_snapshot(
         module.engine_close(handle)
     if not isinstance(snapshot, dict):
         raise TypeError("native template snapshot must be a dict")
+    return snapshot
+
+
+def _extract_native_package_snapshot(
+    *,
+    module: ModuleType,
+    source: str,
+    origin: CompileOrigin,
+) -> dict[str, object]:
+    bundle_snapshot = _current_surface_bundle_snapshot()
+    handle = module.engine_create()
+    try:
+        module.register_surface_bundle(handle, deepcopy(bundle_snapshot))
+        snapshot = module.extract_template_package_v2_snapshot(
+            handle,
+            source,
+            origin.file_name,
+            origin.line_number,
+        )
+    finally:
+        module.engine_close(handle)
+    if not isinstance(snapshot, dict):
+        raise TypeError("native package snapshot must be a dict")
     return snapshot
 
 

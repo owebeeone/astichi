@@ -91,7 +91,9 @@ def test_compile_explicit_native_attaches_native_template_snapshot(
     lower_template = native_composable._lower_template
     assert isinstance(lower_template, LowerTemplateBinding)
     assert lower_template.backend == "native-rust"
+    assert lower_template.has_native_lower_package()
     assert lower_template.native_snapshot is not None
+    assert lower_template.native_package_snapshot is not None
     assert lower_template.native_source == source
     assert lower_template.native_origin == native_composable.origin
     assert (
