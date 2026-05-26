@@ -39,6 +39,9 @@ design artifacts for implementation planning:
 - `NativeLowerEngineDetailedPlan.md`: required implementation plan for the
   fully native lower engine, including data structures, facade integration,
   verification, and roll-build slices.
+- `NativePerformancePlan.md`: roll-build plan for turning the now-selectable
+  native lower-engine path from a correct hybrid path into a faster
+  native-authoritative path.
 - `SlicedBuildPlan.md`: commit-sized implementation slices, including API
   pruning before lower-engine changes.
 
