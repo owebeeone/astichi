@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-pub const VERSION: &str = "1.0.4";
+pub const VERSION: &str = "1.0.5";
 pub const ABI_SCHEMA_VERSION: u32 = 1;
 pub const BACKEND_LABEL: &str = "rust-pyo3-core";
 
