@@ -70,13 +70,13 @@ export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 /root/.cargo/bin/cargo --version
 """
-environment = {
-  PATH = "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-  CARGO_HOME = "/root/.cargo",
-  RUSTUP_HOME = "/root/.rustup",
-  ASTICHI_REQUIRE_NATIVE_BUILD = "1",
-}
 archs = ["x86_64", "aarch64"]
+
+[tool.cibuildwheel.linux.environment]
+PATH = "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CARGO_HOME = "/root/.cargo"
+RUSTUP_HOME = "/root/.rustup"
+ASTICHI_REQUIRE_NATIVE_BUILD = "1"
 
 [tool.cibuildwheel.macos]
 environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1", RUSTFLAGS = "-C link-arg=-undefined -C link-arg=dynamic_lookup" }
