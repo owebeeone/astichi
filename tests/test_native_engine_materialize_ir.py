@@ -476,6 +476,88 @@ def test_native_materialization_workspace_applies_external_overlay_literal_ref_w
     )["resolved_kind"] == "Attribute"
 
 
+@pytest.mark.parametrize(
+    ("source", "expected_count", "expected_source"),
+    [
+        pytest.param(
+            "astichi_bind_external(value)\nresult = value\n",
+            2,
+            "result = 7",
+            id="direct-marker-removed-and-load-replaced",
+        ),
+        pytest.param(
+            "astichi_bind_external(value)\n",
+            1,
+            "7",
+            id="single-expression-payload-materializes-to-literal",
+        ),
+        pytest.param(
+            "def f(value):\n"
+            "    return value\n"
+            "result = astichi_bind_external(value)\n",
+            1,
+            "def f(value):\n    return value\nresult = 7",
+            id="function-parameter-shadows-body",
+        ),
+        pytest.param(
+            "def f(value=value):\n"
+            "    return value\n"
+            "result = value\n",
+            2,
+            "def f(value=7):\n    return value\nresult = 7",
+            id="function-default-sees-outer-name",
+        ),
+        pytest.param(
+            "handler = lambda value: value\n"
+            "result = value\n",
+            1,
+            "handler = lambda value: value\nresult = 7",
+            id="lambda-parameter-shadows-body",
+        ),
+        pytest.param(
+            "items = value\n"
+            "for value in range(2):\n"
+            "    print(value)\n"
+            "else:\n"
+            "    print(value)\n"
+            "print(value)\n",
+            2,
+            "items = 7\n"
+            "for value in range(2):\n"
+            "    print(value)\n"
+            "else:\n"
+            "    print(value)\n"
+            "print(7)",
+            id="loop-target-shadows-body-and-else",
+        ),
+        pytest.param(
+            "items = [value for value in range(3)]\n"
+            "result = value\n",
+            1,
+            "items = [value for value in range(3)]\nresult = 7",
+            id="comprehension-target-shadows-element",
+        ),
+        pytest.param(
+            "class C:\n"
+            "    value = 1\n"
+            "    result = value\n"
+            "result = value\n",
+            1,
+            "class C:\n    value = 1\n    result = value\nresult = 7",
+            id="class-local-assignment-shadows-body",
+        ),
+    ],
+)
+def test_native_materialization_workspace_external_overlay_is_scope_aware_when_available(
+    source: str,
+    expected_count: int,
+    expected_source: str,
+) -> None:
+    result = _apply_native_external_overlay_literal(source, "value", "7")
+
+    assert result == (expected_count, expected_source)
+
+
 def test_native_materialization_workspace_bad_locator_diagnostic_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
@@ -520,3 +602,46 @@ def _engine_with_current_bundle(module: object) -> object:
     ).snapshot()
     module.register_surface_bundle(handle, deepcopy(bundle))
     return handle
+
+
+def _apply_native_external_overlay_literal(
+    source: str,
+    name: str,
+    expression_source: str,
+) -> tuple[int, str]:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        source,
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        template,
+        ("Root",),
+    )
+    external_record = module.assembly_state_record_handle(engine, state, root, 0)
+    overlay = module.assembly_state_append_overlay(
+        engine,
+        state,
+        external_record,
+        "external",
+        name,
+    )
+    workspace = module.materialization_workspace_create(engine, template)
+
+    count = module.materialization_workspace_apply_external_overlay_literal(
+        engine,
+        workspace,
+        state,
+        overlay,
+        expression_source,
+    )
+    return count, module.materialization_workspace_to_source(engine, workspace)

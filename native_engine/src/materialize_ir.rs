@@ -1775,17 +1775,33 @@ fn substitute_external_literal_in_module(
     name: &str,
     replacement: &ast::Expr,
 ) -> PyResult<usize> {
-    substitute_external_literal_in_stmt_list(&mut module.body, name, replacement)
+    substitute_external_literal_in_stmt_list(&mut module.body, name, replacement, false)
 }
 
 fn substitute_external_literal_in_stmt_list(
-    body: &mut [ast::Stmt],
+    body: &mut Vec<ast::Stmt>,
     name: &str,
     replacement: &ast::Expr,
+    shadowed: bool,
 ) -> PyResult<usize> {
     let mut count = 0;
-    for stmt in body {
-        count += substitute_external_literal_in_stmt(stmt, name, replacement)?;
+    let expression_payload_index =
+        if body.len() == 1 && !shadowed && matching_bind_external_expr_stmt(&body[0], name) {
+            Some(0)
+        } else {
+            None
+        };
+    let old_body = std::mem::take(body);
+    for (index, mut stmt) in old_body.into_iter().enumerate() {
+        if Some(index) != expression_payload_index
+            && !shadowed
+            && matching_bind_external_expr_stmt(&stmt, name)
+        {
+            count += 1;
+            continue;
+        }
+        count += substitute_external_literal_in_stmt(&mut stmt, name, replacement, shadowed)?;
+        body.push(stmt);
     }
     Ok(count)
 }
@@ -1794,6 +1810,7 @@ fn substitute_external_literal_in_stmt(
     stmt: &mut ast::Stmt,
     name: &str,
     replacement: &ast::Expr,
+    shadowed: bool,
 ) -> PyResult<usize> {
     match stmt {
         ast::Stmt::FunctionDef(node) => {
@@ -1801,8 +1818,31 @@ fn substitute_external_literal_in_stmt(
                 &mut node.decorator_list,
                 name,
                 replacement,
+                shadowed,
             )?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            count += substitute_external_literal_in_arguments(
+                &mut node.args,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            if let Some(returns) = node.returns.as_mut() {
+                count += substitute_external_literal_in_expr(returns, name, replacement, shadowed)?;
+            }
+            count += substitute_external_literal_in_type_params(
+                &mut node.type_params,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            let body_shadowed =
+                shadowed || function_scope_shadows_name(&node.args, &node.body, name);
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::AsyncFunctionDef(node) => {
@@ -1810,8 +1850,31 @@ fn substitute_external_literal_in_stmt(
                 &mut node.decorator_list,
                 name,
                 replacement,
+                shadowed,
             )?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            count += substitute_external_literal_in_arguments(
+                &mut node.args,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            if let Some(returns) = node.returns.as_mut() {
+                count += substitute_external_literal_in_expr(returns, name, replacement, shadowed)?;
+            }
+            count += substitute_external_literal_in_type_params(
+                &mut node.type_params,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            let body_shadowed =
+                shadowed || function_scope_shadows_name(&node.args, &node.body, name);
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::ClassDef(node) => {
@@ -1819,170 +1882,338 @@ fn substitute_external_literal_in_stmt(
                 &mut node.decorator_list,
                 name,
                 replacement,
+                shadowed,
             )?;
-            count += substitute_external_literal_in_expr_list(&mut node.bases, name, replacement)?;
+            count += substitute_external_literal_in_expr_list(
+                &mut node.bases,
+                name,
+                replacement,
+                shadowed,
+            )?;
             for keyword in &mut node.keywords {
-                count +=
-                    substitute_external_literal_in_expr(&mut keyword.value, name, replacement)?;
+                count += substitute_external_literal_in_expr(
+                    &mut keyword.value,
+                    name,
+                    replacement,
+                    shadowed,
+                )?;
             }
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            count += substitute_external_literal_in_type_params(
+                &mut node.type_params,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            let body_shadowed = shadowed || class_scope_shadows_name(&node.body, name);
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::Return(node) => match node.value.as_mut() {
-            Some(value) => substitute_external_literal_in_expr(value, name, replacement),
+            Some(value) => substitute_external_literal_in_expr(value, name, replacement, shadowed),
             None => Ok(0),
         },
         ast::Stmt::Assign(node) => {
-            let mut count =
-                substitute_external_literal_in_expr_list(&mut node.targets, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
+            let mut count = substitute_external_literal_in_expr_list(
+                &mut node.targets,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Stmt::Expr(node) => {
-            substitute_external_literal_in_expr(&mut node.value, name, replacement)
+            substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)
         }
         ast::Stmt::If(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.test, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.test, name, replacement, shadowed)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::For(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.target, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.iter, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.target, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.iter, name, replacement, shadowed)?;
+            let body_shadowed = shadowed || target_binds_name(&node.target, name);
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::AsyncFor(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.target, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.iter, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.target, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.iter, name, replacement, shadowed)?;
+            let body_shadowed = shadowed || target_binds_name(&node.target, name);
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::Delete(node) => {
-            substitute_external_literal_in_expr_list(&mut node.targets, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.targets, name, replacement, shadowed)
         }
         ast::Stmt::AugAssign(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.target, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.target, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Stmt::AnnAssign(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.target, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.annotation, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.target, name, replacement, shadowed)?;
+            count += substitute_external_literal_in_expr(
+                &mut node.annotation,
+                name,
+                replacement,
+                shadowed,
+            )?;
             if let Some(value) = node.value.as_mut() {
-                count += substitute_external_literal_in_expr(value, name, replacement)?;
+                count += substitute_external_literal_in_expr(value, name, replacement, shadowed)?;
             }
             Ok(count)
         }
         ast::Stmt::While(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.test, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.test, name, replacement, shadowed)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::With(node) => {
             let mut count = 0;
             for item in &mut node.items {
-                count +=
-                    substitute_external_literal_in_expr(&mut item.context_expr, name, replacement)?;
+                count += substitute_external_literal_in_expr(
+                    &mut item.context_expr,
+                    name,
+                    replacement,
+                    shadowed,
+                )?;
                 if let Some(optional_vars) = item.optional_vars.as_mut() {
-                    count += substitute_external_literal_in_expr(optional_vars, name, replacement)?;
+                    count += substitute_external_literal_in_expr(
+                        optional_vars,
+                        name,
+                        replacement,
+                        shadowed,
+                    )?;
                 }
             }
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::AsyncWith(node) => {
             let mut count = 0;
             for item in &mut node.items {
-                count +=
-                    substitute_external_literal_in_expr(&mut item.context_expr, name, replacement)?;
+                count += substitute_external_literal_in_expr(
+                    &mut item.context_expr,
+                    name,
+                    replacement,
+                    shadowed,
+                )?;
                 if let Some(optional_vars) = item.optional_vars.as_mut() {
-                    count += substitute_external_literal_in_expr(optional_vars, name, replacement)?;
+                    count += substitute_external_literal_in_expr(
+                        optional_vars,
+                        name,
+                        replacement,
+                        shadowed,
+                    )?;
                 }
             }
-            count += substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::Match(node) => {
-            let mut count =
-                substitute_external_literal_in_expr(&mut node.subject, name, replacement)?;
+            let mut count = substitute_external_literal_in_expr(
+                &mut node.subject,
+                name,
+                replacement,
+                shadowed,
+            )?;
             for case in &mut node.cases {
+                let case_shadowed = shadowed || pattern_binds_name(&case.pattern, name);
                 if let Some(guard) = case.guard.as_mut() {
-                    count += substitute_external_literal_in_expr(guard, name, replacement)?;
+                    count += substitute_external_literal_in_expr(
+                        guard,
+                        name,
+                        replacement,
+                        case_shadowed,
+                    )?;
                 }
-                count +=
-                    substitute_external_literal_in_stmt_list(&mut case.body, name, replacement)?;
+                count += substitute_external_literal_in_stmt_list(
+                    &mut case.body,
+                    name,
+                    replacement,
+                    case_shadowed,
+                )?;
             }
             Ok(count)
         }
         ast::Stmt::Raise(node) => {
             let mut count = 0;
             if let Some(exc) = node.exc.as_mut() {
-                count += substitute_external_literal_in_expr(exc, name, replacement)?;
+                count += substitute_external_literal_in_expr(exc, name, replacement, shadowed)?;
             }
             if let Some(cause) = node.cause.as_mut() {
-                count += substitute_external_literal_in_expr(cause, name, replacement)?;
+                count += substitute_external_literal_in_expr(cause, name, replacement, shadowed)?;
             }
             Ok(count)
         }
         ast::Stmt::Try(node) => {
-            let mut count =
-                substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            let mut count = substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
             for handler in &mut node.handlers {
                 match handler {
                     ast::ExceptHandler::ExceptHandler(handler) => {
                         if let Some(type_expr) = handler.type_.as_mut() {
-                            count +=
-                                substitute_external_literal_in_expr(type_expr, name, replacement)?;
+                            count += substitute_external_literal_in_expr(
+                                type_expr,
+                                name,
+                                replacement,
+                                shadowed,
+                            )?;
                         }
+                        let handler_shadowed = shadowed
+                            || handler
+                                .name
+                                .as_ref()
+                                .is_some_and(|item| item.as_str() == name);
                         count += substitute_external_literal_in_stmt_list(
                             &mut handler.body,
                             name,
                             replacement,
+                            handler_shadowed,
                         )?;
                     }
                 }
             }
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
-            count +=
-                substitute_external_literal_in_stmt_list(&mut node.finalbody, name, replacement)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.finalbody,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::TryStar(node) => {
-            let mut count =
-                substitute_external_literal_in_stmt_list(&mut node.body, name, replacement)?;
+            let mut count = substitute_external_literal_in_stmt_list(
+                &mut node.body,
+                name,
+                replacement,
+                shadowed,
+            )?;
             for handler in &mut node.handlers {
                 match handler {
                     ast::ExceptHandler::ExceptHandler(handler) => {
                         if let Some(type_expr) = handler.type_.as_mut() {
-                            count +=
-                                substitute_external_literal_in_expr(type_expr, name, replacement)?;
+                            count += substitute_external_literal_in_expr(
+                                type_expr,
+                                name,
+                                replacement,
+                                shadowed,
+                            )?;
                         }
+                        let handler_shadowed = shadowed
+                            || handler
+                                .name
+                                .as_ref()
+                                .is_some_and(|item| item.as_str() == name);
                         count += substitute_external_literal_in_stmt_list(
                             &mut handler.body,
                             name,
                             replacement,
+                            handler_shadowed,
                         )?;
                     }
                 }
             }
-            count += substitute_external_literal_in_stmt_list(&mut node.orelse, name, replacement)?;
-            count +=
-                substitute_external_literal_in_stmt_list(&mut node.finalbody, name, replacement)?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.orelse,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_stmt_list(
+                &mut node.finalbody,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Stmt::Assert(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.test, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.test, name, replacement, shadowed)?;
             if let Some(msg) = node.msg.as_mut() {
-                count += substitute_external_literal_in_expr(msg, name, replacement)?;
+                count += substitute_external_literal_in_expr(msg, name, replacement, shadowed)?;
             }
             Ok(count)
         }
@@ -2001,10 +2232,11 @@ fn substitute_external_literal_in_expr_list(
     items: &mut [ast::Expr],
     name: &str,
     replacement: &ast::Expr,
+    shadowed: bool,
 ) -> PyResult<usize> {
     let mut count = 0;
     for item in items {
-        count += substitute_external_literal_in_expr(item, name, replacement)?;
+        count += substitute_external_literal_in_expr(item, name, replacement, shadowed)?;
     }
     Ok(count)
 }
@@ -2013,152 +2245,224 @@ fn substitute_external_literal_in_expr(
     expr: &mut ast::Expr,
     name: &str,
     replacement: &ast::Expr,
+    shadowed: bool,
 ) -> PyResult<usize> {
-    if external_bind_expr_matches(expr, name) || load_name_matches(expr, name) {
+    if !shadowed && (external_bind_expr_matches(expr, name) || load_name_matches(expr, name)) {
         *expr = replacement.clone();
         return Ok(1);
     }
     match expr {
         ast::Expr::BoolOp(node) => {
-            substitute_external_literal_in_expr_list(&mut node.values, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.values, name, replacement, shadowed)
         }
         ast::Expr::NamedExpr(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.target, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.target, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Expr::BinOp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.left, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.right, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.left, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.right, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Expr::UnaryOp(node) => {
-            substitute_external_literal_in_expr(&mut node.operand, name, replacement)
+            substitute_external_literal_in_expr(&mut node.operand, name, replacement, shadowed)
         }
         ast::Expr::Lambda(node) => {
-            substitute_external_literal_in_expr(&mut node.body, name, replacement)
+            let mut count = substitute_external_literal_in_arguments(
+                &mut node.args,
+                name,
+                replacement,
+                shadowed,
+            )?;
+            let body_shadowed = shadowed || argument_binds_name(&node.args, name);
+            count += substitute_external_literal_in_expr(
+                &mut node.body,
+                name,
+                replacement,
+                body_shadowed,
+            )?;
+            Ok(count)
         }
         ast::Expr::IfExp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.test, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.body, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.orelse, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.test, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.body, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.orelse, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Expr::Dict(node) => {
             let mut count = 0;
             for key in &mut node.keys {
                 if let Some(key) = key.as_mut() {
-                    count += substitute_external_literal_in_expr(key, name, replacement)?;
+                    count += substitute_external_literal_in_expr(key, name, replacement, shadowed)?;
                 }
             }
-            count += substitute_external_literal_in_expr_list(&mut node.values, name, replacement)?;
+            count += substitute_external_literal_in_expr_list(
+                &mut node.values,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Expr::Set(node) => {
-            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement, shadowed)
         }
         ast::Expr::ListComp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.elt, name, replacement)?;
-            count += substitute_external_literal_in_comprehensions(
+            let (mut count, added_shadow) = substitute_external_literal_in_comprehensions(
                 &mut node.generators,
                 name,
                 replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_expr(
+                &mut node.elt,
+                name,
+                replacement,
+                shadowed || added_shadow,
             )?;
             Ok(count)
         }
         ast::Expr::SetComp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.elt, name, replacement)?;
-            count += substitute_external_literal_in_comprehensions(
+            let (mut count, added_shadow) = substitute_external_literal_in_comprehensions(
                 &mut node.generators,
                 name,
                 replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_expr(
+                &mut node.elt,
+                name,
+                replacement,
+                shadowed || added_shadow,
             )?;
             Ok(count)
         }
         ast::Expr::GeneratorExp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.elt, name, replacement)?;
-            count += substitute_external_literal_in_comprehensions(
+            let (mut count, added_shadow) = substitute_external_literal_in_comprehensions(
                 &mut node.generators,
                 name,
                 replacement,
+                shadowed,
+            )?;
+            count += substitute_external_literal_in_expr(
+                &mut node.elt,
+                name,
+                replacement,
+                shadowed || added_shadow,
             )?;
             Ok(count)
         }
         ast::Expr::DictComp(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.key, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
-            count += substitute_external_literal_in_comprehensions(
+            let (mut count, added_shadow) = substitute_external_literal_in_comprehensions(
                 &mut node.generators,
                 name,
                 replacement,
+                shadowed,
+            )?;
+            let item_shadowed = shadowed || added_shadow;
+            count += substitute_external_literal_in_expr(
+                &mut node.key,
+                name,
+                replacement,
+                item_shadowed,
+            )?;
+            count += substitute_external_literal_in_expr(
+                &mut node.value,
+                name,
+                replacement,
+                item_shadowed,
             )?;
             Ok(count)
         }
         ast::Expr::Await(node) => {
-            substitute_external_literal_in_expr(&mut node.value, name, replacement)
+            substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)
         }
         ast::Expr::Yield(node) => match node.value.as_mut() {
-            Some(value) => substitute_external_literal_in_expr(value, name, replacement),
+            Some(value) => substitute_external_literal_in_expr(value, name, replacement, shadowed),
             None => Ok(0),
         },
         ast::Expr::YieldFrom(node) => {
-            substitute_external_literal_in_expr(&mut node.value, name, replacement)
+            substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)
         }
         ast::Expr::Compare(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.left, name, replacement)?;
-            count +=
-                substitute_external_literal_in_expr_list(&mut node.comparators, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.left, name, replacement, shadowed)?;
+            count += substitute_external_literal_in_expr_list(
+                &mut node.comparators,
+                name,
+                replacement,
+                shadowed,
+            )?;
             Ok(count)
         }
         ast::Expr::Call(node) => {
-            let mut count = substitute_external_literal_in_expr(&mut node.func, name, replacement)?;
-            count += substitute_external_literal_in_expr_list(&mut node.args, name, replacement)?;
+            let mut count =
+                substitute_external_literal_in_expr(&mut node.func, name, replacement, shadowed)?;
+            count += substitute_external_literal_in_expr_list(
+                &mut node.args,
+                name,
+                replacement,
+                shadowed,
+            )?;
             for keyword in &mut node.keywords {
-                count +=
-                    substitute_external_literal_in_expr(&mut keyword.value, name, replacement)?;
+                count += substitute_external_literal_in_expr(
+                    &mut keyword.value,
+                    name,
+                    replacement,
+                    shadowed,
+                )?;
             }
             Ok(count)
         }
         ast::Expr::FormattedValue(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)?;
             if let Some(format_spec) = node.format_spec.as_mut() {
-                count += substitute_external_literal_in_expr(format_spec, name, replacement)?;
+                count +=
+                    substitute_external_literal_in_expr(format_spec, name, replacement, shadowed)?;
             }
             Ok(count)
         }
         ast::Expr::JoinedStr(node) => {
-            substitute_external_literal_in_expr_list(&mut node.values, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.values, name, replacement, shadowed)
         }
         ast::Expr::Attribute(node) => {
-            substitute_external_literal_in_expr(&mut node.value, name, replacement)
+            substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)
         }
         ast::Expr::Subscript(node) => {
             let mut count =
-                substitute_external_literal_in_expr(&mut node.value, name, replacement)?;
-            count += substitute_external_literal_in_expr(&mut node.slice, name, replacement)?;
+                substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)?;
+            count +=
+                substitute_external_literal_in_expr(&mut node.slice, name, replacement, shadowed)?;
             Ok(count)
         }
         ast::Expr::Starred(node) => {
-            substitute_external_literal_in_expr(&mut node.value, name, replacement)
+            substitute_external_literal_in_expr(&mut node.value, name, replacement, shadowed)
         }
         ast::Expr::List(node) => {
-            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement, shadowed)
         }
         ast::Expr::Tuple(node) => {
-            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement)
+            substitute_external_literal_in_expr_list(&mut node.elts, name, replacement, shadowed)
         }
         ast::Expr::Slice(node) => {
             let mut count = 0;
             if let Some(lower) = node.lower.as_mut() {
-                count += substitute_external_literal_in_expr(lower, name, replacement)?;
+                count += substitute_external_literal_in_expr(lower, name, replacement, shadowed)?;
             }
             if let Some(upper) = node.upper.as_mut() {
-                count += substitute_external_literal_in_expr(upper, name, replacement)?;
+                count += substitute_external_literal_in_expr(upper, name, replacement, shadowed)?;
             }
             if let Some(step) = node.step.as_mut() {
-                count += substitute_external_literal_in_expr(step, name, replacement)?;
+                count += substitute_external_literal_in_expr(step, name, replacement, shadowed)?;
             }
             Ok(count)
         }
@@ -2170,14 +2474,439 @@ fn substitute_external_literal_in_comprehensions(
     generators: &mut [ast::Comprehension],
     name: &str,
     replacement: &ast::Expr,
+    shadowed: bool,
+) -> PyResult<(usize, bool)> {
+    let mut count = 0;
+    let mut accumulated_shadow = false;
+    for generator in generators {
+        let generator_input_shadowed = shadowed || accumulated_shadow;
+        count += substitute_external_literal_in_expr(
+            &mut generator.iter,
+            name,
+            replacement,
+            generator_input_shadowed,
+        )?;
+        count += substitute_external_literal_in_expr(
+            &mut generator.target,
+            name,
+            replacement,
+            generator_input_shadowed,
+        )?;
+        accumulated_shadow = accumulated_shadow || target_binds_name(&generator.target, name);
+        count += substitute_external_literal_in_expr_list(
+            &mut generator.ifs,
+            name,
+            replacement,
+            shadowed || accumulated_shadow,
+        )?;
+    }
+    Ok((count, accumulated_shadow))
+}
+
+fn matching_bind_external_expr_stmt(stmt: &ast::Stmt, name: &str) -> bool {
+    match stmt {
+        ast::Stmt::Expr(node) => external_bind_expr_matches(&node.value, name),
+        _ => false,
+    }
+}
+
+fn substitute_external_literal_in_arguments(
+    args: &mut ast::Arguments,
+    name: &str,
+    replacement: &ast::Expr,
+    shadowed: bool,
 ) -> PyResult<usize> {
     let mut count = 0;
-    for generator in generators {
-        count += substitute_external_literal_in_expr(&mut generator.target, name, replacement)?;
-        count += substitute_external_literal_in_expr(&mut generator.iter, name, replacement)?;
-        count += substitute_external_literal_in_expr_list(&mut generator.ifs, name, replacement)?;
+    for arg in args
+        .posonlyargs
+        .iter_mut()
+        .chain(args.args.iter_mut())
+        .chain(args.kwonlyargs.iter_mut())
+    {
+        count += substitute_external_literal_in_arg(&mut arg.def, name, replacement, shadowed)?;
+        if let Some(default) = arg.default.as_mut() {
+            count += substitute_external_literal_in_expr(default, name, replacement, shadowed)?;
+        }
+    }
+    if let Some(arg) = args.vararg.as_mut() {
+        count += substitute_external_literal_in_arg(arg, name, replacement, shadowed)?;
+    }
+    if let Some(arg) = args.kwarg.as_mut() {
+        count += substitute_external_literal_in_arg(arg, name, replacement, shadowed)?;
     }
     Ok(count)
+}
+
+fn substitute_external_literal_in_arg(
+    arg: &mut ast::Arg,
+    name: &str,
+    replacement: &ast::Expr,
+    shadowed: bool,
+) -> PyResult<usize> {
+    match arg.annotation.as_mut() {
+        Some(annotation) => {
+            substitute_external_literal_in_expr(annotation, name, replacement, shadowed)
+        }
+        None => Ok(0),
+    }
+}
+
+fn substitute_external_literal_in_type_params(
+    type_params: &mut [ast::TypeParam],
+    name: &str,
+    replacement: &ast::Expr,
+    shadowed: bool,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for param in type_params {
+        if let ast::TypeParam::TypeVar(node) = param {
+            if let Some(bound) = node.bound.as_mut() {
+                count += substitute_external_literal_in_expr(bound, name, replacement, shadowed)?;
+            }
+        }
+    }
+    Ok(count)
+}
+
+fn function_scope_shadows_name(args: &ast::Arguments, body: &[ast::Stmt], name: &str) -> bool {
+    argument_binds_name(args, name) || stmt_list_binds_name(body, name)
+}
+
+fn class_scope_shadows_name(body: &[ast::Stmt], name: &str) -> bool {
+    stmt_list_binds_name(body, name)
+}
+
+fn argument_binds_name(args: &ast::Arguments, name: &str) -> bool {
+    args.posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .chain(args.kwonlyargs.iter())
+        .any(|arg| arg.def.arg.as_str() == name)
+        || args
+            .vararg
+            .as_ref()
+            .is_some_and(|arg| arg.arg.as_str() == name)
+        || args
+            .kwarg
+            .as_ref()
+            .is_some_and(|arg| arg.arg.as_str() == name)
+}
+
+fn stmt_list_binds_name(body: &[ast::Stmt], name: &str) -> bool {
+    body.iter().any(|stmt| stmt_binds_name(stmt, name))
+}
+
+fn stmt_binds_name(stmt: &ast::Stmt, name: &str) -> bool {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            node.name.as_str() == name
+                || expr_list_binds_name(&node.decorator_list, name)
+                || node
+                    .returns
+                    .as_ref()
+                    .is_some_and(|returns| expr_binds_name(returns, name))
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            node.name.as_str() == name
+                || expr_list_binds_name(&node.decorator_list, name)
+                || node
+                    .returns
+                    .as_ref()
+                    .is_some_and(|returns| expr_binds_name(returns, name))
+        }
+        ast::Stmt::ClassDef(node) => {
+            node.name.as_str() == name
+                || expr_list_binds_name(&node.decorator_list, name)
+                || expr_list_binds_name(&node.bases, name)
+                || node
+                    .keywords
+                    .iter()
+                    .any(|keyword| expr_binds_name(&keyword.value, name))
+        }
+        ast::Stmt::Assign(node) => {
+            node.targets
+                .iter()
+                .any(|target| target_binds_name(target, name))
+                || expr_binds_name(&node.value, name)
+        }
+        ast::Stmt::AnnAssign(node) => {
+            target_binds_name(&node.target, name)
+                || expr_binds_name(&node.annotation, name)
+                || node
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| expr_binds_name(value, name))
+        }
+        ast::Stmt::AugAssign(node) => {
+            target_binds_name(&node.target, name) || expr_binds_name(&node.value, name)
+        }
+        ast::Stmt::Delete(node) => node
+            .targets
+            .iter()
+            .any(|target| target_binds_name(target, name)),
+        ast::Stmt::Expr(node) => expr_binds_name(&node.value, name),
+        ast::Stmt::Return(node) => node
+            .value
+            .as_ref()
+            .is_some_and(|value| expr_binds_name(value, name)),
+        ast::Stmt::For(node) => {
+            expr_binds_name(&node.iter, name)
+                || stmt_list_binds_name(&node.body, name)
+                || stmt_list_binds_name(&node.orelse, name)
+        }
+        ast::Stmt::AsyncFor(node) => {
+            expr_binds_name(&node.iter, name)
+                || stmt_list_binds_name(&node.body, name)
+                || stmt_list_binds_name(&node.orelse, name)
+        }
+        ast::Stmt::While(node) => {
+            expr_binds_name(&node.test, name)
+                || stmt_list_binds_name(&node.body, name)
+                || stmt_list_binds_name(&node.orelse, name)
+        }
+        ast::Stmt::If(node) => {
+            expr_binds_name(&node.test, name)
+                || stmt_list_binds_name(&node.body, name)
+                || stmt_list_binds_name(&node.orelse, name)
+        }
+        ast::Stmt::With(node) => {
+            node.items.iter().any(|item| {
+                expr_binds_name(&item.context_expr, name)
+                    || item
+                        .optional_vars
+                        .as_ref()
+                        .is_some_and(|optional_vars| target_binds_name(optional_vars, name))
+            }) || stmt_list_binds_name(&node.body, name)
+        }
+        ast::Stmt::AsyncWith(node) => {
+            node.items.iter().any(|item| {
+                expr_binds_name(&item.context_expr, name)
+                    || item
+                        .optional_vars
+                        .as_ref()
+                        .is_some_and(|optional_vars| target_binds_name(optional_vars, name))
+            }) || stmt_list_binds_name(&node.body, name)
+        }
+        ast::Stmt::Try(node) => {
+            stmt_list_binds_name(&node.body, name)
+                || node.handlers.iter().any(|handler| match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        handler
+                            .type_
+                            .as_ref()
+                            .is_some_and(|type_| expr_binds_name(type_, name))
+                            || stmt_list_binds_name(&handler.body, name)
+                    }
+                })
+                || stmt_list_binds_name(&node.orelse, name)
+                || stmt_list_binds_name(&node.finalbody, name)
+        }
+        ast::Stmt::TryStar(node) => {
+            stmt_list_binds_name(&node.body, name)
+                || node.handlers.iter().any(|handler| match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        handler
+                            .type_
+                            .as_ref()
+                            .is_some_and(|type_| expr_binds_name(type_, name))
+                            || stmt_list_binds_name(&handler.body, name)
+                    }
+                })
+                || stmt_list_binds_name(&node.orelse, name)
+                || stmt_list_binds_name(&node.finalbody, name)
+        }
+        ast::Stmt::Match(node) => {
+            expr_binds_name(&node.subject, name)
+                || node.cases.iter().any(|case| {
+                    pattern_binds_name(&case.pattern, name)
+                        || case
+                            .guard
+                            .as_ref()
+                            .is_some_and(|guard| expr_binds_name(guard, name))
+                        || stmt_list_binds_name(&case.body, name)
+                })
+        }
+        ast::Stmt::Raise(node) => {
+            node.exc
+                .as_ref()
+                .is_some_and(|exc| expr_binds_name(exc, name))
+                || node
+                    .cause
+                    .as_ref()
+                    .is_some_and(|cause| expr_binds_name(cause, name))
+        }
+        ast::Stmt::Assert(node) => {
+            expr_binds_name(&node.test, name)
+                || node
+                    .msg
+                    .as_ref()
+                    .is_some_and(|msg| expr_binds_name(msg, name))
+        }
+        ast::Stmt::Import(node) => node
+            .names
+            .iter()
+            .any(|alias| import_alias_binds_name(alias, false, name)),
+        ast::Stmt::ImportFrom(node) => node
+            .names
+            .iter()
+            .any(|alias| import_alias_binds_name(alias, true, name)),
+        ast::Stmt::TypeAlias(node) => {
+            target_binds_name(&node.name, name) || expr_binds_name(&node.value, name)
+        }
+        ast::Stmt::Global(_)
+        | ast::Stmt::Nonlocal(_)
+        | ast::Stmt::Pass(_)
+        | ast::Stmt::Break(_)
+        | ast::Stmt::Continue(_) => false,
+    }
+}
+
+fn expr_list_binds_name(items: &[ast::Expr], name: &str) -> bool {
+    items.iter().any(|item| expr_binds_name(item, name))
+}
+
+fn expr_binds_name(expr: &ast::Expr, name: &str) -> bool {
+    match expr {
+        ast::Expr::NamedExpr(node) => {
+            target_binds_name(&node.target, name) || expr_binds_name(&node.value, name)
+        }
+        ast::Expr::BoolOp(node) => expr_list_binds_name(&node.values, name),
+        ast::Expr::BinOp(node) => {
+            expr_binds_name(&node.left, name) || expr_binds_name(&node.right, name)
+        }
+        ast::Expr::UnaryOp(node) => expr_binds_name(&node.operand, name),
+        ast::Expr::Lambda(_) => false,
+        ast::Expr::IfExp(node) => {
+            expr_binds_name(&node.test, name)
+                || expr_binds_name(&node.body, name)
+                || expr_binds_name(&node.orelse, name)
+        }
+        ast::Expr::Dict(node) => {
+            node.keys
+                .iter()
+                .flatten()
+                .any(|key| expr_binds_name(key, name))
+                || node.values.iter().any(|value| expr_binds_name(value, name))
+        }
+        ast::Expr::Set(node) => expr_list_binds_name(&node.elts, name),
+        ast::Expr::ListComp(_)
+        | ast::Expr::SetComp(_)
+        | ast::Expr::DictComp(_)
+        | ast::Expr::GeneratorExp(_) => false,
+        ast::Expr::Await(node) => expr_binds_name(&node.value, name),
+        ast::Expr::Yield(node) => node
+            .value
+            .as_ref()
+            .is_some_and(|value| expr_binds_name(value, name)),
+        ast::Expr::YieldFrom(node) => expr_binds_name(&node.value, name),
+        ast::Expr::Compare(node) => {
+            expr_binds_name(&node.left, name)
+                || node
+                    .comparators
+                    .iter()
+                    .any(|comparator| expr_binds_name(comparator, name))
+        }
+        ast::Expr::Call(node) => {
+            expr_binds_name(&node.func, name)
+                || node.args.iter().any(|arg| expr_binds_name(arg, name))
+                || node
+                    .keywords
+                    .iter()
+                    .any(|keyword| expr_binds_name(&keyword.value, name))
+        }
+        ast::Expr::FormattedValue(node) => {
+            expr_binds_name(&node.value, name)
+                || node
+                    .format_spec
+                    .as_ref()
+                    .is_some_and(|format_spec| expr_binds_name(format_spec, name))
+        }
+        ast::Expr::JoinedStr(node) => expr_list_binds_name(&node.values, name),
+        ast::Expr::Attribute(node) => expr_binds_name(&node.value, name),
+        ast::Expr::Subscript(node) => {
+            expr_binds_name(&node.value, name) || expr_binds_name(&node.slice, name)
+        }
+        ast::Expr::Starred(node) => expr_binds_name(&node.value, name),
+        ast::Expr::List(node) => expr_list_binds_name(&node.elts, name),
+        ast::Expr::Tuple(node) => expr_list_binds_name(&node.elts, name),
+        ast::Expr::Slice(node) => {
+            node.lower
+                .as_ref()
+                .is_some_and(|lower| expr_binds_name(lower, name))
+                || node
+                    .upper
+                    .as_ref()
+                    .is_some_and(|upper| expr_binds_name(upper, name))
+                || node
+                    .step
+                    .as_ref()
+                    .is_some_and(|step| expr_binds_name(step, name))
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => false,
+    }
+}
+
+fn target_binds_name(expr: &ast::Expr, name: &str) -> bool {
+    match expr {
+        ast::Expr::Name(node) => {
+            node.id.as_str() == name
+                && matches!(node.ctx, ast::ExprContext::Store | ast::ExprContext::Del)
+        }
+        ast::Expr::Tuple(node) => node.elts.iter().any(|item| target_binds_name(item, name)),
+        ast::Expr::List(node) => node.elts.iter().any(|item| target_binds_name(item, name)),
+        ast::Expr::Starred(node) => target_binds_name(&node.value, name),
+        _ => false,
+    }
+}
+
+fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
+    match pattern {
+        ast::Pattern::MatchValue(_) | ast::Pattern::MatchSingleton(_) => false,
+        ast::Pattern::MatchSequence(node) => node
+            .patterns
+            .iter()
+            .any(|item| pattern_binds_name(item, name)),
+        ast::Pattern::MatchMapping(node) => {
+            node.rest.as_ref().is_some_and(|rest| rest.as_str() == name)
+                || node
+                    .patterns
+                    .iter()
+                    .any(|item| pattern_binds_name(item, name))
+        }
+        ast::Pattern::MatchClass(node) => {
+            node.patterns
+                .iter()
+                .any(|item| pattern_binds_name(item, name))
+                || node
+                    .kwd_patterns
+                    .iter()
+                    .any(|item| pattern_binds_name(item, name))
+        }
+        ast::Pattern::MatchStar(node) => {
+            node.name.as_ref().is_some_and(|item| item.as_str() == name)
+        }
+        ast::Pattern::MatchAs(node) => {
+            node.name.as_ref().is_some_and(|item| item.as_str() == name)
+                || node
+                    .pattern
+                    .as_ref()
+                    .is_some_and(|item| pattern_binds_name(item, name))
+        }
+        ast::Pattern::MatchOr(node) => node
+            .patterns
+            .iter()
+            .any(|item| pattern_binds_name(item, name)),
+    }
+}
+
+fn import_alias_binds_name(alias: &ast::Alias, from_import: bool, name: &str) -> bool {
+    if let Some(asname) = alias.asname.as_ref() {
+        return asname.as_str() == name;
+    }
+    if from_import {
+        return alias.name.as_str() == name;
+    }
+    alias.name.as_str().split('.').next() == Some(name)
 }
 
 fn external_bind_expr_matches(expr: &ast::Expr, name: &str) -> bool {
