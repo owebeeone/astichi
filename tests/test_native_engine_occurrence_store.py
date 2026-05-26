@@ -644,19 +644,20 @@ def test_native_scope_apply_batch_covers_composable_external_and_identifier(
     namespace: dict[str, object] = {}
     exec(source, namespace)
 
-    assert len(candidates) == 4
+    assert len(candidates) == 0
     assert len(snapshot["edges"]) == 1
     assert len(snapshot["overlays"]) == 3
     assert namespace["GeneratedClass"].default == 42  # type: ignore[attr-defined]
     assert namespace["GeneratedClass"]().run() == "ok"  # type: ignore[operator]
     assert counts["native_scope_batch"] == 1
     assert counts["native_scope_batch_size"] == 4
-    assert counts["native_scope_batch_apply_count"] == 4
+    assert counts["native_scope_batch_apply_count"] == 0
     assert counts["native_scope_batch_candidate_count"] == 4
     assert counts["native_scope_batch_engine"] == 1
     assert counts["native_scope_batch_engine_request_count"] == 4
     assert counts["native_scope_batch_engine_candidate_count"] == 4
-    assert counts["python_scope_mirror_replay"] == 4
+    assert counts["native_scope_batch_native_only"] == 4
+    assert counts.get("python_scope_mirror_replay", 0) == 0
     assert counts.get("native_candidate_query_identifier", 0) == 0
     assert counts.get("native_candidate_query_external", 0) == 0
     assert counts.get("native_candidate_query_composable", 0) == 0
@@ -666,6 +667,36 @@ def test_native_scope_apply_batch_covers_composable_external_and_identifier(
     assert counts.get("candidate_lookup_lower", 0) == 0
     assert counts.get("assembly_scope_apply", 0) == 0
     assert counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_mirror_replay_is_opt_in_compatibility_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.setenv("ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY", "1")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("answer = astichi_hole(value)\n")
+    expression = astichi.compile("40 + 2\n")
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        candidates = scope.apply_batch(
+            (
+                BindingRequest(
+                    as_composable(expression, build_name="Expression"),
+                    name="value",
+                    build_match=("Root",),
+                ),
+            )
+        )
+
+    counts = counters.snapshot()["counts"]
+    assert len(candidates) == 1
+    assert counts["python_scope_mirror_replay"] == 1
+    assert counts.get("native_scope_batch_native_only", 0) == 0
 
 
 def test_native_scope_apply_batch_keeps_parameter_holes_additive(

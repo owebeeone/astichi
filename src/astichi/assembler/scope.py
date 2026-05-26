@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -558,7 +559,6 @@ class AssemblyScope:
         raw_events = result.get("events")
         if not isinstance(raw_events, list):
             raise TypeError("native batch result events must be a list")
-        candidates = self._replay_native_batch_events(requests, raw_events)
         summary = result.get("diagnostic_summary", {})
         candidate_count = (
             summary.get("candidate_count", 0) if isinstance(summary, dict) else 0
@@ -572,8 +572,15 @@ class AssemblyScope:
                 int(candidate_count),
             )
             counters.increment("native_scope_batch_candidate_count", int(candidate_count))
-            counters.increment("python_scope_mirror_replay", len(candidates))
-        return candidates
+        if _native_scope_mirror_replay_enabled():
+            candidates = self._replay_native_batch_events(requests, raw_events)
+            if counters is not None:
+                counters.increment("python_scope_mirror_replay", len(candidates))
+            return candidates
+        self._commit_native_batch_without_mirror_replay(requests, raw_events)
+        if counters is not None:
+            counters.increment("native_scope_batch_native_only", len(raw_events))
+        return ()
 
     def _native_batch_request_payload(
         self,
@@ -644,6 +651,70 @@ class AssemblyScope:
             "source_instance_name": resource.instance_name,
             "operation_order": resource.order,
         }
+
+    def _native_overlay_id(self, overlay_index: int) -> OverlayId:
+        """Map native overlay indices to lower-engine overlay handles for materialization."""
+        if not self._lower_state.occurrences:
+            raise RuntimeError("lower state has no occurrences for native overlay id")
+        owner = self._lower_state.occurrences[0].occurrence_id.owner
+        return OverlayId(owner=owner, index=overlay_index)
+
+    def _commit_native_batch_without_mirror_replay(
+        self,
+        requests: tuple[BindingRequest, ...],
+        events: list[object],
+    ) -> None:
+        """Keep native-owned state authoritative without mirroring into Python lower state."""
+        for event in events:
+            if not isinstance(event, dict):
+                raise TypeError("native batch event entries must be dicts")
+            request_index = event.get("request_index")
+            if not isinstance(request_index, int):
+                raise TypeError("native batch event request_index must be an int")
+            try:
+                request = requests[request_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"native batch event references unknown request {request_index}"
+                ) from exc
+            kind = event.get("kind")
+            if kind == "composable":
+                resource = request.resource
+                if not isinstance(resource, ComposableResource):
+                    raise TypeError("native composable event does not match request")
+                source_build_prefix = _string_tuple_field(event, "source_build_path")
+                native_occurrence = event.get("source_occurrence_handle")
+                if native_occurrence is None:
+                    raise RuntimeError(
+                        "native batch composable event is missing occurrence handle"
+                    )
+                self._native_occurrence_by_build_prefix[source_build_prefix] = (
+                    native_occurrence
+                )
+                self._owner_by_build_prefix[source_build_prefix] = resource.instance_name
+                continue
+            if kind == "external":
+                resource = request.resource
+                if not isinstance(resource, ExternalValueResource):
+                    raise TypeError("native external event does not match request")
+                overlay_index = event.get("overlay_id")
+                if not isinstance(overlay_index, int):
+                    raise TypeError("native batch overlay_id must be an int")
+                self._external_value_by_overlay[
+                    self._native_overlay_id(overlay_index)
+                ] = resource.value
+                continue
+            if kind == "identifier":
+                resource = request.resource
+                if not isinstance(resource, IdentifierNameResource):
+                    raise TypeError("native identifier event does not match request")
+                overlay_index = event.get("overlay_id")
+                if not isinstance(overlay_index, int):
+                    raise TypeError("native batch overlay_id must be an int")
+                overlay_id = self._native_overlay_id(overlay_index)
+                self._identifier_value_by_overlay[overlay_id] = resource.identifier
+                continue
+            raise TypeError(f"unsupported native batch event kind: {kind!r}")
 
     def _replay_native_batch_events(
         self,
@@ -3643,6 +3714,12 @@ def _native_template_record_indexes(value: object) -> tuple[int, ...]:
             raise TypeError("native record index entries must be integers")
         indexes.append(item)
     return tuple(indexes)
+
+
+def _native_scope_mirror_replay_enabled() -> bool:
+    """Opt-in compatibility path that mirrors native batch results into Python lower state."""
+    value = os.environ.get("ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _string_field(mapping: dict[str, object], key: str) -> str:

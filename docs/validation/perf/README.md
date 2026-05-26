@@ -29,6 +29,10 @@ Pass `--engine python`, `--engine auto`, or `--engine native` to compare lower
 engine routes. Use `--require-native-counters` with `--engine native` when a
 checkpoint must prove the native scope path was exercised.
 
+Native scope batch apply quarantines Python lower-state mirror replay by
+default. Set `ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` to restore the compatibility
+slow path (counter `python_scope_mirror_replay`).
+
 The generated-AST cache probe exercises the opt-in builder cache and reports
 cold, warm in-process, warm disk, unparse, and compile timings:
 

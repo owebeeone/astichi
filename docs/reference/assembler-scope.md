@@ -110,6 +110,10 @@ same-name demand sites only when every candidate has the same build path, code
 owner, name, and inventory kind. This is intended for generated planners that
 coalesce equivalent binding markers.
 
+Native-selected `apply_batch(...)` keeps native assembly state authoritative
+by default. Python lower-state mirror replay is quarantined behind
+`ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` for compatibility and oracle work.
+
 `scope.apply(...)` currently supports:
 
 - composable candidates: register the resource with its build name/index and
