@@ -777,6 +777,14 @@ def test_native_scope_apply_appends_child_occurrence_when_available(
             id="positional-variadic-expression",
         ),
         pytest.param(
+            "result = func(**astichi_hole(kwargs))\n",
+            '{"answer": 42}\n',
+            "Kwargs",
+            {"name": "kwargs", "build_match": ("Root",)},
+            "astichi.operation.splice_call_arguments",
+            id="named-variadic-expression",
+        ),
+        pytest.param(
             (
                 "def dispatch(kind):\n"
                 "    if kind == \"base\":\n"

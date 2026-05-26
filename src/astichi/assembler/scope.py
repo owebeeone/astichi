@@ -489,20 +489,30 @@ class AssemblyScope:
         applied: list[BindingCandidate] = []
         candidate_count = 0
         for request in requests:
-            candidates = self._find_candidates(
-                request.resource,
-                DemandSelector(
-                    name=request.name,
-                    build_match=request.build_match,
-                    owner_match=request.owner_match,
-                ),
-            )
-            candidate_count += len(candidates)
-            candidate = _select_batch_candidate(
-                candidates,
-                allow_equivalent_demand_sites=request.allow_equivalent_demand_sites,
-            )
-            self._apply_candidate(candidate, count_compatibility_kind=False)
+            try:
+                candidates = self._find_candidates(
+                    request.resource,
+                    DemandSelector(
+                        name=request.name,
+                        build_match=request.build_match,
+                        owner_match=request.owner_match,
+                    ),
+                )
+                candidate_count += len(candidates)
+                candidate = _select_batch_candidate(
+                    candidates,
+                    allow_equivalent_demand_sites=(
+                        request.allow_equivalent_demand_sites
+                    ),
+                )
+                self._apply_candidate(candidate, count_compatibility_kind=False)
+            except ValueError as exc:
+                label = (
+                    f" {request.name!r}"
+                    if request.name is not None
+                    else f" for {type(request.resource).__name__}"
+                )
+                raise ValueError(f"failed to apply binding request{label}") from exc
             applied.append(candidate)
         counters = active_perf_counters()
         if counters is not None:

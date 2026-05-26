@@ -943,7 +943,10 @@ fn native_production_satisfies_target(
         return true;
     }
     target_record.surface_key == "astichi.surface.funcargs.hole"
-        && target_record.inventory_kind == "hole.positional_variadic"
+        && matches!(
+            target_record.inventory_kind.as_str(),
+            "hole.positional_variadic" | "hole.named_variadic"
+        )
         && production_record.surface_key == "astichi.surface.expression.production"
 }
 
