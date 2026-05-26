@@ -68,6 +68,16 @@ class FunctionCodePathNode(CodePathNode):
         return _strip_astichi_suffix(self.function_ast_node.name)
 
 
+@dataclass(frozen=True, eq=False)
+class StaticCodePathNode(CodePathNode):
+    """Logical code owner reconstructed from lower-layer metadata."""
+
+    name: str
+
+    def logical_name(self) -> str:
+        return self.name
+
+
 class ResourceName(ABC):
     """Name of an inventory resource."""
 

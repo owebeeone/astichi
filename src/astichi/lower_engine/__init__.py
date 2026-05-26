@@ -22,6 +22,7 @@ from astichi.lower_engine.facade import (
     register_lower_template_binding,
     register_inventory_template,
     register_native_template_source,
+    register_native_template_source_direct,
     render_composable_source,
 )
 from astichi.lower_engine.handles import (
@@ -165,6 +166,7 @@ __all__ = [
     "register_lower_template_binding",
     "register_inventory_template",
     "register_native_template_source",
+    "register_native_template_source_direct",
     "render_composable_source",
     "round_trip_package_snapshot_text",
     "select_lower_engine",

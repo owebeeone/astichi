@@ -1550,11 +1550,16 @@ fn expr_records(
                 }
             }
             for (index, value) in node.values.iter().enumerate() {
+                let value_context = if node.keys[index].is_none() {
+                    ExprRecordContext::NamedVariadic
+                } else {
+                    ExprRecordContext::Expression
+                };
                 expr_records(
                     value,
                     &format!("{path}/values[{index}]"),
                     source_map,
-                    ExprRecordContext::Expression,
+                    value_context,
                     owner,
                     records,
                 )?;

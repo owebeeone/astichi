@@ -112,6 +112,69 @@ def test_compile_explicit_native_attaches_native_template_snapshot(
     )
 
 
+def test_compile_explicit_native_skips_python_inventory_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    import astichi.frontend.api as frontend_api
+    import astichi.lower_engine as lower_engine
+
+    def fail_build_inventory(*args: object, **kwargs: object) -> object:
+        raise AssertionError("native compile should not call build_inventory")
+
+    def fail_register_inventory_template(*args: object, **kwargs: object) -> object:
+        raise AssertionError(
+            "native compile should not call register_inventory_template"
+        )
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.setattr(frontend_api, "build_inventory", fail_build_inventory)
+    monkeypatch.setattr(
+        lower_engine,
+        "register_inventory_template",
+        fail_register_inventory_template,
+    )
+
+    composable = astichi.compile("result = astichi_hole(value)\n")
+    lower_template = composable._lower_template
+
+    assert isinstance(lower_template, LowerTemplateBinding)
+    assert lower_template.backend == "native-rust"
+    assert lower_template.has_native_lower_package()
+    assert list(composable.inventory.records) == ["#1", "#2"]
+    assert all(
+        spec.legacy_record_id and spec.projection_record is not None
+        for spec in lower_template.record_specs
+    )
+
+
+def test_compile_explicit_native_projection_preserves_identifier_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    composable = astichi.compile(
+        "astichi_import(imported__astichi_arg__)\n"
+        "value = astichi_pass(passed)\n"
+    )
+
+    origins_by_locator = {
+        str(record.locator): record.payload.port.origins.names
+        for record in composable.inventory.records.values()
+        if record.kind == "identifier.demand"
+    }
+
+    assert origins_by_locator == {
+        "body[0]/value": frozenset({"import"}),
+        "body[0]/value/args[0]": frozenset({"arg"}),
+        "body[1]/value": frozenset({"pass"}),
+    }
+
+
 def test_native_template_cache_reuses_registered_template_handles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

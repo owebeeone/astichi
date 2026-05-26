@@ -141,19 +141,25 @@ def compile(
     )
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
-    inventory = build_inventory(tree, markers, demand_ports, supply_ports)
-    from astichi.lower_engine import register_inventory_template
+    selected_native = _selected_native_lower_engine()
+    if selected_native is None:
+        inventory = build_inventory(tree, markers, demand_ports, supply_ports)
+        from astichi.lower_engine import register_inventory_template
 
-    lower_template = register_inventory_template(
-        tree=tree,
-        origin=origin,
-        inventory=inventory,
-    )
-    lower_template = _maybe_attach_native_lower_template(
-        source=parse_source,
-        origin=origin,
-        lower_template=lower_template,
-    )
+        lower_template = register_inventory_template(
+            tree=tree,
+            origin=origin,
+            inventory=inventory,
+        )
+    else:
+        from astichi.lower_engine import register_native_template_source_direct
+
+        lower_template, inventory = register_native_template_source_direct(
+            source=parse_source,
+            origin=origin,
+            tree=tree,
+        )
+        _assert_selected_native_backend(selected_native, lower_template)
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
     compiled = FrontendComposable(
         tree=tree,
@@ -170,6 +176,29 @@ def compile(
     if validated_arg_bindings:
         return compiled.bind_identifier(dict(validated_arg_bindings))
     return compiled
+
+
+def _selected_native_lower_engine() -> str | None:
+    from astichi.lower_engine.native import select_lower_engine
+
+    selected = select_lower_engine().selected_engine
+    if selected == "python":
+        return None
+    if selected in {"native-rust", "native-cpp"}:
+        return selected
+    return None
+
+
+def _assert_selected_native_backend(selected: str, lower_template: object) -> None:
+    backend = getattr(lower_template, "backend", "")
+    if selected == "native-cpp" and backend != "native-cpp":
+        raise RuntimeError(
+            "selected native-cpp lower engine, but native backend is not C++"
+        )
+    if selected == "native-rust" and backend != "native-rust":
+        raise RuntimeError(
+            "selected native-rust lower engine, but native backend is not Rust"
+        )
 
 
 def _maybe_attach_native_lower_template(

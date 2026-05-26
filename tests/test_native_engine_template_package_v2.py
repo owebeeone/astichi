@@ -146,6 +146,7 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
             "]\n"
         ),
         "values = (*astichi_hole(value_entries),)\n",
+        "result = {**astichi_hole(entries)}\n",
         (
             "if condition:\n"
             "    pass\n"

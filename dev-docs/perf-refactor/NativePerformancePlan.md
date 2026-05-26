@@ -288,17 +288,24 @@ Acceptance:
 
 - Native compile success path does not call Python
   `register_inventory_template(...)`.
-- Native compile success path does not build Python `Inventory` for candidate
-  lookup.
+- Native compile success path does not call Python `build_inventory(...)` to
+  rediscover lower records.
+- Any Python `InventoryRecord` objects still needed by compatibility candidate
+  APIs are synthesized as projections from native package-v2 rows, not from the
+  Python inventory extractor.
+- Candidate lookup treats native package/template rows as authoritative; the
+  Python projection is an adapter artifact until P3/P4 remove the remaining
+  compatibility object boundary.
 - P2a native package/snapshot parity remains green.
 - Full Astichi suite passes.
 - YIDL lifecycle workload still runs.
 
 Expected performance movement:
 
-- Native mode should approach or beat forced Python for `context_lcm`.
-- `rebuild_composable` and Python lower-template construction should drop
-  materially in native counter runs.
+- Native mode should improve modestly by removing duplicate compile-time lower
+  extraction.
+- `rebuild_composable`, per-edge candidate lookup, and materialization hot
+  counts are not expected to drop in this phase; P3, P4, and P6 own those cuts.
 
 Tag after success: `perf-native/p2c-native-compile`.
 
