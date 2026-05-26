@@ -99,11 +99,11 @@ Completed checkpoints:
 - `perf-native/p3b-specialization`
 - `perf-native/p4-batch-scope`
 - `perf-native/p5-yidl-batch`
+- `perf-native/p5b-native-batch-engine`
 - `perf-native/p6a-artifact-boundary`
 
 Remaining checkpoints:
 
-- P5b: true native batch scope engine.
 - P5c: chained YIDL request coalescing.
 - P6b: native operation materialization.
 - P6c: native hygiene and artifact cutover, tagged as
@@ -512,6 +512,29 @@ Result:
 Goal: make `AssemblyScope.apply_batch(...)` delegate an ordered request stream
 to one native operation instead of looping through native candidate/apply calls
 from Python.
+
+Status: completed as `perf-native/p5b-native-batch-engine`.
+
+Completed work:
+
+- Added native `assembly_state_apply_request_batch(...)` for ordered
+  composable, external, and identifier request streams.
+- Native execution resolves, applies, and updates indexes request by request
+  inside one native call.
+- Python now replays the returned compact event stream into the temporary
+  compatibility mirror instead of driving native query/append operations.
+- Parameter holes remain additive in native batch execution; they are not
+  marked satisfied after the first inserted parameter payload.
+
+Result:
+
+- The lifecycle workload reports `native_scope_batch_engine=1057` and
+  `native_scope_batch_engine_request_count=1659`.
+- Per-request `native_candidate_query_*`, `native_scope_append_edge`,
+  `native_scope_append_overlay`, and `native_scope_mark_satisfied` counters are
+  absent from the batch success path.
+- `python_scope_mirror_replay=1659` remains as the explicit temporary
+  compatibility cost until native materialization and cutover remove it.
 
 Work:
 

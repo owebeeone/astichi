@@ -653,12 +653,64 @@ def test_native_scope_apply_batch_covers_composable_external_and_identifier(
     assert counts["native_scope_batch_size"] == 4
     assert counts["native_scope_batch_apply_count"] == 4
     assert counts["native_scope_batch_candidate_count"] == 4
-    assert counts["native_candidate_query_identifier"] == 1
-    assert counts["native_candidate_query_external"] == 2
-    assert counts["native_candidate_query_composable"] == 1
+    assert counts["native_scope_batch_engine"] == 1
+    assert counts["native_scope_batch_engine_request_count"] == 4
+    assert counts["native_scope_batch_engine_candidate_count"] == 4
+    assert counts["python_scope_mirror_replay"] == 4
+    assert counts.get("native_candidate_query_identifier", 0) == 0
+    assert counts.get("native_candidate_query_external", 0) == 0
+    assert counts.get("native_candidate_query_composable", 0) == 0
+    assert counts.get("native_scope_append_edge", 0) == 0
+    assert counts.get("native_scope_append_overlay", 0) == 0
+    assert counts.get("native_scope_mark_satisfied", 0) == 0
     assert counts.get("candidate_lookup_lower", 0) == 0
     assert counts.get("assembly_scope_apply", 0) == 0
     assert counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_apply_batch_keeps_parameter_holes_additive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile("def run(value__astichi_param_hole__):\n    pass\n")
+    first = astichi.compile("def astichi_params(first):\n    pass\n")
+    second = astichi.compile("def astichi_params(second):\n    pass\n")
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        scope.apply_batch(
+            (
+                BindingRequest(
+                    as_composable(first, build_name="First", order=0),
+                    name="value",
+                    build_match=("Root",),
+                    owner_match=("run",),
+                ),
+                BindingRequest(
+                    as_composable(second, build_name="Second", order=1),
+                    name="value",
+                    build_match=("Root",),
+                    owner_match=("run",),
+                ),
+            )
+        )
+
+    counts = counters.snapshot()["counts"]
+    snapshot = scope.native_lower_structural_snapshot()
+    source = scope.build().materialize().emit(provenance=False)
+
+    assert "def run(first, second):" in source
+    assert len(snapshot["edges"]) == 2
+    assert snapshot["records"][0]["state"] == {
+        "satisfied": False,
+        "visible": True,
+    }
+    assert counts["native_scope_batch_engine"] == 1
+    assert counts.get("native_candidate_query_composable", 0) == 0
 
 
 def test_native_scope_apply_appends_child_occurrence_when_available(

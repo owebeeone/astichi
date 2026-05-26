@@ -486,6 +486,9 @@ class AssemblyScope:
         self,
         requests: tuple[BindingRequest, ...],
     ) -> tuple[BindingCandidate, ...]:
+        native_candidates = self._try_apply_native_batch(requests)
+        if native_candidates is not None:
+            return native_candidates
         applied: list[BindingCandidate] = []
         candidate_count = 0
         for request in requests:
@@ -523,6 +526,303 @@ class AssemblyScope:
             )
             counters.increment(f"{counter_prefix}_candidate_count", candidate_count)
         return tuple(applied)
+
+    def _try_apply_native_batch(
+        self,
+        requests: tuple[BindingRequest, ...],
+    ) -> tuple[BindingCandidate, ...] | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_template_cache is None
+            or self._native_state_handle is None
+        ):
+            return None
+        native_requests = self._native_batch_request_payload(requests)
+        if native_requests is None:
+            return None
+        result = self._native_module.assembly_state_apply_request_batch(
+            self._native_engine_handle,
+            self._native_state_handle,
+            native_requests,
+        )
+        if not isinstance(result, dict):
+            raise TypeError("native batch result must be a dict")
+        raw_events = result.get("events")
+        if not isinstance(raw_events, list):
+            raise TypeError("native batch result events must be a list")
+        candidates = self._replay_native_batch_events(requests, raw_events)
+        summary = result.get("diagnostic_summary", {})
+        candidate_count = (
+            summary.get("candidate_count", 0) if isinstance(summary, dict) else 0
+        )
+        counters = active_perf_counters()
+        if counters is not None:
+            counters.increment("native_scope_batch_engine")
+            counters.increment("native_scope_batch_engine_request_count", len(requests))
+            counters.increment(
+                "native_scope_batch_engine_candidate_count",
+                int(candidate_count),
+            )
+            counters.increment("native_scope_batch_candidate_count", int(candidate_count))
+            counters.increment("python_scope_mirror_replay", len(candidates))
+        return candidates
+
+    def _native_batch_request_payload(
+        self,
+        requests: tuple[BindingRequest, ...],
+    ) -> list[dict[str, object]] | None:
+        payload: list[dict[str, object]] = []
+        for index, request in enumerate(requests):
+            selector_payload: dict[str, object] = {
+                "name": request.name,
+                "build_match": (
+                    None
+                    if request.build_match is None
+                    else list(request.build_match)
+                ),
+                "owner_match": (
+                    None
+                    if request.owner_match is None
+                    else list(request.owner_match)
+                ),
+                "allow_equivalent_demand_sites": (
+                    request.allow_equivalent_demand_sites
+                ),
+            }
+            resource = request.resource
+            if isinstance(resource, ComposableResource):
+                native = self._native_composable_batch_payload(resource, request)
+                if native is None:
+                    return None
+                payload.append({**selector_payload, **native})
+                continue
+            if isinstance(resource, ExternalValueResource):
+                payload.append(
+                    {
+                        **selector_payload,
+                        "resource_kind": "external",
+                        "value_token": index,
+                    }
+                )
+                continue
+            if isinstance(resource, IdentifierNameResource):
+                payload.append(
+                    {
+                        **selector_payload,
+                        "resource_kind": "identifier",
+                        "identifier": resource.identifier,
+                    }
+                )
+                continue
+            return None
+        return payload
+
+    def _native_composable_batch_payload(
+        self,
+        resource: ComposableResource,
+        request: BindingRequest,
+    ) -> dict[str, object] | None:
+        if not isinstance(resource.composable, BasicComposable):
+            return None
+        binding = resource.composable._lower_template
+        if not isinstance(binding, LowerTemplateBinding):
+            return None
+        if binding.native_snapshot is None:
+            return None
+        template_handle = self._native_template_cache.template_handle_for(binding)
+        return {
+            "resource_kind": "composable",
+            "source_template": template_handle,
+            "source_instance_name": resource.instance_name,
+            "operation_order": resource.order,
+        }
+
+    def _replay_native_batch_events(
+        self,
+        requests: tuple[BindingRequest, ...],
+        events: list[object],
+    ) -> tuple[BindingCandidate, ...]:
+        candidates: list[BindingCandidate] = []
+        if len(events) != len(requests):
+            raise RuntimeError(
+                "native batch event count does not match request count"
+            )
+        for event in events:
+            if not isinstance(event, dict):
+                raise TypeError("native batch event entries must be dicts")
+            request_index = event.get("request_index")
+            if not isinstance(request_index, int):
+                raise TypeError("native batch event request_index must be an int")
+            try:
+                request = requests[request_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"native batch event references unknown request {request_index}"
+                ) from exc
+            candidate = self._replay_native_batch_event(request, event)
+            candidates.append(candidate)
+        return tuple(candidates)
+
+    def _replay_native_batch_event(
+        self,
+        request: BindingRequest,
+        event: dict[str, object],
+    ) -> BindingCandidate:
+        kind = event.get("kind")
+        target_record = self._native_batch_target_record(event)
+        if kind == "composable":
+            resource = request.resource
+            if not isinstance(resource, ComposableResource):
+                raise TypeError("native composable event does not match request")
+            candidate = ComposableCandidate(
+                target_record=target_record,
+                resource=resource,
+                compatible_productions=self._native_batch_production_records(
+                    resource,
+                    event,
+                ),
+            )
+            self._replay_native_composable_event(candidate, event)
+            return candidate
+        if kind == "external":
+            resource = request.resource
+            if not isinstance(resource, ExternalValueResource):
+                raise TypeError("native external event does not match request")
+            candidate = ExternalValueCandidate(
+                demand_record=target_record,
+                resource=resource,
+            )
+            self._replay_native_external_event(candidate, event)
+            return candidate
+        if kind == "identifier":
+            resource = request.resource
+            if not isinstance(resource, IdentifierNameResource):
+                raise TypeError("native identifier event does not match request")
+            candidate = IdentifierNameCandidate(
+                demand_record=target_record,
+                resource=resource,
+            )
+            self._replay_native_identifier_event(candidate, event)
+            return candidate
+        raise TypeError(f"unsupported native batch event kind: {kind!r}")
+
+    def _native_batch_target_record(
+        self,
+        event: dict[str, object],
+    ) -> InventoryRecord:
+        target_record_id = self._native_record_id(event.get("target_record"))
+        record = self._visible_lower_projection_record(target_record_id)
+        if record is None:
+            raise RuntimeError(
+                f"native batch selected non-visible record {target_record_id}"
+            )
+        return record
+
+    def _native_batch_production_records(
+        self,
+        resource: ComposableResource,
+        event: dict[str, object],
+    ) -> tuple[InventoryRecord, ...]:
+        if not isinstance(resource.composable, BasicComposable):
+            raise TypeError("native composable batch requires BasicComposable")
+        production_records = _lower_template_projection_production_records(
+            resource.composable
+        )
+        records: list[InventoryRecord] = []
+        for index in _native_template_record_indexes(event.get("production_records")):
+            record = production_records.get(index)
+            if record is None:
+                raise TypeError(
+                    "native batch references a non-production template record"
+                )
+            records.append(record)
+        return tuple(records)
+
+    def _replay_native_composable_event(
+        self,
+        candidate: ComposableCandidate,
+        event: dict[str, object],
+    ) -> None:
+        resource = candidate.resource
+        source_build_prefix = _string_tuple_field(event, "source_build_path")
+        self._owner_by_build_prefix[source_build_prefix] = resource.instance_name
+        self._deferred_composable_adapter_edges.append(candidate)
+        target_record_id = self._lower_record_by_inventory_id.get(
+            candidate.target_record.record_id
+        )
+        if target_record_id is None:
+            raise RuntimeError("native batch target record is missing lower mirror")
+        if bool(event.get("mark_satisfied")):
+            self._mark_record_satisfied(candidate.target_record.record_id)
+            self._lower_engine.mark_satisfied(self._lower_state, target_record_id)
+        source_occurrence = self._append_lower_occurrence(
+            source_build_prefix,
+            resource.composable,
+            parent_occurrence_id=target_record_id.occurrence_id,
+            append_native=False,
+        )
+        native_occurrence = event.get("source_occurrence_handle")
+        if native_occurrence is None:
+            raise RuntimeError("native batch composable event is missing occurrence")
+        self._native_occurrence_by_build_prefix[source_build_prefix] = native_occurrence
+        operation_key = event.get("operation_key")
+        if not isinstance(operation_key, str):
+            raise TypeError("native batch operation_key must be a string")
+        order = event.get("order")
+        if not isinstance(order, int):
+            raise TypeError("native batch order must be an int")
+        self._lower_engine.append_edge(
+            self._lower_state,
+            target_record_id=target_record_id,
+            source_occurrence_id=source_occurrence,
+            operation_key=operation_key,
+            order=order,
+        )
+
+    def _replay_native_external_event(
+        self,
+        candidate: ExternalValueCandidate,
+        event: dict[str, object],
+    ) -> None:
+        record_id, overlay_id = self._append_lower_overlay_only(
+            candidate.demand_record,
+            kind="external",
+            source_label=_string_field(event, "source_label"),
+        )
+        self._external_value_by_overlay[overlay_id] = candidate.resource.value
+        owner = self._owner_for(candidate.demand_record)
+        self._queue_external_bind(
+            owner,
+            candidate.demand_record.name.logical_name(),
+            candidate.resource.value,
+        )
+        _assert_native_overlay_alignment(event, overlay_id.index)
+        _ = record_id
+
+    def _replay_native_identifier_event(
+        self,
+        candidate: IdentifierNameCandidate,
+        event: dict[str, object],
+    ) -> None:
+        record_id, overlay_id = self._append_lower_overlay_only(
+            candidate.demand_record,
+            kind="identifier",
+            source_label=_string_field(event, "source_label"),
+        )
+        self._identifier_value_by_overlay[overlay_id] = candidate.resource.identifier
+        authored_name = candidate.demand_record.name.logical_name()
+        self._identifier_bindings_by_occurrence.setdefault(
+            record_id.occurrence_id,
+            {},
+        )[authored_name] = candidate.resource.identifier
+        owner = self._owner_for(candidate.demand_record)
+        self._queue_identifier_bind(
+            owner,
+            authored_name,
+            candidate.resource.identifier,
+        )
+        _assert_native_overlay_alignment(event, overlay_id.index)
 
     def _find_candidates(
         self,
@@ -801,6 +1101,7 @@ class AssemblyScope:
         composable: Composable,
         *,
         parent_occurrence_id: OccurrenceId | None = None,
+        append_native: bool = True,
     ) -> OccurrenceId:
         if not isinstance(composable, BasicComposable):
             raise TypeError(
@@ -847,11 +1148,12 @@ class AssemblyScope:
         self._lower_inventory_ids_by_build_prefix[build_prefix] = frozenset(
             inventory_record_ids
         )
-        self._append_native_occurrence(
-            build_prefix,
-            binding,
-            parent_occurrence_id=parent_occurrence_id,
-        )
+        if append_native:
+            self._append_native_occurrence(
+                build_prefix,
+                binding,
+                parent_occurrence_id=parent_occurrence_id,
+            )
         return occurrence_id
 
     def _append_native_occurrence(
@@ -1021,6 +1323,25 @@ class AssemblyScope:
                 source_label=source_label,
             )
             self._mark_native_record_satisfied(record_id)
+        return record_id, overlay_id
+
+    def _append_lower_overlay_only(
+        self,
+        demand_record: InventoryRecord,
+        *,
+        kind: str,
+        source_label: str,
+    ) -> tuple[RecordId, OverlayId]:
+        record_id = self._lower_record_by_inventory_id.get(demand_record.record_id)
+        if record_id is None:
+            raise RuntimeError("overlay target record is missing lower mirror")
+        overlay_id = self._lower_engine.append_overlay(
+            self._lower_state,
+            kind=kind,
+            source_label=source_label,
+            target_record_id=record_id,
+        )
+        self._lower_engine.mark_satisfied(self._lower_state, record_id)
         return record_id, overlay_id
 
     def _append_native_overlay(
@@ -3253,6 +3574,39 @@ def _native_template_record_indexes(value: object) -> tuple[int, ...]:
             raise TypeError("native record index entries must be integers")
         indexes.append(item)
     return tuple(indexes)
+
+
+def _string_field(mapping: dict[str, object], key: str) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str):
+        raise TypeError(f"native batch field {key} must be a string")
+    return value
+
+
+def _string_tuple_field(mapping: dict[str, object], key: str) -> tuple[str, ...]:
+    value = mapping.get(key)
+    if not isinstance(value, list):
+        raise TypeError(f"native batch field {key} must be a list")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError(f"native batch field {key} entries must be strings")
+        items.append(item)
+    return tuple(items)
+
+
+def _assert_native_overlay_alignment(
+    event: dict[str, object],
+    expected_overlay_index: int,
+) -> None:
+    overlay_id = event.get("overlay_id")
+    if not isinstance(overlay_id, int):
+        raise TypeError("native batch overlay_id must be an int")
+    if overlay_id != expected_overlay_index:
+        raise RuntimeError(
+            "native/Python overlay mirror diverged: "
+            f"native={overlay_id}, python={expected_overlay_index}"
+        )
 
 
 def _resolve_projection_record(

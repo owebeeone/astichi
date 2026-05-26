@@ -1036,6 +1036,45 @@ fn assembly_state_query_demand_candidates(
     Ok(result.into_any().unbind())
 }
 
+#[pyfunction(name = "assembly_state_apply_request_batch")]
+fn assembly_state_apply_request_batch(
+    py: Python<'_>,
+    mut engine: PyRefMut<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    requests: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id)?;
+    let requests = parse_batch_requests(&engine, requests)?;
+    let mut candidate_count = 0_usize;
+    let events = PyList::empty(py);
+
+    for (request_index, request) in requests.iter().enumerate() {
+        let selected = {
+            let state_ref = engine.state(state.index)?;
+            resolve_batch_request(&engine, state_ref, request)?
+        };
+        candidate_count += selected.candidate_count;
+        let event = apply_resolved_batch_request(
+            py,
+            &mut engine,
+            state.index,
+            request_index,
+            request,
+            selected,
+        )?;
+        events.append(event)?;
+    }
+
+    let summary = PyDict::new(py);
+    summary.set_item("candidate_count", candidate_count)?;
+    summary.set_item("request_count", requests.len())?;
+    let result = PyDict::new(py);
+    result.set_item("events", events)?;
+    result.set_item("diagnostic_summary", summary)?;
+    Ok(result.into_any().unbind())
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeTemplateHandle>()?;
     m.add_class::<NativeAssemblyStateHandle>()?;
@@ -1061,7 +1100,520 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(assembly_state_query_demand_candidates, m)?)?;
+    m.add_function(wrap_pyfunction!(assembly_state_apply_request_batch, m)?)?;
     Ok(())
+}
+
+enum BatchResource {
+    Composable {
+        source_template_index: usize,
+        source_instance_name: String,
+        operation_order: i64,
+    },
+    External {
+        value_token: usize,
+    },
+    Identifier {
+        identifier: String,
+    },
+}
+
+struct BatchRequest {
+    name: Option<String>,
+    build_match: Option<Vec<String>>,
+    owner_match: Option<Vec<String>>,
+    allow_equivalent_demand_sites: bool,
+    resource: BatchResource,
+}
+
+struct BatchSelection {
+    target_record: RecordKey,
+    candidate_count: usize,
+    production_records: Vec<usize>,
+}
+
+fn parse_batch_requests(
+    engine: &EngineHandle,
+    requests: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BatchRequest>> {
+    let mut parsed = Vec::new();
+    for item in requests.try_iter()? {
+        let item = item?;
+        let request = item
+            .cast::<PyDict>()
+            .map_err(|_| crate::errors::schema_error("batch request entries must be dicts"))?;
+        parsed.push(parse_batch_request(engine, request)?);
+    }
+    Ok(parsed)
+}
+
+fn parse_batch_request(
+    engine: &EngineHandle,
+    request: &Bound<'_, PyDict>,
+) -> PyResult<BatchRequest> {
+    let resource_kind = get_string(request, "resource_kind")?;
+    let resource = match resource_kind.as_str() {
+        "composable" => {
+            let source_template = required(request, "source_template")?
+                .extract::<PyRef<'_, NativeTemplateHandle>>()
+                .map_err(|_| {
+                    crate::errors::schema_error("source_template must be a native template handle")
+                })?;
+            ensure_owner(engine.owner_id(), source_template.owner_id)?;
+            engine.template(source_template.index)?;
+            BatchResource::Composable {
+                source_template_index: source_template.index,
+                source_instance_name: get_string(request, "source_instance_name")?,
+                operation_order: get_i64(request, "operation_order")?,
+            }
+        }
+        "external" => BatchResource::External {
+            value_token: get_usize(request, "value_token")?,
+        },
+        "identifier" => BatchResource::Identifier {
+            identifier: get_string(request, "identifier")?,
+        },
+        _ => {
+            return Err(crate::errors::schema_error(&format!(
+                "unsupported batch resource kind: {resource_kind}"
+            )));
+        }
+    };
+    Ok(BatchRequest {
+        name: get_optional_string(request, "name")?,
+        build_match: get_optional_string_list(request, "build_match")?,
+        owner_match: get_optional_string_list(request, "owner_match")?,
+        allow_equivalent_demand_sites: get_bool(request, "allow_equivalent_demand_sites")?,
+        resource,
+    })
+}
+
+fn resolve_batch_request(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &BatchRequest,
+) -> PyResult<BatchSelection> {
+    match &request.resource {
+        BatchResource::Composable {
+            source_template_index,
+            ..
+        } => {
+            let query = CandidateQueryRequest {
+                name: request.name.clone(),
+                build_match: request.build_match.clone(),
+                owner_match: request.owner_match.clone(),
+                target_inventory_kinds: lower_hole_inventory_kinds(),
+                identifier_bindings: BTreeMap::new(),
+            };
+            let candidates =
+                query_composable_candidate_keys(engine, state, *source_template_index, &query)?;
+            let selected = select_composable_batch_candidate(
+                engine,
+                state,
+                &query,
+                &candidates,
+                request.allow_equivalent_demand_sites,
+            )?;
+            Ok(BatchSelection {
+                target_record: selected.target_record,
+                candidate_count: candidates.len(),
+                production_records: selected.production_records,
+            })
+        }
+        BatchResource::External { .. } => {
+            let query = CandidateQueryRequest {
+                name: request.name.clone(),
+                build_match: request.build_match.clone(),
+                owner_match: request.owner_match.clone(),
+                target_inventory_kinds: vec!["external.bind".to_string()],
+                identifier_bindings: BTreeMap::new(),
+            };
+            let candidates = query_demand_candidate_keys(engine, state, &query)?;
+            let selected = select_demand_batch_candidate(
+                engine,
+                state,
+                &query,
+                &candidates,
+                request.allow_equivalent_demand_sites,
+            )?;
+            Ok(BatchSelection {
+                target_record: selected,
+                candidate_count: candidates.len(),
+                production_records: Vec::new(),
+            })
+        }
+        BatchResource::Identifier { .. } => {
+            let query = CandidateQueryRequest {
+                name: request.name.clone(),
+                build_match: request.build_match.clone(),
+                owner_match: request.owner_match.clone(),
+                target_inventory_kinds: vec!["identifier.demand".to_string()],
+                identifier_bindings: BTreeMap::new(),
+            };
+            let candidates = query_demand_candidate_keys(engine, state, &query)?;
+            let selected = select_demand_batch_candidate(
+                engine,
+                state,
+                &query,
+                &candidates,
+                request.allow_equivalent_demand_sites,
+            )?;
+            Ok(BatchSelection {
+                target_record: selected,
+                candidate_count: candidates.len(),
+                production_records: Vec::new(),
+            })
+        }
+    }
+}
+
+fn apply_resolved_batch_request(
+    py: Python<'_>,
+    engine: &mut EngineHandle,
+    state_index: usize,
+    request_index: usize,
+    request: &BatchRequest,
+    selection: BatchSelection,
+) -> PyResult<Py<PyAny>> {
+    let owner_id = engine.owner_id();
+    match &request.resource {
+        BatchResource::Composable {
+            source_template_index,
+            source_instance_name,
+            operation_order,
+        } => {
+            let source_records = engine.template(*source_template_index)?.records().to_vec();
+            let target_record = template_record_for_key(
+                engine,
+                engine.state(state_index)?,
+                selection.target_record,
+            )?;
+            let operation_key = operation_key_for_inventory_kind(&target_record.inventory_kind);
+            let mark_satisfied = record_is_single_additive_hole_kind(&target_record.inventory_kind);
+            let mut source_build_path = engine
+                .state(state_index)?
+                .occurrence(selection.target_record.occurrence_index)?
+                .build_path
+                .clone();
+            source_build_path.push(source_instance_name.clone());
+            let state_ref = engine.state_mut(state_index)?;
+            let source_occurrence_index = state_ref.append_occurrence(
+                *source_template_index,
+                source_build_path.clone(),
+                Some(selection.target_record.occurrence_index),
+                &source_records,
+            );
+            let edge_index = state_ref.append_edge(
+                selection.target_record,
+                source_occurrence_index,
+                operation_key.clone(),
+                *operation_order,
+            );
+            if mark_satisfied {
+                state_ref.satisfied_records.insert(selection.target_record);
+            }
+
+            let event = PyDict::new(py);
+            event.set_item("kind", "composable")?;
+            event.set_item("request_index", request_index)?;
+            event.set_item("target_record", record_key_payload(selection.target_record))?;
+            event.set_item("production_records", selection.production_records)?;
+            event.set_item("source_build_path", source_build_path)?;
+            event.set_item("source_occurrence_id", source_occurrence_index)?;
+            event.set_item(
+                "source_occurrence_handle",
+                Py::new(
+                    py,
+                    NativeOccurrenceHandle::new(owner_id, state_index, source_occurrence_index),
+                )?,
+            )?;
+            event.set_item("edge_id", edge_index)?;
+            event.set_item("operation_key", operation_key)?;
+            event.set_item("order", operation_order)?;
+            event.set_item("mark_satisfied", mark_satisfied)?;
+            Ok(event.into_any().unbind())
+        }
+        BatchResource::External { value_token } => {
+            let source_label = resolved_resource_name(
+                engine,
+                engine.state(state_index)?,
+                selection.target_record,
+            )?;
+            let state_ref = engine.state_mut(state_index)?;
+            let overlay_index = state_ref.append_overlay(
+                "external".to_string(),
+                source_label.clone(),
+                selection.target_record,
+            );
+            state_ref.satisfied_records.insert(selection.target_record);
+
+            let event = PyDict::new(py);
+            event.set_item("kind", "external")?;
+            event.set_item("request_index", request_index)?;
+            event.set_item("target_record", record_key_payload(selection.target_record))?;
+            event.set_item("overlay_id", overlay_index)?;
+            event.set_item("source_label", source_label)?;
+            event.set_item("value_token", value_token)?;
+            Ok(event.into_any().unbind())
+        }
+        BatchResource::Identifier { identifier } => {
+            let state_ref = engine.state_mut(state_index)?;
+            let overlay_index = state_ref.append_overlay(
+                "identifier".to_string(),
+                identifier.clone(),
+                selection.target_record,
+            );
+            state_ref.satisfied_records.insert(selection.target_record);
+
+            let event = PyDict::new(py);
+            event.set_item("kind", "identifier")?;
+            event.set_item("request_index", request_index)?;
+            event.set_item("target_record", record_key_payload(selection.target_record))?;
+            event.set_item("overlay_id", overlay_index)?;
+            event.set_item("source_label", identifier)?;
+            Ok(event.into_any().unbind())
+        }
+    }
+}
+
+fn record_key_payload(record_key: RecordKey) -> Vec<usize> {
+    vec![
+        record_key.occurrence_index,
+        record_key.template_record_index,
+    ]
+}
+
+fn lower_hole_inventory_kinds() -> Vec<String> {
+    vec![
+        "hole.block".to_string(),
+        "hole.expr".to_string(),
+        "hole.params".to_string(),
+        "hole.elif".to_string(),
+        "hole.positional_variadic".to_string(),
+        "hole.named_variadic".to_string(),
+    ]
+}
+
+#[derive(Clone)]
+struct NativeComposableCandidate {
+    target_record: RecordKey,
+    production_records: Vec<usize>,
+}
+
+fn query_composable_candidate_keys(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    source_template_index: usize,
+    request: &CandidateQueryRequest,
+) -> PyResult<Vec<NativeComposableCandidate>> {
+    let surface_bundle = engine
+        .surface_bundle()
+        .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
+    let source_template = engine.template(source_template_index)?;
+    let target_keys = query_target_record_keys(engine, state, request)?;
+    let mut candidates = Vec::new();
+    for target_key in target_keys {
+        let target_record = template_record_for_key(engine, state, target_key)?;
+        let mut compatible_productions = Vec::new();
+        for (production_index, production_record) in source_template.records().iter().enumerate() {
+            if !production_record.inventory_kind.starts_with("production.") {
+                continue;
+            }
+            if native_production_satisfies_target(surface_bundle, target_record, production_record)
+            {
+                compatible_productions.push(production_index);
+            }
+        }
+        if compatible_productions.is_empty() {
+            continue;
+        }
+        candidates.push(NativeComposableCandidate {
+            target_record: target_key,
+            production_records: compatible_productions,
+        });
+    }
+    Ok(candidates)
+}
+
+fn query_demand_candidate_keys(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &CandidateQueryRequest,
+) -> PyResult<Vec<RecordKey>> {
+    query_target_record_keys(engine, state, request)
+}
+
+fn query_target_record_keys(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &CandidateQueryRequest,
+) -> PyResult<Vec<RecordKey>> {
+    let identifier_bindings =
+        candidate_identifier_bindings(engine, state, &request.identifier_bindings)?;
+    let target_kind_set: BTreeSet<String> =
+        request.target_inventory_kinds.iter().cloned().collect();
+
+    let mut raw_targets: Vec<RecordKey> = Vec::new();
+    if request.name.is_some() && identifier_bindings.is_empty() {
+        let name = request.name.as_ref().expect("checked is_some");
+        if let Some(records) = state.indexes.by_resource_name.get(name) {
+            raw_targets.extend(records.iter().copied());
+        }
+    } else {
+        for kind in &request.target_inventory_kinds {
+            if let Some(records) = state.indexes.by_inventory_kind.get(kind) {
+                raw_targets.extend(records.iter().copied());
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+    let mut seen_targets = BTreeSet::new();
+    for target_key in raw_targets {
+        if !seen_targets.insert(target_key) {
+            continue;
+        }
+        if !record_is_visible(state, target_key)? {
+            continue;
+        }
+        let target_occurrence = state.occurrence(target_key.occurrence_index)?;
+        let target_record = template_record_for_key(engine, state, target_key)?;
+        if !target_kind_set.contains(&target_record.inventory_kind) {
+            continue;
+        }
+        let target_bindings = identifier_bindings.get(&target_key.occurrence_index);
+        let target_resource_name = resolved_name(&target_record.resource_name, target_bindings);
+        if let Some(name) = &request.name {
+            if target_resource_name != *name {
+                continue;
+            }
+        }
+        if let Some(build_match) = &request.build_match {
+            if !matches_path(build_match, &target_occurrence.build_path)? {
+                continue;
+            }
+        }
+        if let Some(owner_match) = &request.owner_match {
+            let code_owner = resolved_owner(&target_record.code_owner, target_bindings);
+            if !matches_path(owner_match, &code_owner)? {
+                continue;
+            }
+        }
+        candidates.push(target_key);
+    }
+    Ok(candidates)
+}
+
+fn select_demand_batch_candidate(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &CandidateQueryRequest,
+    candidates: &[RecordKey],
+    allow_equivalent_demand_sites: bool,
+) -> PyResult<RecordKey> {
+    if candidates.len() == 1 {
+        return Ok(candidates[0]);
+    }
+    if allow_equivalent_demand_sites && !candidates.is_empty() {
+        let first = candidates[0];
+        if candidates[1..].iter().all(|candidate| {
+            equivalent_demand_records(engine, state, request, first, *candidate).unwrap_or(false)
+        }) {
+            return Ok(first);
+        }
+    }
+    Err(crate::errors::schema_error(&format!(
+        "expected exactly one candidate, found {}",
+        candidates.len()
+    )))
+}
+
+fn select_composable_batch_candidate(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &CandidateQueryRequest,
+    candidates: &[NativeComposableCandidate],
+    allow_equivalent_demand_sites: bool,
+) -> PyResult<NativeComposableCandidate> {
+    if candidates.len() == 1 {
+        return Ok(candidates[0].clone());
+    }
+    if allow_equivalent_demand_sites && !candidates.is_empty() {
+        let first = candidates[0].target_record;
+        if candidates[1..].iter().all(|candidate| {
+            equivalent_demand_records(engine, state, request, first, candidate.target_record)
+                .unwrap_or(false)
+        }) {
+            return Ok(candidates[0].clone());
+        }
+    }
+    Err(crate::errors::schema_error(&format!(
+        "expected exactly one candidate, found {}",
+        candidates.len()
+    )))
+}
+
+fn equivalent_demand_records(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    request: &CandidateQueryRequest,
+    first: RecordKey,
+    second: RecordKey,
+) -> PyResult<bool> {
+    let identifier_bindings =
+        candidate_identifier_bindings(engine, state, &request.identifier_bindings)?;
+    let first_occurrence = state.occurrence(first.occurrence_index)?;
+    let second_occurrence = state.occurrence(second.occurrence_index)?;
+    if first_occurrence.build_path != second_occurrence.build_path {
+        return Ok(false);
+    }
+    let first_record = template_record_for_key(engine, state, first)?;
+    let second_record = template_record_for_key(engine, state, second)?;
+    if first_record.inventory_kind != second_record.inventory_kind {
+        return Ok(false);
+    }
+    let first_bindings = identifier_bindings.get(&first.occurrence_index);
+    let second_bindings = identifier_bindings.get(&second.occurrence_index);
+    Ok(resolved_name(&first_record.resource_name, first_bindings)
+        == resolved_name(&second_record.resource_name, second_bindings)
+        && resolved_owner(&first_record.code_owner, first_bindings)
+            == resolved_owner(&second_record.code_owner, second_bindings))
+}
+
+fn resolved_resource_name(
+    engine: &EngineHandle,
+    state: &NativeAssemblyState,
+    record_key: RecordKey,
+) -> PyResult<String> {
+    let identifier_bindings = candidate_identifier_bindings(engine, state, &BTreeMap::new())?;
+    let record = template_record_for_key(engine, state, record_key)?;
+    Ok(resolved_name(
+        &record.resource_name,
+        identifier_bindings.get(&record_key.occurrence_index),
+    ))
+}
+
+fn operation_key_for_inventory_kind(inventory_kind: &str) -> String {
+    match inventory_kind {
+        "hole.expr" => "astichi.operation.replace_expression".to_string(),
+        "hole.block" => "astichi.operation.splice_body_at_marker".to_string(),
+        "hole.params" => "astichi.operation.splice_parameters".to_string(),
+        "hole.elif" => "astichi.operation.append_clause".to_string(),
+        kind if kind.starts_with("hole.") => "astichi.operation.splice_call_arguments".to_string(),
+        _ => "astichi.operation.append_body".to_string(),
+    }
+}
+
+fn record_is_single_additive_hole_kind(inventory_kind: &str) -> bool {
+    inventory_kind.starts_with("hole.")
+        && !matches!(
+            inventory_kind,
+            "hole.block"
+                | "hole.params"
+                | "hole.positional_variadic"
+                | "hole.named_variadic"
+                | "hole.elif"
+        )
 }
 
 fn parse_template_snapshot(
@@ -2035,6 +2587,18 @@ fn get_usize(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<usize> {
     required(dict, key)?
         .extract::<usize>()
         .map_err(|_| crate::errors::schema_error(&format!("{key} must be an unsigned integer")))
+}
+
+fn get_i64(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<i64> {
+    required(dict, key)?
+        .extract::<i64>()
+        .map_err(|_| crate::errors::schema_error(&format!("{key} must be an integer")))
+}
+
+fn get_bool(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<bool> {
+    required(dict, key)?
+        .extract::<bool>()
+        .map_err(|_| crate::errors::schema_error(&format!("{key} must be a bool")))
 }
 
 fn get_optional_usize(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<usize>> {
