@@ -83,6 +83,7 @@ uv run python tests/versioned_test_harness.py run-tests-all --show-output --pyte
 ```
 
 The default runtime matrix lives in `pyproject.toml` under
-`[tool.astichi.test-matrix]`. It includes Python 3.15 as the current alpha
-runtime; canonical goldens are still regenerated with Python 3.14 unless that
-policy changes.
+`[tool.astichi.test-matrix]`. It includes Python 3.15 for local `run-tests-all`;
+GitHub Actions CI currently runs 3.12–3.14 only (3.15 is not on hosted runners
+yet). Canonical goldens are regenerated with Python 3.14 unless that policy
+changes.

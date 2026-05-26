@@ -54,16 +54,37 @@ include = [
 [tool.cibuildwheel]
 # Release wheels: CPython 3.12–3.14 on common 64-bit platforms.
 build = "cp312-* cp313-* cp314-*"
-skip = ["*-musllinux_*", "pp*", "cp3?t-*"]
-environment-pass = ["RUSTFLAGS", "PYO3_PYTHON"]
+# `build` already limits interpreters; skip musllinux, free-threaded, and 32-bit targets.
+skip = ["*-musllinux_*", "cp3??t-*", "*-win32", "*-manylinux_i686"]
+# Full pytest suite runs in GHA; smoke-import only inside the wheel repair step.
+test-command = "python -c \"import astichi; from astichi.lower_engine.native import load_native_extension; assert load_native_extension(required=False) is not None\""
+environment-pass = ["RUSTFLAGS", "PYO3_PYTHON", "ASTICHI_REQUIRE_NATIVE_BUILD"]
 # Release builds must ship the native extension; sdist installs may fall back.
 environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1" }
 
 [tool.cibuildwheel.linux]
-before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+# Install Rust into fixed paths; do not rely on shell-only PATH from before-all.
+before-all = """
+set -eux
+export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+/root/.cargo/bin/cargo --version
+"""
+environment = {
+  PATH = "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  CARGO_HOME = "/root/.cargo",
+  RUSTUP_HOME = "/root/.rustup",
+  ASTICHI_REQUIRE_NATIVE_BUILD = "1",
+}
+archs = ["x86_64", "aarch64"]
 
 [tool.cibuildwheel.macos]
 environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1", RUSTFLAGS = "-C link-arg=-undefined -C link-arg=dynamic_lookup" }
+
+[tool.cibuildwheel.windows]
+# PyO3/Rust on GHA is 64-bit; skip 32-bit CPython (win32) wheels.
+archs = ["AMD64"]
+environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1" }
 
 # Run: uv run --with pytest pytest -q
 # Focused: uv run --with pytest pytest <test-path> -q

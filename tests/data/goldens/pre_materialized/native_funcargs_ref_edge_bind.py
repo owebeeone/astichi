@@ -1,0 +1,13 @@
+astichi_hole(__astichi_root__Root__)
+
+@astichi_insert(__astichi_root__Root__, ref=Root)
+def __astichi_root__Root__():
+
+    def func_kw(**kwds):
+        return kwds
+
+    class vals:
+        v1 = 100
+        v2 = 200
+    result_kw_ref = func_kw(**astichi_hole(kw_ref), **astichi_insert(kw_ref, astichi_funcargs(a=astichi_ref('vals.v1'), __astichi_ph_0__=astichi_import(vals))), **astichi_insert(kw_ref, astichi_funcargs(b=astichi_ref('vals.v2'), __astichi_ph_0__=astichi_import(vals))))
+# astichi-provenance: eNrtVk1vE0kQdfwxjuM4BBAfm9VKLAsmCOEAEuKABIoSOKyXOWQPrJCiUdvTdg8eT1vT7RgLISEkQEJ9o/d38BO47GEP/Ciq2z32zHgcOZccEJYcZ7qrq169ejVdb0v//lfL6Y8oIMalsJ5Rd+hj+Vna9gd5IN/IbVFsUXcsD+U2yYnik1eDUO2+N5ulI+QPsVRbe8j39UH7Y3SyMwzaes9G/aTTvOdKsQ4xvTbxHEIhpii0+Stt/RdFLljfVKbirBNZsbDtdDxlebNLfVc97wSIe0fYUYFQ2GVOiDsOdrvYaXmB2xiMJWsJy/cCHFDZzIu1NvUd2ukwzGUzJ9Zw4DrRbkFsqMe4xRlyhfw+bImi8g0UkAvTDMgv4qIzhRZSyh3nQP+V5Ffym8auTrMWudrMkz+aOXKtWSDXI59IrPbweERDVzvOtFmwmhPVp5Av92iwjztA1LY9+fCI90DRTW6ROthWAPuwjwPOMiyrA8po4I+j/OqHoIEjFMKztMVabxTbFNXeyHFxBw19rp9LvdHEbjW2CvgspZW7qVDkviirKjm9EYQhD9LbDyfRySObPIafXfjuESVLiJAQlV4Rxd4IiBNrKAgoR4oKwLHOxwMMBeyrdKVt6NsA+vJA3zlD3/6hNP8BUAhhHWA+DIOYqkktUWjyz3xFC+C4OlcttVpM13nDxW0aIk5DkBo0GTBXDnVIBhhf2KKqYQ+A9f4xWsiJ1T0fMZYo+YzcIjQiEFJqIYa1lwZ8rUnXWruMed0gyWOZA5GYz8s6f3RXSTgnSn8DZhw14jR1yyRpATjLJAmMKXw0YBwB9bFOJ7WmC9WCbtQFUYcr5vC6yeyFnfIabYxmcMnreZj3FMx3SXBl46acBPchjud/8sk2phVjmoAS92E2MOlC/Je6OCVTnPKySGshZtAdoHz1esoAXTEeK+CxNgN9Jub0fFKRf84rUjnZNE4uGVj1iQ6UBsrmbZOozXP7+DBb2WG2TJh6LEwiY2uWasbxG+b47SjVhuY17rkxbSm1ejm1+mXpDMRG9Ib2AoZDvgBROkBdcZZg4utyB49Bshkhie6qDCwrRggr4DKXrmE8a7GC5PGJV6dXU2YdFkWKN4ooq3dKQ70OdMNknIlql+UuezWRxebsBh0Q5466O5esZn9AM6u5KK+Em8m7cqnDJ04QL1qeifxypsij3t05kcDJtx9G0a3TU/S9n4o+XUXj9FL8vo1ffzvx+/Zkss8amtJEwUy81HCuc0sUtqBVV0vRrib+5eb9RYEWLHtqMjQDR4YBNrMuTHUwok3m7sZ3/WacSw==

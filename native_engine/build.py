@@ -13,6 +13,24 @@ HERE = Path(__file__).resolve().parent
 EXTENSION_STEM = "_astichi_native_engine"
 
 
+def _cargo_executable() -> str:
+    cargo = os.environ.get("CARGO")
+    if cargo:
+        return cargo
+    cargo_home = os.environ.get("CARGO_HOME")
+    if cargo_home:
+        name = "cargo.exe" if os.name == "nt" else "cargo"
+        candidate = Path(cargo_home) / "bin" / name
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which("cargo")
+    if found:
+        return found
+    raise FileNotFoundError(
+        "cargo not found on PATH; install Rust (https://rustup.rs) or set CARGO/CARGO_HOME"
+    )
+
+
 def dylib_name() -> str:
     if sys.platform == "darwin":
         return f"lib{EXTENSION_STEM}.dylib"
@@ -29,7 +47,13 @@ def main() -> None:
         dynamic_lookup = "-C link-arg=-undefined -C link-arg=dynamic_lookup"
         env["RUSTFLAGS"] = f"{rustflags} {dynamic_lookup}".strip()
     subprocess.run(
-        ["cargo", "build", "--release", "--manifest-path", str(HERE / "Cargo.toml")],
+        [
+            _cargo_executable(),
+            "build",
+            "--release",
+            "--manifest-path",
+            str(HERE / "Cargo.toml"),
+        ],
         check=True,
         cwd=HERE,
         env=env,

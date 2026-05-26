@@ -22,6 +22,19 @@ def _env_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY
 
 
+def _native_build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    cargo = env.get("CARGO")
+    if cargo:
+        cargo_bin = str(Path(cargo).resolve().parent)
+    else:
+        cargo_home = Path(env.get("CARGO_HOME", Path.home() / ".cargo"))
+        cargo_bin = str(cargo_home / "bin")
+    if cargo_bin and Path(cargo_bin).is_dir():
+        env["PATH"] = cargo_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _native_artifacts() -> list[Path]:
     abi3 = sorted(
         path
@@ -54,6 +67,7 @@ class NativeExtensionBuildHook(BuildHookInterface):
                 [sys.executable, str(BUILD_SCRIPT)],
                 cwd=ROOT,
                 check=True,
+                env=_native_build_env(),
             )
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             if _env_enabled("ASTICHI_REQUIRE_NATIVE_BUILD"):
