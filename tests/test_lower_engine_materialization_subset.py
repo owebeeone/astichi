@@ -63,6 +63,7 @@ result = astichi_hole(value)
     assert counts["lower_materialize"] == 1
     assert counts["lower_materialization_plan"] == 1
     assert counts["lower_materialization_artifact"] == 1
+    assert counts.get("rebuild_composable", 0) == 0
     assert counts.get("lower_materialization_adapter_fallback", 0) == 0
     assert counts.get("build_merge", 0) == 0
     assert counts.get("materialize_composable", 0) == 0

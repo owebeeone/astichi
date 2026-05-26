@@ -314,26 +314,68 @@ Stop if:
 - Native extraction lacks a current surface that Python compile accepts.
 - Diagnostics require data not present in the native package contract.
 
-## Phase P3: Native Specialization And Rebuild
+## Phase P3a: Materialized Artifact Wrap
 
-Goal: remove Python `_rebuild_composable(...)` from the native hot path.
+Goal: remove Python `_rebuild_composable(...)` from the already-materialized
+native/lower artifact path.
 
 Work:
 
-- Move `.bind(...)`, `.bind_identifier(...)`, `with_keep_names(...)`, and
-  edge-local source overlays onto native package/source specialization.
-- Preserve Python ownership of external object values, but keep the structural
-  metadata changes native-owned.
-- Avoid `ast.unparse(...)` as the normal native rebuild path.
-- Add counters that distinguish native specialization from Python
-  `rebuild_composable`.
+- Replace the post-materialization `_rebuild_composable(...)` call with a cheap
+  already-materialized composable wrapper.
+- Do not run Python `recognize_markers(...)`, `analyze_names(...)`,
+  `build_inventory(...)`, or lower-template registration merely to wrap the
+  final artifact.
+- Keep unresolved-Astichi-demand validation as a narrow artifact scan instead
+  of full re-lowering.
+- Preserve final source/executable behavior and explicit debug/source artifact
+  copy APIs.
+
+Acceptance:
+
+- Native `context_lcm` counter runs show `rebuild_composable` drop from the
+  P2c count of `8` to zero, or present only in explicit fallback/debug paths.
+- Existing final goldens pass.
+- Full Astichi suite passes.
+- YIDL lifecycle workload runs.
+
+Expected performance movement:
+
+- This should remove the currently measured `rebuild_composable` bucket.
+- Native mode should improve, but per-edge candidate lookup and apply counts
+  remain until P4.
+
+Tag after success: `perf-native/p3a-artifact-wrap`.
+
+Stop if:
+
+- The final artifact wrapper requires public inventory/descriptor semantics
+  that cannot be represented without full Python re-lowering.
+- The narrow unresolved-demand scan cannot match current final artifact
+  validation behavior.
+
+## Phase P3b: Native Source Specialization
+
+Goal: remove Python `_rebuild_composable(...)` from native-selected source
+specialization paths.
+
+Work:
+
+- Route `.bind(...)`, `.bind_identifier(...)`, `with_keep_names(...)`, and
+  edge-local `apply_source_overlay(...)` through a native-selected
+  specialization path.
+- Preserve Python ownership of external object values, but keep structural
+  metadata changes native-owned after specialization.
+- Avoid `ast.unparse(...)` as the normal native specialization path.
+- Add counters that distinguish native bind, identifier, and keep-name
+  specialization from Python `rebuild_composable`.
 - Keep emitted-source and debug projection behavior available through explicit
   artifact copy.
 
 Acceptance:
 
-- Native `context_lcm` counter runs show little or no Python
-  `rebuild_composable` on the hot path.
+- Focused tests prove native `.bind(...)`, `.bind_identifier(...)`, and
+  keep-name paths do not call Python `_rebuild_composable(...)`.
 - Existing identifier binding, external binding, keep-name, managed import, and
   pyimport goldens pass.
 - Full Astichi suite passes.
@@ -341,16 +383,17 @@ Acceptance:
 
 Expected performance movement:
 
-- This should remove the largest measured Python bucket.
-- Native mode should be clearly faster than forced Python unless scope/apply
-  crossing overhead dominates.
+- This removes rebuild cost for source specialization outside the final artifact
+  wrapper.
+- Lifecycle movement may be smaller than P3a if the workload's remaining
+  rebuilds were mostly final artifact wraps.
 
-Tag after success: `perf-native/p3-specialization`.
+Tag after success: `perf-native/p3b-specialization`.
 
 Stop if:
 
-- Rebuild semantics require Python AST mutation because the native package lacks
-  a required operation.
+- Source specialization requires Python AST mutation because the native package
+  lacks a required operation.
 - External-value ownership becomes ambiguous across Python/native lifetime
   boundaries.
 

@@ -35,6 +35,16 @@ from astichi.lower_engine.handles import (
 from astichi.lower_engine.inventory import AssemblyState
 from astichi.lower_engine.materialization import MaterializationOperation
 from astichi.lowering.parameters import param_hole_name
+from astichi.lowering.markers import (
+    ARG_IDENTIFIER,
+    BIND_EXTERNAL,
+    ELIF,
+    HOLE,
+    IMPORT,
+    PARAM_HOLE_IDENTIFIER,
+    PASS,
+    strip_identifier_suffix,
+)
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
 from astichi.model import (
     BasicComposable,
@@ -78,6 +88,16 @@ ExternalValue: TypeAlias = (
     | tuple["ExternalValue", ...]
     | list["ExternalValue"]
     | dict["ExternalValue", "ExternalValue"]
+)
+
+_UNRESOLVED_LOWER_CALL_DEMANDS = frozenset(
+    (
+        HOLE.source_name,
+        ELIF.source_name,
+        BIND_EXTERNAL.source_name,
+        IMPORT.source_name,
+        PASS.source_name,
+    )
 )
 
 
@@ -961,17 +981,14 @@ class AssemblyScope:
         if tree is None:
             return None
         ast.fix_missing_locations(tree)
-        from astichi.model.basic import _rebuild_composable
-
-        materialized = _rebuild_composable(
+        if _tree_has_unresolved_lower_astichi_demands(tree):
+            return None
+        return BasicComposable(
             tree=tree,
             origin=root.origin,
             bound_externals=frozenset(),
-            already_materialized=True,
+            _already_materialized=True,
         )
-        if _has_unresolved_lower_astichi_demands(materialized):
-            return None
-        return materialized
 
     def _materialize_lower_occurrence_tree(
         self,
@@ -3013,14 +3030,48 @@ def _is_lower_pyimport_call(node: ast.AST) -> bool:
     )
 
 
-def _has_unresolved_lower_astichi_demands(composable: BasicComposable) -> bool:
-    return any(
-        port.is_additive_hole_demand()
-        or port.is_external_bind_demand()
-        or port.is_identifier_demand()
-        or port.is_parameter_hole_demand()
-        for port in composable.demand_ports
-    )
+def _tree_has_unresolved_lower_astichi_demands(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if _node_is_unresolved_lower_call_demand(node):
+            return True
+        if _node_has_unresolved_lower_suffix_demand(node):
+            return True
+    return False
+
+
+def _node_is_unresolved_lower_call_demand(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Name):
+        return False
+    return node.func.id in _UNRESOLVED_LOWER_CALL_DEMANDS
+
+
+def _node_has_unresolved_lower_suffix_demand(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return _name_has_unresolved_lower_suffix_demand(node.id)
+    if isinstance(node, ast.arg):
+        return _name_has_unresolved_lower_suffix_demand(node.arg)
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _name_has_unresolved_lower_suffix_demand(node.name)
+    if isinstance(node, ast.alias):
+        if _name_has_unresolved_lower_suffix_demand(node.name):
+            return True
+        return (
+            node.asname is not None
+            and _name_has_unresolved_lower_suffix_demand(node.asname)
+        )
+    if isinstance(node, ast.ImportFrom) and node.module is not None:
+        return any(
+            _name_has_unresolved_lower_suffix_demand(part)
+            for part in node.module.split(".")
+        )
+    return False
+
+
+def _name_has_unresolved_lower_suffix_demand(name: str) -> bool:
+    _, marker = strip_identifier_suffix(name)
+    return marker is ARG_IDENTIFIER or marker is PARAM_HOLE_IDENTIFIER
 
 
 def _operations_by_target_occurrence(
