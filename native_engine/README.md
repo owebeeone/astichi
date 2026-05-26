@@ -55,6 +55,12 @@ Build explicitly from the Astichi repo root:
 uv run python native_engine/build.py
 ```
 
+Release wheels and sdists built with `python -m build` compile the extension
+via the Hatch `hatch_build.py` hook (see `pyproject.toml`). PyPI publishes
+platform wheels for Linux, macOS, and Windows; `pip install` from sdist tries
+to compile when no matching wheel exists. Set `ASTICHI_SKIP_NATIVE_BUILD=1`
+for a Python-only install without Rust.
+
 The build copies an ignored extension artifact into `native_engine/` so
 `astichi.lower_engine.native` can discover it during local development.
 

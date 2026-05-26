@@ -233,6 +233,28 @@ Supported pieces today include block holes, expression inserts, external
 binding, managed Python imports, materialization, emission, and builder-driven
 loop unrolling.
 
+## Assembler scope (`astichi.assembler`)
+
+For generators that already have their own planner (for example YIDL lifecycle
+assembly), `AssemblyScope` wraps a builder and drives **inventory-backed
+candidate lookup** instead of fluent `builder.Root...add` chains. You register
+composables with `scope.add(...)`, describe a resource plus optional selectors
+(`name`, `build_match`, `owner_match`), then `find_candidates` / `require_one` /
+`apply` or an ordered `apply_batch` of `BindingRequest` rows.
+
+Resource helpers: `as_composable(...)`, `as_external_value(...)`,
+`as_identifier(...)`. Build and `materialize()` stay authoritative; the scope
+layer only resolves which hole or demand site a resource satisfies and applies
+that binding to the lower-backed assembly graph.
+
+**Native rust fast path:** when the optional `_astichi_native_engine` extension is
+built (`uv run python native_engine/build.py`), lower-engine selection defaults
+to `auto` and prefers **native Rust** for batch resolve/apply. In that mode
+`apply_batch` keeps occurrence/edge state in the native engine; Python mirror
+replay is off by default (set `ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` only for
+compatibility/oracle work). Without the extension, the same API falls back to
+Python. See `docs/reference/assembler-scope.md`.
+
 ## Layout
 
 | Path | Role |
@@ -241,7 +263,6 @@ loop unrolling.
 | `docs/` | User-facing docs |
 | `tests/` | Pytest suite |
 | `dev-docs/` | Design notes, active summary, and requirements |
-| `scratch/` | Throwaway experiments (not shipped) |
 
 ## Development
 
@@ -253,7 +274,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 
 ## Status
 
-Early development (`0.1.0`), but already useful for controlled codegen
+Early development (`1.0.0`), but already useful for controlled codegen
 pipelines.
 
 Start with:
@@ -264,4 +285,4 @@ Start with:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+LGPL-2.1-or-later. See [LICENSE](LICENSE).

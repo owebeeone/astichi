@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling>=1.24", "wheel>=0.43"]
 build-backend = "hatchling.build"
 
 [project]
 name = "astichi"
-version = "0.1.0"
+version = "1.0.0"
 description = "AST composition helpers: markers, hygiene, lifting, and lowering for composable Python code generation"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,7 @@ keywords = ["ast", "codegen", "composition", "compiler"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -32,8 +32,35 @@ exclude-newer = "1 week"
 [tool.hatch.build]
 sources = ["src"]
 
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.sdist]
-include = ["src/astichi", "tests", "dev-docs", "native_probe", "native_engine", "scratch", "LICENSE", "README.md"]
+include = [
+  "src/astichi",
+  "tests",
+  "dev-docs",
+  "native_probe",
+  "native_engine",
+  "hatch_build.py",
+  "scratch",
+  "LICENSE",
+  "README.md",
+]
+
+[tool.cibuildwheel]
+# Release wheels: CPython 3.12–3.14 on common 64-bit platforms.
+build = "cp312-* cp313-* cp314-*"
+skip = ["*-musllinux_*", "pp*", "cp3?t-*"]
+environment-pass = ["RUSTFLAGS", "PYO3_PYTHON"]
+# Release builds must ship the native extension; sdist installs may fall back.
+environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1" }
+
+[tool.cibuildwheel.linux]
+before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+
+[tool.cibuildwheel.macos]
+environment = { ASTICHI_REQUIRE_NATIVE_BUILD = "1", RUSTFLAGS = "-C link-arg=-undefined -C link-arg=dynamic_lookup" }
 
 # Run: uv run --with pytest pytest -q
 # Focused: uv run --with pytest pytest <test-path> -q
