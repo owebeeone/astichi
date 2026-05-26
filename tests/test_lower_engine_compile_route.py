@@ -94,6 +94,14 @@ def test_compile_explicit_native_attaches_native_template_snapshot(
     assert lower_template.has_native_lower_package()
     assert lower_template.native_snapshot is not None
     assert lower_template.native_package_snapshot is not None
+    assert lower_template.package_v2.snapshot() == lower_template.native_package_snapshot
+    assert [
+        spec.surface_key for spec in lower_template.record_specs
+    ] == [
+        record["surface_key"]
+        for record in lower_template.native_package_snapshot["records"]
+    ]
+    assert lower_template.record_specs[0].projection_record is not None
     assert lower_template.native_source == source
     assert lower_template.native_origin == native_composable.origin
     assert (

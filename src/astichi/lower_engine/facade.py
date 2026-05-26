@@ -22,7 +22,10 @@ from astichi.lower_engine.package_extract import (
     extract_scope_specs,
     extract_unroll_marker_specs,
 )
-from astichi.lower_engine.package_v2 import LowerTemplatePackageV2
+from astichi.lower_engine.package_v2 import (
+    LowerTemplatePackageV2,
+    package_from_snapshot,
+)
 from astichi.lower_engine.registry import RegisteredSurfaceBundle
 from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
@@ -169,9 +172,28 @@ def register_native_template_source(
         source=source,
         origin=origin,
     )
+    native_package = package_from_snapshot(native_package_snapshot)
+    native_specs = _native_specs_from_package_snapshot(
+        engine=fallback_binding.engine,
+        snapshot=native_package_snapshot,
+        fallback_binding=fallback_binding,
+    )
     return replace(
         fallback_binding,
         backend=_native_backend_name(module),
+        template_key=str(native_package_snapshot["template_key"]),
+        source_summary=str(native_package_snapshot["source_summary"]),
+        record_specs=native_specs.record_specs,
+        scope_specs=native_specs.scope_specs,
+        marker_specs=native_specs.marker_specs,
+        pyimport_marker_specs=native_specs.pyimport_marker_specs,
+        comment_marker_specs=native_specs.comment_marker_specs,
+        ref_marker_specs=native_specs.ref_marker_specs,
+        unroll_marker_specs=native_specs.unroll_marker_specs,
+        surface_bundle_signature=str(
+            native_package_snapshot["surface_bundle_signature"]
+        ),
+        package_v2=native_package,
         native_snapshot=native_snapshot,
         native_package_snapshot=native_package_snapshot,
         native_source=source,
@@ -241,6 +263,178 @@ class NativeTemplateCache:
             )
         self._template_handles_by_key[cache_key] = handle
         return handle
+
+
+@dataclass(frozen=True, slots=True)
+class _NativePackageSpecs:
+    record_specs: tuple[TemplateRecordSpec, ...]
+    scope_specs: tuple[TemplateScopeSpec, ...]
+    marker_specs: tuple[TemplateMarkerSpec, ...]
+    pyimport_marker_specs: tuple[TemplatePyImportMarkerSpec, ...]
+    comment_marker_specs: tuple[TemplateCommentMarkerSpec, ...]
+    ref_marker_specs: tuple[TemplateRefMarkerSpec, ...]
+    unroll_marker_specs: tuple[TemplateUnrollMarkerSpec, ...]
+
+
+def _native_specs_from_package_snapshot(
+    *,
+    engine: LowerEngine,
+    snapshot: dict[str, object],
+    fallback_binding: LowerTemplateBinding,
+) -> _NativePackageSpecs:
+    ensure_current_surface_bundle(engine)
+    locator_rows = {
+        int(row["locator_id"]): row
+        for row in _snapshot_rows(snapshot, "locators")
+    }
+    fallback_records = fallback_binding.record_specs
+    record_specs: list[TemplateRecordSpec] = []
+    for index, row in enumerate(_snapshot_rows(snapshot, "records")):
+        locator = locator_rows[int(row["locator_id"])]
+        fallback = fallback_records[index] if index < len(fallback_records) else None
+        surface_key = _row_string(row, "surface_key")
+        record_specs.append(
+            TemplateRecordSpec(
+                surface_key=surface_key,
+                semantic_summary=_row_string(row, "semantic_summary"),
+                ast_path=_row_string(locator, "ast_path"),
+                role_key=_row_string(locator, "role_key"),
+                materialization_anchor=_row_string(
+                    locator,
+                    "materialization_anchor",
+                ),
+                authored_summary=_row_string(locator, "authored_summary"),
+                surface_id=engine.surface_registry.surface_handle(surface_key),
+                resource_name=_row_string(row, "resource_name"),
+                inventory_kind=_row_string(row, "inventory_kind"),
+                code_owner_parts=_row_string_tuple(row, "owner_path"),
+                legacy_record_id="" if fallback is None else fallback.legacy_record_id,
+                projection_record=(
+                    None if fallback is None else fallback.projection_record
+                ),
+            )
+        )
+    return _NativePackageSpecs(
+        record_specs=tuple(record_specs),
+        scope_specs=tuple(
+            TemplateScopeSpec(
+                scope_kind=_row_string(row, "scope_kind"),
+                ast_path=_row_string(row, "ast_path"),
+                owner_path=_row_string_tuple(row, "owner_path"),
+                local_bindings=_row_string_tuple(row, "local_bindings"),
+                arguments=_row_string_tuple(row, "arguments"),
+                parent_scope_id=(
+                    None
+                    if row["parent_scope_id"] is None
+                    else int(row["parent_scope_id"])
+                ),
+            )
+            for row in _snapshot_rows(snapshot, "scopes")
+        ),
+        marker_specs=tuple(
+            TemplateMarkerSpec(
+                marker_kind=_row_string(row, "marker_kind"),
+                source_name=_row_string(row, "source_name"),
+                ast_path=_row_string(row, "ast_path"),
+                statement_path=(
+                    None
+                    if row["statement_path"] is None
+                    else _row_string(row, "statement_path")
+                ),
+                owner_path=_row_string_tuple(row, "owner_path"),
+                scope_id=int(row["scope_id"]),
+                source_order=int(row["source_order"]),
+                resource_name=_row_string(row, "resource_name"),
+                operation_key=_row_string(row, "operation_key"),
+                flags=_row_string_tuple(row, "flags"),
+            )
+            for row in _snapshot_rows(snapshot, "markers")
+        ),
+        pyimport_marker_specs=tuple(
+            TemplatePyImportMarkerSpec(
+                marker_id=int(row["marker_id"]),
+                module_path=(
+                    None
+                    if row["module_path"] is None
+                    else _row_string_tuple(row, "module_path")
+                ),
+                names=_row_string_tuple(row, "names"),
+                as_name=_row_string(row, "as_name"),
+                flags=_row_string_tuple(row, "flags"),
+            )
+            for row in _snapshot_rows(snapshot, "pyimport_markers")
+        ),
+        comment_marker_specs=tuple(
+            TemplateCommentMarkerSpec(
+                marker_id=int(row["marker_id"]),
+                payload=_row_string(row, "payload"),
+                flags=_row_string_tuple(row, "flags"),
+            )
+            for row in _snapshot_rows(snapshot, "comment_markers")
+        ),
+        ref_marker_specs=tuple(
+            TemplateRefMarkerSpec(
+                marker_id=int(row["marker_id"]),
+                ref_kind=_row_string(row, "ref_kind"),
+                context=_row_string(row, "context"),
+                sentinel_attr=_row_string(row, "sentinel_attr"),
+                literal_path=(
+                    None
+                    if row["literal_path"] is None
+                    else _row_string_tuple(row, "literal_path")
+                ),
+                flags=_row_string_tuple(row, "flags"),
+            )
+            for row in _snapshot_rows(snapshot, "ref_markers")
+        ),
+        unroll_marker_specs=tuple(
+            TemplateUnrollMarkerSpec(
+                marker_id=int(row["marker_id"]),
+                statement_path=_row_string(row, "statement_path"),
+                target_ast_path=_row_string(row, "target_ast_path"),
+                iter_ast_path=_row_string(row, "iter_ast_path"),
+                domain_ast_path=_row_string(row, "domain_ast_path"),
+                body_path=_row_string(row, "body_path"),
+                orelse_path=(
+                    None
+                    if row["orelse_path"] is None
+                    else _row_string(row, "orelse_path")
+                ),
+                target_bindings=_row_string_tuple(row, "target_bindings"),
+                domain_shape=_row_string(row, "domain_shape"),
+                flags=_row_string_tuple(row, "flags"),
+            )
+            for row in _snapshot_rows(snapshot, "unroll_markers")
+        ),
+    )
+
+
+def _snapshot_rows(
+    snapshot: dict[str, object],
+    section: str,
+) -> tuple[dict[str, object], ...]:
+    rows = snapshot[section]
+    if not isinstance(rows, list):
+        raise TypeError(f"native package section {section!r} must be a list")
+    if not all(isinstance(row, dict) for row in rows):
+        raise TypeError(f"native package section {section!r} must contain rows")
+    return tuple(rows)
+
+
+def _row_string(row: dict[str, object], key: str) -> str:
+    value = row[key]
+    if not isinstance(value, str):
+        raise TypeError(f"native package row field {key!r} must be a string")
+    return value
+
+
+def _row_string_tuple(row: dict[str, object], key: str) -> tuple[str, ...]:
+    value = row[key]
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) for item in value
+    ):
+        raise TypeError(f"native package row field {key!r} must be a string list")
+    return tuple(value)
 
 
 def ensure_current_native_surface_bundle(

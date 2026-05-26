@@ -1043,6 +1043,264 @@ def read_package_snapshot(text: str) -> dict[str, Any]:
     return normalize_package_snapshot(raw)
 
 
+def package_from_snapshot(snapshot: Mapping[str, Any]) -> LowerTemplatePackageV2:
+    """Build a package object from canonical snapshot rows."""
+    canonical = normalize_package_snapshot(snapshot)
+    package = LowerTemplatePackageV2(
+        template_key=str(canonical["template_key"]),
+        source_summary=str(canonical["source_summary"]),
+        surface_bundle_signature=str(canonical["surface_bundle_signature"]),
+    )
+    strings = tuple(_require_str(value, path=("string_table", index)) for index, value in enumerate(canonical["string_table"]))
+    paths = tuple(
+        tuple(_require_str(part, path=("path_table", index, part_index)) for part_index, part in enumerate(path))
+        for index, path in enumerate(canonical["path_table"])
+    )
+    ast_path_texts = tuple(
+        _require_str(value, path=("ast_path_table", index))
+        for index, value in enumerate(canonical["ast_path_table"])
+    )
+    string_index = {value: index for index, value in enumerate(strings)}
+    path_index = {value: index for index, value in enumerate(paths)}
+    ast_path_index = {value: index for index, value in enumerate(ast_path_texts)}
+
+    package._strings = list(strings)
+    package._string_index = dict(string_index)
+    package._paths = list(paths)
+    package._path_index = dict(path_index)
+    package._ast_path_texts = list(ast_path_texts)
+    package._ast_paths = [_parse_ast_path(value) for value in ast_path_texts]
+    package._ast_path_index = dict(ast_path_index)
+    package._binding_set_index = {}
+    package.surface_bundle_signature_id = string_index[
+        str(canonical["surface_bundle_signature"])
+    ]
+    package.template_key_id = string_index[str(canonical["template_key"])]
+    package.source_summary_id = string_index[str(canonical["source_summary"])]
+
+    package.binding_sets = [
+        BindingSetRow(
+            binding_set_id=_require_int(row["binding_set_id"], path=("binding_sets", index, "binding_set_id")),
+            name_ids=tuple(
+                string_index[_require_str(name, path=("binding_sets", index, "names", name_index))]
+                for name_index, name in enumerate(row["names"])
+            ),
+        )
+        for index, row in enumerate(canonical["binding_sets"])
+    ]
+    package._binding_set_index = {
+        tuple(package._string(name_id) for name_id in row.name_ids): row.binding_set_id
+        for row in package.binding_sets
+    }
+    package.locators = [
+        LocatorRow(
+            locator_id=_require_int(row["locator_id"], path=("locators", index, "locator_id")),
+            ast_path_id=ast_path_index[_require_str(row["ast_path"], path=("locators", index, "ast_path"))],
+            role_key_id=string_index[_require_str(row["role_key"], path=("locators", index, "role_key"))],
+            parent_locator_id=(
+                None
+                if row["parent_locator_id"] is None
+                else _require_int(row["parent_locator_id"], path=("locators", index, "parent_locator_id"))
+            ),
+            authored_summary_id=string_index[_require_str(row["authored_summary"], path=("locators", index, "authored_summary"))],
+            materialization_anchor_id=string_index[_require_str(row["materialization_anchor"], path=("locators", index, "materialization_anchor"))],
+        )
+        for index, row in enumerate(canonical["locators"])
+    ]
+    package.records = [
+        RecordRow(
+            template_record_id=_require_int(row["template_record_id"], path=("records", index, "template_record_id")),
+            surface_key_id=string_index[_require_str(row["surface_key"], path=("records", index, "surface_key"))],
+            operation_key_id=_optional_string_id(row["operation_key"], string_index, path=("records", index, "operation_key")),
+            locator_id=_require_int(row["locator_id"], path=("records", index, "locator_id")),
+            resource_name_id=_optional_string_id(row["resource_name"], string_index, path=("records", index, "resource_name")),
+            inventory_kind_id=string_index[_require_str(row["inventory_kind"], path=("records", index, "inventory_kind"))],
+            owner_path_id=path_index[_row_path(row["owner_path"], path=("records", index, "owner_path"))],
+            semantic_summary_id=string_index[_require_str(row["semantic_summary"], path=("records", index, "semantic_summary"))],
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["records"])
+    ]
+    package.scopes = [
+        ScopeRow(
+            scope_id=_require_int(row["scope_id"], path=("scopes", index, "scope_id")),
+            parent_scope_id=(
+                None
+                if row["parent_scope_id"] is None
+                else _require_int(row["parent_scope_id"], path=("scopes", index, "parent_scope_id"))
+            ),
+            scope_kind_id=string_index[_require_str(row["scope_kind"], path=("scopes", index, "scope_kind"))],
+            ast_path_id=ast_path_index[_require_str(row["ast_path"], path=("scopes", index, "ast_path"))],
+            owner_path_id=path_index[_row_path(row["owner_path"], path=("scopes", index, "owner_path"))],
+            local_binding_set_id=_binding_set_id_for_names(package, row["local_bindings"], path=("scopes", index, "local_bindings")),
+            argument_set_id=_binding_set_id_for_names(package, row["arguments"], path=("scopes", index, "arguments")),
+        )
+        for index, row in enumerate(canonical["scopes"])
+    ]
+    package.markers = [
+        MarkerRow(
+            marker_id=_require_int(row["marker_id"], path=("markers", index, "marker_id")),
+            source_order=_require_int(row["source_order"], path=("markers", index, "source_order")),
+            marker_kind_id=string_index[_require_str(row["marker_kind"], path=("markers", index, "marker_kind"))],
+            source_name_id=string_index[_require_str(row["source_name"], path=("markers", index, "source_name"))],
+            operation_key_id=string_index[_require_str(row["operation_key"], path=("markers", index, "operation_key"))],
+            scope_id=_require_int(row["scope_id"], path=("markers", index, "scope_id")),
+            owner_path_id=path_index[_row_path(row["owner_path"], path=("markers", index, "owner_path"))],
+            ast_path_id=ast_path_index[_require_str(row["ast_path"], path=("markers", index, "ast_path"))],
+            statement_path_id=(
+                None
+                if row["statement_path"] is None
+                else ast_path_index[_require_str(row["statement_path"], path=("markers", index, "statement_path"))]
+            ),
+            resource_name_id=_optional_string_id(row["resource_name"], string_index, path=("markers", index, "resource_name")),
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["markers"])
+    ]
+    package.pyimport_markers = [
+        PyImportMarkerRow(
+            pyimport_marker_id=_require_int(row["pyimport_marker_id"], path=("pyimport_markers", index, "pyimport_marker_id")),
+            marker_id=_require_int(row["marker_id"], path=("pyimport_markers", index, "marker_id")),
+            module_path_id=(
+                None
+                if row["module_path"] is None
+                else path_index[_row_path(row["module_path"], path=("pyimport_markers", index, "module_path"))]
+            ),
+            name_ids=tuple(
+                string_index[_require_str(name, path=("pyimport_markers", index, "names", name_index))]
+                for name_index, name in enumerate(row["names"])
+            ),
+            as_name_id=_optional_string_id(row["as_name"], string_index, path=("pyimport_markers", index, "as_name")),
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["pyimport_markers"])
+    ]
+    package.managed_imports = [
+        ManagedImportRow(
+            managed_import_id=_require_int(row["managed_import_id"], path=("managed_imports", index, "managed_import_id")),
+            marker_id=_require_int(row["marker_id"], path=("managed_imports", index, "marker_id")),
+            source_order=_require_int(row["source_order"], path=("managed_imports", index, "source_order")),
+            scope_id=_require_int(row["scope_id"], path=("managed_imports", index, "scope_id")),
+            module_path_id=(
+                None
+                if row["module_path"] is None
+                else path_index[_row_path(row["module_path"], path=("managed_imports", index, "module_path"))]
+            ),
+            final_local_name_id=string_index[_require_str(row["final_local_name"], path=("managed_imports", index, "final_local_name"))],
+            original_symbol_id=(
+                None
+                if row["original_symbol"] is None
+                else string_index[_require_str(row["original_symbol"], path=("managed_imports", index, "original_symbol"))]
+            ),
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["managed_imports"])
+    ]
+    package.comment_markers = [
+        CommentMarkerRow(
+            comment_marker_id=_require_int(row["comment_marker_id"], path=("comment_markers", index, "comment_marker_id")),
+            marker_id=_require_int(row["marker_id"], path=("comment_markers", index, "marker_id")),
+            payload_id=string_index[_require_str(row["payload"], path=("comment_markers", index, "payload"))],
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["comment_markers"])
+    ]
+    package.ref_markers = [
+        RefMarkerRow(
+            ref_marker_id=_require_int(row["ref_marker_id"], path=("ref_markers", index, "ref_marker_id")),
+            marker_id=_require_int(row["marker_id"], path=("ref_markers", index, "marker_id")),
+            ref_kind_id=string_index[_require_str(row["ref_kind"], path=("ref_markers", index, "ref_kind"))],
+            context_id=string_index[_require_str(row["context"], path=("ref_markers", index, "context"))],
+            sentinel_attr_id=_optional_string_id(row["sentinel_attr"], string_index, path=("ref_markers", index, "sentinel_attr")),
+            literal_path_id=(
+                None
+                if row["literal_path"] is None
+                else path_index[_row_path(row["literal_path"], path=("ref_markers", index, "literal_path"))]
+            ),
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["ref_markers"])
+    ]
+    package.unroll_markers = [
+        UnrollMarkerRow(
+            unroll_marker_id=_require_int(row["unroll_marker_id"], path=("unroll_markers", index, "unroll_marker_id")),
+            marker_id=_require_int(row["marker_id"], path=("unroll_markers", index, "marker_id")),
+            statement_path_id=ast_path_index[_require_str(row["statement_path"], path=("unroll_markers", index, "statement_path"))],
+            target_ast_path_id=ast_path_index[_require_str(row["target_ast_path"], path=("unroll_markers", index, "target_ast_path"))],
+            iter_ast_path_id=ast_path_index[_require_str(row["iter_ast_path"], path=("unroll_markers", index, "iter_ast_path"))],
+            domain_ast_path_id=ast_path_index[_require_str(row["domain_ast_path"], path=("unroll_markers", index, "domain_ast_path"))],
+            body_path_id=ast_path_index[_require_str(row["body_path"], path=("unroll_markers", index, "body_path"))],
+            orelse_path_id=(
+                None
+                if row["orelse_path"] is None
+                else ast_path_index[_require_str(row["orelse_path"], path=("unroll_markers", index, "orelse_path"))]
+            ),
+            target_binding_set_id=_binding_set_id_for_names(package, row["target_bindings"], path=("unroll_markers", index, "target_bindings")),
+            domain_shape_id=string_index[_require_str(row["domain_shape"], path=("unroll_markers", index, "domain_shape"))],
+            flags=tuple(row["flags"]),
+        )
+        for index, row in enumerate(canonical["unroll_markers"])
+    ]
+    package._binding_index = None
+    package._marker_ids_by_kind = None
+    package._marker_ids_by_scope_id = None
+    return package
+
+
+def _require_str(value: object, *, path: tuple[object, ...]) -> str:
+    if not isinstance(value, str):
+        raise PackageSnapshotFormatError(
+            f"expected string at {_format_path(tuple(map(str, path)))}"
+        )
+    return value
+
+
+def _require_int(value: object, *, path: tuple[object, ...]) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise PackageSnapshotFormatError(
+            f"expected integer at {_format_path(tuple(map(str, path)))}"
+        )
+    return value
+
+
+def _row_path(value: object, *, path: tuple[object, ...]) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise PackageSnapshotFormatError(
+            f"expected path list at {_format_path(tuple(map(str, path)))}"
+        )
+    return tuple(
+        _require_str(part, path=(*path, index))
+        for index, part in enumerate(value)
+    )
+
+
+def _optional_string_id(
+    value: object,
+    string_index: Mapping[str, int],
+    *,
+    path: tuple[object, ...],
+) -> int | None:
+    text = _require_str(value, path=path)
+    if text == "":
+        return None
+    return string_index[text]
+
+
+def _binding_set_id_for_names(
+    package: LowerTemplatePackageV2,
+    value: object,
+    *,
+    path: tuple[object, ...],
+) -> int:
+    names = _row_path(value, path=path)
+    binding_set_id = package._binding_set_index.get(tuple(sorted(dict.fromkeys(names))))
+    if binding_set_id is None:
+        raise PackageSnapshotFormatError(
+            f"unknown binding set at {_format_path(tuple(map(str, path)))}"
+        )
+    return binding_set_id
+
+
 def round_trip_package_snapshot_text(text: str) -> str:
     """Read and rewrite lower-template package snapshot text."""
     return write_package_snapshot(read_package_snapshot(text))

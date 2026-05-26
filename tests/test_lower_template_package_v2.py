@@ -24,6 +24,7 @@ from astichi.lower_engine import (
     extract_ref_marker_specs,
     extract_scope_specs,
     extract_unroll_marker_specs,
+    package_from_snapshot,
     round_trip_package_snapshot_text,
     write_package_snapshot,
 )
@@ -96,6 +97,19 @@ def test_populated_package_snapshot_matches_golden() -> None:
         "surface_key": "expression.hole",
         "template_record_id": 0,
     }
+
+
+def test_package_from_snapshot_round_trips_populated_package() -> None:
+    package = _populated_package()
+    imported = package_from_snapshot(package.snapshot())
+
+    assert imported.snapshot() == package.snapshot()
+    assert imported.records_by_owner_path(("Root",)) == package.records_by_owner_path(
+        ("Root",)
+    )
+    assert imported.boundary_available_names_for_statement_path(
+        "body[0]/value"
+    ) == package.boundary_available_names_for_statement_path("body[0]/value")
 
 
 def test_scope_extraction_package_snapshot_matches_golden() -> None:
