@@ -2360,6 +2360,18 @@ fn visit_expr_markers(
                     package,
                     marker_state,
                 )?;
+                if call_name(&node.func) == Some("astichi_ref")
+                    && keyword.arg.as_ref().map(|arg| arg.as_str()) == Some("external")
+                {
+                    append_external_ref_bind_marker(
+                        &keyword.value,
+                        &format!("{path}/args[0]"),
+                        statement_path,
+                        scopes,
+                        package,
+                        marker_state,
+                    );
+                }
             }
             Ok(())
         }
@@ -2774,6 +2786,31 @@ fn append_marker_for_call(
     }
     marker_state.source_order += 1;
     Ok(())
+}
+
+fn append_external_ref_bind_marker(
+    expr: &ast::Expr,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) {
+    let Some(resource_name) = name_expr(expr) else {
+        return;
+    };
+    let scope = scope_for_ast_path(scopes, ast_path);
+    package.add_marker(
+        marker_state.source_order,
+        "bind_external",
+        "astichi_bind_external",
+        ast_path,
+        statement_path,
+        scope,
+        &resource_name,
+        vec!["call_context".to_string()],
+    );
+    marker_state.source_order += 1;
 }
 
 fn is_package_marker(source_name: &str) -> bool {

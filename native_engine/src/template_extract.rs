@@ -508,7 +508,7 @@ fn validate_pyimport_prefix(body: &[ast::Stmt], source_map: &SourceMap) -> PyRes
                     statement_line(stmt, source_map)
                 )));
             }
-        } else if !is_boundary_prefix_statement(stmt) && !is_python_module_prefix_statement(stmt) {
+        } else if !is_pyimport_prefix_statement(stmt) && !is_python_module_prefix_statement(stmt) {
             prefix_open = false;
         }
         match stmt {
@@ -548,6 +548,17 @@ fn is_pyimport_statement(stmt: &ast::Stmt) -> bool {
         return false;
     };
     is_call_named(&expr_stmt.value, "astichi_pyimport")
+}
+
+fn is_pyimport_prefix_statement(stmt: &ast::Stmt) -> bool {
+    if is_boundary_prefix_statement(stmt) {
+        return true;
+    }
+    let ast::Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    is_call_named(&expr_stmt.value, "astichi_bind_external")
+        || is_call_named(&expr_stmt.value, "astichi_comment")
 }
 
 fn is_python_module_prefix_statement(stmt: &ast::Stmt) -> bool {
@@ -817,6 +828,19 @@ fn stmt_records(
                 records,
             )
         }
+        ast::Stmt::Delete(node) => {
+            for (index, target) in node.targets.iter().enumerate() {
+                expr_records(
+                    target,
+                    &format!("{path}/targets[{index}]"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
         ast::Stmt::Return(node) => {
             if let Some(value) = node.value.as_ref() {
                 expr_records(
@@ -824,6 +848,72 @@ fn stmt_records(
                     &(path.to_string() + "/value"),
                     source_map,
                     ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::For(node) => {
+            expr_records(
+                &node.target,
+                &(path.to_string() + "/target"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.iter,
+                &(path.to_string() + "/iter"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.orelse.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/orelse[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::While(node) => {
+            expr_records(
+                &node.test,
+                &(path.to_string() + "/test"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            for (index, stmt) in node.body.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/body[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            for (index, stmt) in node.orelse.iter().enumerate() {
+                stmt_records(
+                    stmt,
+                    &format!("{path}/orelse[{index}]"),
+                    source_map,
                     owner,
                     records,
                 )?;
@@ -928,6 +1018,50 @@ fn stmt_records(
             }
             Ok(())
         }
+        ast::Stmt::Assert(node) => {
+            expr_records(
+                &node.test,
+                &(path.to_string() + "/test"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            if let Some(msg) = node.msg.as_ref() {
+                expr_records(
+                    msg,
+                    &(path.to_string() + "/msg"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Raise(node) => {
+            if let Some(exc) = node.exc.as_ref() {
+                expr_records(
+                    exc,
+                    &(path.to_string() + "/exc"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            if let Some(cause) = node.cause.as_ref() {
+                expr_records(
+                    cause,
+                    &(path.to_string() + "/cause"),
+                    source_map,
+                    ExprRecordContext::Expression,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
         ast::Stmt::FunctionDef(node) => {
             let function_owner = child_owner(owner, node.name.as_str());
             if node.name.as_str() == "astichi_elif" {
@@ -989,6 +1123,13 @@ fn stmt_records(
                     records,
                 )?;
             }
+            decorator_expr_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &function_owner,
+                records,
+            )?;
             Ok(())
         }
         ast::Stmt::AsyncFunctionDef(node) => {
@@ -1052,6 +1193,13 @@ fn stmt_records(
                     records,
                 )?;
             }
+            decorator_expr_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &function_owner,
+                records,
+            )?;
             Ok(())
         }
         ast::Stmt::ClassDef(node) => {
@@ -1110,6 +1258,13 @@ fn stmt_records(
                     records,
                 )?;
             }
+            decorator_expr_records(
+                &node.decorator_list,
+                path,
+                source_map,
+                &class_owner,
+                records,
+            )?;
             Ok(())
         }
         ast::Stmt::Import(node) => {
@@ -1193,8 +1348,10 @@ fn expr_records(
 ) -> PyResult<()> {
     match expr {
         ast::Expr::Call(node) => {
-            let name = call_name(&node.func);
-            if let Some(name) = name {
+            let name = marker_call_name(&node.func);
+            let defer_attribute_ref_record = name == Some("astichi_ref")
+                && matches!(node.func.as_ref(), ast::Expr::Attribute(_));
+            if let Some(name) = name.filter(|_| !defer_attribute_ref_record) {
                 direct_call_record(name, node, path, source_map, context, owner, records)?;
             }
             expr_records(
@@ -1205,6 +1362,17 @@ fn expr_records(
                 owner,
                 records,
             )?;
+            if defer_attribute_ref_record {
+                direct_call_record(
+                    "astichi_ref",
+                    node,
+                    path,
+                    source_map,
+                    context,
+                    owner,
+                    records,
+                )?;
+            }
             for (index, arg) in node.args.iter().enumerate() {
                 let arg_context = if matches!(arg, ast::Expr::Starred(_)) {
                     ExprRecordContext::PositionalVariadic
@@ -1653,9 +1821,19 @@ fn call_name(expr: &ast::Expr) -> Option<&str> {
     }
 }
 
+fn marker_call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.as_str()),
+        ast::Expr::Attribute(node) if node.attr.as_str() == "astichi_ref" => {
+            Some(node.attr.as_str())
+        }
+        _ => None,
+    }
+}
+
 fn is_call_named(expr: &ast::Expr, name: &str) -> bool {
     match expr {
-        ast::Expr::Call(node) => call_name(&node.func) == Some(name),
+        ast::Expr::Call(node) => marker_call_name(&node.func) == Some(name),
         _ => false,
     }
 }
@@ -2184,6 +2362,7 @@ fn direct_call_record(
             Ok(())
         }
         "astichi_pyimport" => Ok(()),
+        "astichi_for" => Ok(()),
         other if other.starts_with("astichi_") => Err(crate::errors::schema_error(&format!(
             "unsupported native direct call marker: {other}"
         ))),
@@ -2221,6 +2400,32 @@ fn decorator_records(
             kind.surface_key,
             owner.to_vec(),
         ));
+    }
+    Ok(())
+}
+
+fn decorator_expr_records(
+    decorators: &[ast::Expr],
+    owner_path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    for (index, decorator) in decorators.iter().enumerate() {
+        if matches!(
+            decorator,
+            ast::Expr::Call(node) if call_name(&node.func) == Some("astichi_insert")
+        ) {
+            continue;
+        }
+        expr_records(
+            decorator,
+            &format!("{owner_path}/decorator_list[{index}]"),
+            source_map,
+            ExprRecordContext::Expression,
+            owner,
+            records,
+        )?;
     }
     Ok(())
 }

@@ -416,12 +416,26 @@ def _register_lower_template(
     origin: CompileOrigin,
     inventory: Inventory,
 ) -> "LowerTemplateBinding":
-    from astichi.lower_engine import register_inventory_template
+    from astichi.lower_engine import (
+        register_inventory_template,
+        register_native_template_source,
+        select_lower_engine,
+    )
 
-    return register_inventory_template(
+    lower_template = register_inventory_template(
         tree=tree,
         origin=origin,
         inventory=inventory,
+    )
+    selected = select_lower_engine().selected_engine
+    if selected == "python":
+        return lower_template
+    if selected not in {"native-rust", "native-cpp"}:
+        return lower_template
+    return register_native_template_source(
+        source=f"{ast.unparse(tree)}\n",
+        origin=origin,
+        fallback_binding=lower_template,
     )
 
 

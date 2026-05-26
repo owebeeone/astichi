@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyNotImplementedError, PySyntaxError, PyValueError};
+use pyo3::exceptions::{PySyntaxError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule};
 use rustpython_parser::ast;
@@ -131,10 +131,6 @@ fn parse_native_timed(source: String, filename: String) -> (Result<ast::ModModul
 
 fn syntax_err(message: String, filename: &str) -> PyErr {
     PySyntaxError::new_err(format!("{message} in {filename}"))
-}
-
-fn unsupported(message: impl Into<String>) -> PyErr {
-    PyNotImplementedError::new_err(message.into())
 }
 
 fn ns_to_secs(ns: u128) -> f64 {
@@ -334,13 +330,16 @@ fn normalize_astichi_ref_external(py: Python<'_>, artifact: &Py<PyAny>) -> PyRes
             continue;
         }
         let func = node.getattr("func")?;
-        if func
+        let func_name = func
             .getattr("id")
             .ok()
             .and_then(|value| value.extract::<String>().ok())
-            .as_deref()
-            != Some("astichi_ref")
-        {
+            .or_else(|| {
+                func.getattr("attr")
+                    .ok()
+                    .and_then(|value| value.extract::<String>().ok())
+            });
+        if func_name.as_deref() != Some("astichi_ref") {
             continue;
         }
         let keywords = node.getattr("keywords")?;
@@ -655,14 +654,54 @@ impl<'py> Emitter<'py> {
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
-            ast::Stmt::TypeAlias(_)
-            | ast::Stmt::AsyncFor(_)
-            | ast::Stmt::AsyncWith(_)
-            | ast::Stmt::Match(_)
-            | ast::Stmt::TryStar(_) => Err(unsupported(format!(
-                "statement conversion is not implemented for {}",
-                stmt_name(stmt)
-            ))),
+            ast::Stmt::TypeAlias(node) => {
+                let name = self.expr(&node.name)?;
+                let type_params = self.type_param_list(&node.type_params)?;
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("TypeAlias", (name, type_params, value))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Stmt::AsyncFor(node) => {
+                let target = self.expr(&node.target)?;
+                let iter = self.expr(&node.iter)?;
+                let body = self.stmt_list(&node.body)?;
+                let orelse = self.stmt_list(&node.orelse)?;
+                let type_comment = match &node.type_comment {
+                    Some(value) => value.clone().into_pyobject(self.py)?.unbind().into(),
+                    None => self.none(),
+                };
+                let obj = self.call_ast("AsyncFor", (target, iter, body, orelse, type_comment))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Stmt::AsyncWith(node) => {
+                let items = self.with_item_list(&node.items)?;
+                let body = self.stmt_list(&node.body)?;
+                let type_comment = match &node.type_comment {
+                    Some(value) => value.clone().into_pyobject(self.py)?.unbind().into(),
+                    None => self.none(),
+                };
+                let obj = self.call_ast("AsyncWith", (items, body, type_comment))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Stmt::Match(node) => {
+                let subject = self.expr(&node.subject)?;
+                let cases = self.match_case_list(&node.cases)?;
+                let obj = self.call_ast("Match", (subject, cases))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Stmt::TryStar(node) => {
+                let body = self.stmt_list(&node.body)?;
+                let handlers = self.except_handler_list(&node.handlers)?;
+                let orelse = self.stmt_list(&node.orelse)?;
+                let finalbody = self.stmt_list(&node.finalbody)?;
+                let obj = self.call_ast("TryStar", (body, handlers, orelse, finalbody))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
         }
     }
 
@@ -675,17 +714,12 @@ impl<'py> Emitter<'py> {
             Some(value) => value.clone().into_pyobject(self.py)?.unbind().into(),
             None => self.none(),
         };
-        let type_params = self.list(Vec::new())?;
+        let type_params = self.type_param_list(&node.type_params)?;
         let class_name = if is_async {
             "AsyncFunctionDef"
         } else {
             "FunctionDef"
         };
-        if !node.type_params.is_empty() {
-            return Err(unsupported(
-                "non-empty function type_params are not implemented",
-            ));
-        }
         let obj = self.call_ast(
             class_name,
             (
@@ -711,12 +745,7 @@ impl<'py> Emitter<'py> {
             Some(value) => value.clone().into_pyobject(self.py)?.unbind().into(),
             None => self.none(),
         };
-        let type_params = self.list(Vec::new())?;
-        if !node.type_params.is_empty() {
-            return Err(unsupported(
-                "non-empty async function type_params are not implemented",
-            ));
-        }
+        let type_params = self.type_param_list(&node.type_params)?;
         let obj = self.call_ast(
             "AsyncFunctionDef",
             (
@@ -734,16 +763,11 @@ impl<'py> Emitter<'py> {
     }
 
     fn class_def(&mut self, node: &ast::StmtClassDef) -> PyResult<Py<PyAny>> {
-        if !node.type_params.is_empty() {
-            return Err(unsupported(
-                "non-empty class type_params are not implemented",
-            ));
-        }
         let bases = self.expr_list(&node.bases)?;
         let keywords = self.keyword_list(&node.keywords)?;
         let body = self.stmt_list(&node.body)?;
         let decorators = self.expr_list(&node.decorator_list)?;
-        let type_params = self.list(Vec::new())?;
+        let type_params = self.type_param_list(&node.type_params)?;
         let obj = self.call_ast(
             "ClassDef",
             (
@@ -787,6 +811,13 @@ impl<'py> Emitter<'py> {
                 let op = self.unary_op(node.op)?;
                 let operand = self.expr(&node.operand)?;
                 let obj = self.call_ast("UnaryOp", (op, operand))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Expr::Lambda(node) => {
+                let args = self.arguments(&node.args)?;
+                let body = self.expr(&node.body)?;
+                let obj = self.call_ast("Lambda", (args, body))?;
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
@@ -930,13 +961,24 @@ impl<'py> Emitter<'py> {
                 self.set_location(&obj, node.range)?;
                 Ok(obj.unbind())
             }
-            ast::Expr::Lambda(_)
-            | ast::Expr::Await(_)
-            | ast::Expr::Yield(_)
-            | ast::Expr::YieldFrom(_) => Err(unsupported(format!(
-                "expression conversion is not implemented for {}",
-                expr_name(expr)
-            ))),
+            ast::Expr::Await(node) => {
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("Await", (value,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Expr::Yield(node) => {
+                let value = self.optional_expr(node.value.as_ref())?;
+                let obj = self.call_ast("Yield", (value,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Expr::YieldFrom(node) => {
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("YieldFrom", (value,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
         }
     }
 
@@ -1077,6 +1119,123 @@ impl<'py> Emitter<'py> {
             }
         }
         self.list(converted)
+    }
+
+    fn match_case_list(&mut self, cases: &[ast::MatchCase]) -> PyResult<Py<PyAny>> {
+        let mut converted = Vec::with_capacity(cases.len());
+        for case in cases {
+            let pattern = self.pattern(&case.pattern)?;
+            let guard = self.optional_expr(case.guard.as_ref())?;
+            let body = self.stmt_list(&case.body)?;
+            converted.push(
+                self.call_ast("match_case", (pattern, guard, body))?
+                    .unbind(),
+            );
+        }
+        self.list(converted)
+    }
+
+    fn pattern_list(&mut self, patterns: &[ast::Pattern]) -> PyResult<Py<PyAny>> {
+        let mut converted = Vec::with_capacity(patterns.len());
+        for pattern in patterns {
+            converted.push(self.pattern(pattern)?);
+        }
+        self.list(converted)
+    }
+
+    fn optional_pattern(&mut self, pattern: Option<&Box<ast::Pattern>>) -> PyResult<Py<PyAny>> {
+        match pattern {
+            Some(pattern) => self.pattern(pattern),
+            None => Ok(self.none()),
+        }
+    }
+
+    fn pattern(&mut self, pattern: &ast::Pattern) -> PyResult<Py<PyAny>> {
+        match pattern {
+            ast::Pattern::MatchValue(node) => {
+                let value = self.expr(&node.value)?;
+                let obj = self.call_ast("MatchValue", (value,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchSingleton(node) => {
+                let value = self.constant(&node.value)?;
+                let obj = self.call_ast("MatchSingleton", (value,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchSequence(node) => {
+                let patterns = self.pattern_list(&node.patterns)?;
+                let obj = self.call_ast("MatchSequence", (patterns,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchMapping(node) => {
+                let keys = self.expr_list(&node.keys)?;
+                let patterns = self.pattern_list(&node.patterns)?;
+                let rest = self.optional_identifier(node.rest.as_ref());
+                let obj = self.call_ast("MatchMapping", (keys, patterns, rest))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchClass(node) => {
+                let cls = self.expr(&node.cls)?;
+                let patterns = self.pattern_list(&node.patterns)?;
+                let kwd_attrs = self.string_list(&node.kwd_attrs)?;
+                let kwd_patterns = self.pattern_list(&node.kwd_patterns)?;
+                let obj = self.call_ast("MatchClass", (cls, patterns, kwd_attrs, kwd_patterns))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchStar(node) => {
+                let name = self.optional_identifier(node.name.as_ref());
+                let obj = self.call_ast("MatchStar", (name,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchAs(node) => {
+                let pattern = self.optional_pattern(node.pattern.as_ref())?;
+                let name = self.optional_identifier(node.name.as_ref());
+                let obj = self.call_ast("MatchAs", (pattern, name))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::Pattern::MatchOr(node) => {
+                let patterns = self.pattern_list(&node.patterns)?;
+                let obj = self.call_ast("MatchOr", (patterns,))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+        }
+    }
+
+    fn type_param_list(&mut self, type_params: &[ast::TypeParam]) -> PyResult<Py<PyAny>> {
+        let mut converted = Vec::with_capacity(type_params.len());
+        for type_param in type_params {
+            converted.push(self.type_param(type_param)?);
+        }
+        self.list(converted)
+    }
+
+    fn type_param(&mut self, type_param: &ast::TypeParam) -> PyResult<Py<PyAny>> {
+        match type_param {
+            ast::TypeParam::TypeVar(node) => {
+                let bound = self.optional_expr(node.bound.as_ref())?;
+                let obj = self.call_ast("TypeVar", (node.name.to_string(), bound))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::TypeParam::ParamSpec(node) => {
+                let obj = self.call_ast("ParamSpec", (node.name.to_string(),))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+            ast::TypeParam::TypeVarTuple(node) => {
+                let obj = self.call_ast("TypeVarTuple", (node.name.to_string(),))?;
+                self.set_location(&obj, node.range)?;
+                Ok(obj.unbind())
+            }
+        }
     }
 
     fn type_ignore_list(&mut self, type_ignores: &[ast::TypeIgnore]) -> PyResult<Py<PyAny>> {
@@ -1224,6 +1383,7 @@ fn count_stmt(stmt: &ast::Stmt, counts: &mut BTreeMap<String, usize>) {
     match stmt {
         ast::Stmt::FunctionDef(node) => {
             count_arguments(&node.args, counts);
+            count_type_params(&node.type_params, counts);
             count_exprs(&node.decorator_list, counts);
             if let Some(value) = &node.returns {
                 count_expr(value, counts);
@@ -1232,6 +1392,7 @@ fn count_stmt(stmt: &ast::Stmt, counts: &mut BTreeMap<String, usize>) {
         }
         ast::Stmt::AsyncFunctionDef(node) => {
             count_arguments(&node.args, counts);
+            count_type_params(&node.type_params, counts);
             count_exprs(&node.decorator_list, counts);
             if let Some(value) = &node.returns {
                 count_expr(value, counts);
@@ -1239,6 +1400,7 @@ fn count_stmt(stmt: &ast::Stmt, counts: &mut BTreeMap<String, usize>) {
             count_stmts(&node.body, counts);
         }
         ast::Stmt::ClassDef(node) => {
+            count_type_params(&node.type_params, counts);
             count_exprs(&node.bases, counts);
             for keyword in &node.keywords {
                 bump(counts, "keyword");
@@ -1259,6 +1421,7 @@ fn count_stmt(stmt: &ast::Stmt, counts: &mut BTreeMap<String, usize>) {
         }
         ast::Stmt::TypeAlias(node) => {
             count_expr(&node.name, counts);
+            count_type_params(&node.type_params, counts);
             count_expr(&node.value, counts);
         }
         ast::Stmt::AugAssign(node) => {
@@ -1318,6 +1481,7 @@ fn count_stmt(stmt: &ast::Stmt, counts: &mut BTreeMap<String, usize>) {
             count_expr(&node.subject, counts);
             for case in &node.cases {
                 bump(counts, "match_case");
+                count_pattern(&case.pattern, counts);
                 if let Some(guard) = &case.guard {
                     count_expr(guard, counts);
                 }
@@ -1522,6 +1686,48 @@ fn count_comprehensions(
     }
 }
 
+fn count_patterns(patterns: &[ast::Pattern], counts: &mut BTreeMap<String, usize>) {
+    for pattern in patterns {
+        count_pattern(pattern, counts);
+    }
+}
+
+fn count_pattern(pattern: &ast::Pattern, counts: &mut BTreeMap<String, usize>) {
+    bump(counts, pattern_name(pattern));
+    match pattern {
+        ast::Pattern::MatchValue(node) => count_expr(&node.value, counts),
+        ast::Pattern::MatchSingleton(_) => {}
+        ast::Pattern::MatchSequence(node) => count_patterns(&node.patterns, counts),
+        ast::Pattern::MatchMapping(node) => {
+            count_exprs(&node.keys, counts);
+            count_patterns(&node.patterns, counts);
+        }
+        ast::Pattern::MatchClass(node) => {
+            count_expr(&node.cls, counts);
+            count_patterns(&node.patterns, counts);
+            count_patterns(&node.kwd_patterns, counts);
+        }
+        ast::Pattern::MatchStar(_) => {}
+        ast::Pattern::MatchAs(node) => {
+            if let Some(pattern) = &node.pattern {
+                count_pattern(pattern, counts);
+            }
+        }
+        ast::Pattern::MatchOr(node) => count_patterns(&node.patterns, counts),
+    }
+}
+
+fn count_type_params(type_params: &[ast::TypeParam], counts: &mut BTreeMap<String, usize>) {
+    for type_param in type_params {
+        bump(counts, type_param_name(type_param));
+        if let ast::TypeParam::TypeVar(node) = type_param {
+            if let Some(bound) = &node.bound {
+                count_expr(bound, counts);
+            }
+        }
+    }
+}
+
 fn count_except_handler(handler: &ast::ExceptHandler, counts: &mut BTreeMap<String, usize>) {
     match handler {
         ast::ExceptHandler::ExceptHandler(node) => {
@@ -1596,6 +1802,27 @@ fn expr_name(expr: &ast::Expr) -> &'static str {
         ast::Expr::List(_) => "List",
         ast::Expr::Tuple(_) => "Tuple",
         ast::Expr::Slice(_) => "Slice",
+    }
+}
+
+fn pattern_name(pattern: &ast::Pattern) -> &'static str {
+    match pattern {
+        ast::Pattern::MatchValue(_) => "MatchValue",
+        ast::Pattern::MatchSingleton(_) => "MatchSingleton",
+        ast::Pattern::MatchSequence(_) => "MatchSequence",
+        ast::Pattern::MatchMapping(_) => "MatchMapping",
+        ast::Pattern::MatchClass(_) => "MatchClass",
+        ast::Pattern::MatchStar(_) => "MatchStar",
+        ast::Pattern::MatchAs(_) => "MatchAs",
+        ast::Pattern::MatchOr(_) => "MatchOr",
+    }
+}
+
+fn type_param_name(type_param: &ast::TypeParam) -> &'static str {
+    match type_param {
+        ast::TypeParam::TypeVar(_) => "TypeVar",
+        ast::TypeParam::ParamSpec(_) => "ParamSpec",
+        ast::TypeParam::TypeVarTuple(_) => "TypeVarTuple",
     }
 }
 

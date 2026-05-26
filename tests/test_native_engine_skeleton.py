@@ -247,6 +247,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.artifact_builder.python_ast.baseline.v1",
         "native.lower_template_package_v2.snapshot.partial.v1",
         "native.lower_template_package_v2.v1",
+        "native.full_lower_engine.current_surfaces.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]
@@ -296,7 +297,7 @@ def test_native_engine_core_rejects_bad_create_request_when_available() -> None:
         module.engine_create("not-a-request-dict")
 
 
-def test_native_engine_auto_falls_back_for_core_extension_when_available() -> None:
+def test_native_engine_auto_selects_capable_extension_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
         pytest.skip("native engine extension is not built")
@@ -304,14 +305,11 @@ def test_native_engine_auto_falls_back_for_core_extension_when_available() -> No
     event = select_lower_engine("auto")
 
     assert event.snapshot() == {
-        "fallback_scope": "engine",
-        "reason_detail": (
-            "native extension is available but does not advertise required "
-            f"features: {FULL_LOWER_ENGINE_FEATURE}"
-        ),
-        "reason_key": "native_required_features_unavailable",
+        "fallback_scope": None,
+        "reason_detail": None,
+        "reason_key": None,
         "requested_engine": "auto",
-        "selected_engine": "python",
+        "selected_engine": "native-rust",
     }
 
 

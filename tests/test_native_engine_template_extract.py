@@ -24,6 +24,10 @@ def test_native_template_extract_capability_when_available() -> None:
         "result = 1\n",
         "def f():\n    return 1\n",
         "class Box:\n    value = 1\n",
+        "def sequence(items):\n    for item in items:\n        yield item\n",
+        "def sequence(items):\n    yield from items\n",
+        "def make_adder(x):\n    return lambda y: x + y\n",
+        "async def wait_for(value):\n    return await value\n",
     ],
 )
 def test_native_template_extract_marker_free_matches_python_reference_when_available(
@@ -109,7 +113,17 @@ def test_native_template_extract_rejects_syntax_error_when_available() -> None:
         "result = func(**astichi_hole(kwargs))\n",
         "astichi_hole(body)\n",
         "value = astichi_bind_external(default)\n",
+        "raise RuntimeError(astichi_bind_external(message))\n",
+        "assert check, astichi_bind_external(message)\n",
         "value = astichi_ref(external=thing)\n",
+        "value = self.astichi_ref(external=thing)()\n",
+        "self.astichi_ref(external=target)._ = value\n",
+        (
+            "if astichi_pass(self, outer_bind=True).astichi_ref(external=staged_slot) "
+            "is not VOID:\n"
+            "    astichi_pass(self, outer_bind=True).astichi_ref(external=current_slot)._ = "
+            "astichi_pass(self, outer_bind=True).astichi_ref(external=staged_slot)\n"
+        ),
         "astichi_export(result)\nresult = 1\n",
         "astichi_import(name)\nresult = name\n",
         "value = astichi_pass(name)\n",
@@ -159,6 +173,9 @@ def test_native_template_extract_rejects_bad_direct_call_shape_when_available() 
         "def f(value__astichi_arg__):\n    pass\n",
         "result = target(first__astichi_arg__=1)\n",
         "from module_name__astichi_arg__ import symbol__astichi_arg__\n",
+        "@property_target__astichi_arg__.setter\n"
+        "def property_setter__astichi_arg__(self, value):\n"
+        "    self.value = value\n",
         "result = name__astichi_keep__\n",
     ],
 )

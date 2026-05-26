@@ -142,7 +142,7 @@ def test_native_occurrence_store_appends_edge_and_satisfied_state_when_available
         target_record,
         child_occurrence,
         "astichi.operation.replace_expression",
-        2,
+        -1,
     )
     module.assembly_state_mark_satisfied(handle, state, target_record)
     snapshot = module.assembly_state_snapshot(handle, state)
@@ -152,7 +152,7 @@ def test_native_occurrence_store_appends_edge_and_satisfied_state_when_available
         {
             "edge_id": 0,
             "operation_key": "astichi.operation.replace_expression",
-            "order": 2,
+            "order": -1,
             "source_occurrence_id": 1,
             "target_record_id": [0, 0],
         }
@@ -697,6 +697,14 @@ def test_native_scope_apply_appends_child_occurrence_when_available(
             {"name": "args", "build_match": ("Root",)},
             "astichi.operation.splice_call_arguments",
             id="call-arguments",
+        ),
+        pytest.param(
+            "result = func(*astichi_hole(args))\n",
+            "value\n",
+            "Arg",
+            {"name": "args", "build_match": ("Root",)},
+            "astichi.operation.splice_call_arguments",
+            id="positional-variadic-expression",
         ),
         pytest.param(
             (

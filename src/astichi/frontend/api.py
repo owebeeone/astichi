@@ -178,12 +178,12 @@ def _maybe_attach_native_lower_template(
     origin: CompileOrigin,
     lower_template: object,
 ) -> object:
-    from astichi.lower_engine.native import requested_lower_engine
+    from astichi.lower_engine.native import select_lower_engine
 
-    requested = requested_lower_engine()
-    if requested in {"python", "auto"}:
+    selected = select_lower_engine().selected_engine
+    if selected == "python":
         return lower_template
-    if requested not in {"native", "native-rust", "native-cpp"}:
+    if selected not in {"native-rust", "native-cpp"}:
         return lower_template
 
     from astichi.lower_engine import register_native_template_source
@@ -193,10 +193,10 @@ def _maybe_attach_native_lower_template(
         origin=origin,
         fallback_binding=lower_template,
     )
-    if requested == "native-cpp" and native_binding.backend != "native-cpp":
-        raise RuntimeError("requested native-cpp lower engine, but native backend is not C++")
-    if requested == "native-rust" and native_binding.backend != "native-rust":
-        raise RuntimeError("requested native-rust lower engine, but native backend is not Rust")
+    if selected == "native-cpp" and native_binding.backend != "native-cpp":
+        raise RuntimeError("selected native-cpp lower engine, but native backend is not C++")
+    if selected == "native-rust" and native_binding.backend != "native-rust":
+        raise RuntimeError("selected native-rust lower engine, but native backend is not Rust")
     return native_binding
 
 

@@ -24,7 +24,7 @@ from astichi.lower_engine import (
     NativeTemplateCache,
     TemplateRecordSpec,
     load_native_extension,
-    requested_lower_engine,
+    select_lower_engine,
 )
 from astichi.lower_engine.handles import (
     OccurrenceId,
@@ -637,8 +637,8 @@ class AssemblyScope:
                 self._append_lower_occurrence(prefix, composable)
 
     def _initialize_native_scope_backend(self) -> None:
-        requested = requested_lower_engine()
-        if requested not in {"native", "native-rust", "native-cpp"}:
+        selected = select_lower_engine().selected_engine
+        if selected not in {"native-rust", "native-cpp"}:
             return
         module = load_native_extension(required=True)
         assert module is not None

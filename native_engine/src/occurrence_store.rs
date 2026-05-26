@@ -5,6 +5,7 @@ use pyo3::types::{PyAny, PyDict, PyList, PyModule};
 use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
+use crate::surface_registry::RegisteredSurfaceBundle;
 use crate::template_package_v2::PackageBuilder;
 
 const STRUCTURAL_SCHEMA: &str = "astichi.structural-inventory.v1";
@@ -229,7 +230,7 @@ impl NativeAssemblyState {
         target_record: RecordKey,
         source_occurrence_index: usize,
         operation_key: String,
-        order: usize,
+        order: i64,
     ) -> usize {
         let edge_index = self.edges.len();
         self.edges.push(NativeEdge {
@@ -276,7 +277,7 @@ pub(crate) struct NativeEdge {
     target_record: RecordKey,
     source_occurrence_index: usize,
     operation_key: String,
-    order: usize,
+    order: i64,
 }
 
 impl NativeEdge {
@@ -689,7 +690,7 @@ fn assembly_state_append_edge(
     target: PyRef<'_, NativeRecordHandle>,
     source: PyRef<'_, NativeOccurrenceHandle>,
     operation_key: String,
-    order: usize,
+    order: i64,
 ) -> PyResult<NativeEdgeHandle> {
     engine.ensure_open()?;
     ensure_owner(engine.owner_id(), state.owner_id)?;
@@ -902,8 +903,7 @@ fn assembly_state_query_composable_candidates(
             if !production_record.inventory_kind.starts_with("production.") {
                 continue;
             }
-            if surface_bundle
-                .accepts_live_records(&target_record.surface_key, &production_record.surface_key)
+            if native_production_satisfies_target(surface_bundle, target_record, production_record)
             {
                 compatible_productions.push(production_index);
             }
@@ -930,6 +930,21 @@ fn assembly_state_query_composable_candidates(
     result.set_item("candidates", candidates)?;
     result.set_item("diagnostic_summary", summary)?;
     Ok(result.into_any().unbind())
+}
+
+fn native_production_satisfies_target(
+    surface_bundle: &RegisteredSurfaceBundle,
+    target_record: &NativeTemplateRecord,
+    production_record: &NativeTemplateRecord,
+) -> bool {
+    if surface_bundle
+        .accepts_live_records(&target_record.surface_key, &production_record.surface_key)
+    {
+        return true;
+    }
+    target_record.surface_key == "astichi.surface.funcargs.hole"
+        && target_record.inventory_kind == "hole.positional_variadic"
+        && production_record.surface_key == "astichi.surface.expression.production"
 }
 
 #[pyfunction(name = "assembly_state_query_demand_candidates")]

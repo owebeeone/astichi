@@ -42,6 +42,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.artifact_builder.python_ast.baseline.v1",
             "native.lower_template_package_v2.snapshot.partial.v1",
             "native.lower_template_package_v2.v1",
+            "native.full_lower_engine.current_surfaces.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;
