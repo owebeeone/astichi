@@ -246,7 +246,7 @@ fn build_package(
     for scope in &scopes {
         package.add_scope(scope);
     }
-    let mut marker_state = MarkerState { source_order: 0 };
+    let mut marker_state = MarkerState::new();
     for (index, stmt) in module.body.iter().enumerate() {
         visit_stmt_markers(
             stmt,
@@ -255,6 +255,20 @@ fn build_package(
             &mut package,
             &mut marker_state,
         )?;
+    }
+    for pending in marker_state.pending_pyimports {
+        package.add_pyimport_marker(
+            pending.marker_id,
+            pending.source_order,
+            pending.scope_id,
+            pending.module_path,
+            pending.names,
+            pending.as_name,
+            pending.flags,
+        );
+    }
+    for pending in marker_state.pending_comments {
+        package.add_comment_marker(pending.marker_id, &pending.payload);
     }
     for (index, stmt) in module.body.iter().enumerate() {
         extract_typed_marker_rows_stmt(stmt, &format!("body[{index}]"), &mut package)?;
@@ -1232,16 +1246,33 @@ fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
             for target in &node.targets {
                 collect_target_bindings(target, names);
             }
+            collect_expr_bindings(&node.value, names);
         }
-        ast::Stmt::AnnAssign(node) => collect_target_bindings(&node.target, names),
-        ast::Stmt::AugAssign(node) => collect_target_bindings(&node.target, names),
+        ast::Stmt::AnnAssign(node) => {
+            collect_target_bindings(&node.target, names);
+            collect_expr_bindings(&node.annotation, names);
+            if let Some(value) = node.value.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Stmt::AugAssign(node) => {
+            collect_target_bindings(&node.target, names);
+            collect_expr_bindings(&node.value, names);
+        }
         ast::Stmt::Delete(node) => {
             for target in &node.targets {
                 collect_target_bindings(target, names);
             }
         }
+        ast::Stmt::Expr(node) => collect_expr_bindings(&node.value, names),
+        ast::Stmt::Return(node) => {
+            if let Some(value) = node.value.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+        }
         ast::Stmt::For(node) => {
             collect_target_bindings(&node.target, names);
+            collect_expr_bindings(&node.iter, names);
             for stmt in &node.body {
                 collect_stmt_bindings(stmt, names);
             }
@@ -1250,6 +1281,7 @@ fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
             }
         }
         ast::Stmt::While(node) => {
+            collect_expr_bindings(&node.test, names);
             for stmt in &node.body {
                 collect_stmt_bindings(stmt, names);
             }
@@ -1258,6 +1290,7 @@ fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
             }
         }
         ast::Stmt::If(node) => {
+            collect_expr_bindings(&node.test, names);
             for stmt in &node.body {
                 collect_stmt_bindings(stmt, names);
             }
@@ -1267,6 +1300,7 @@ fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
         }
         ast::Stmt::With(node) => {
             for item in &node.items {
+                collect_expr_bindings(&item.context_expr, names);
                 if let Some(optional_vars) = item.optional_vars.as_ref() {
                     collect_target_bindings(optional_vars, names);
                 }
@@ -1281,6 +1315,9 @@ fn collect_stmt_bindings(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
             }
             for handler in &node.handlers {
                 let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                if let Some(type_) = handler.type_.as_ref() {
+                    collect_expr_bindings(type_, names);
+                }
                 for stmt in &handler.body {
                     collect_stmt_bindings(stmt, names);
                 }
@@ -1323,6 +1360,135 @@ fn collect_target_bindings(expr: &ast::Expr, names: &mut BTreeSet<String>) {
         }
         ast::Expr::Starred(node) => collect_target_bindings(&node.value, names),
         _ => {}
+    }
+}
+
+fn collect_expr_bindings(expr: &ast::Expr, names: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::NamedExpr(node) => {
+            collect_target_bindings(&node.target, names);
+            collect_expr_bindings(&node.value, names);
+        }
+        ast::Expr::BoolOp(node) => {
+            for value in &node.values {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::BinOp(node) => {
+            collect_expr_bindings(&node.left, names);
+            collect_expr_bindings(&node.right, names);
+        }
+        ast::Expr::UnaryOp(node) => collect_expr_bindings(&node.operand, names),
+        ast::Expr::Lambda(node) => collect_expr_bindings(&node.body, names),
+        ast::Expr::IfExp(node) => {
+            collect_expr_bindings(&node.test, names);
+            collect_expr_bindings(&node.body, names);
+            collect_expr_bindings(&node.orelse, names);
+        }
+        ast::Expr::Dict(node) => {
+            for key in node.keys.iter().flatten() {
+                collect_expr_bindings(key, names);
+            }
+            for value in &node.values {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::Set(node) => {
+            for value in &node.elts {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::List(node) => {
+            for value in &node.elts {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::Tuple(node) => {
+            for value in &node.elts {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::Call(node) => {
+            collect_expr_bindings(&node.func, names);
+            for arg in &node.args {
+                collect_expr_bindings(arg, names);
+            }
+            for keyword in &node.keywords {
+                collect_expr_bindings(&keyword.value, names);
+            }
+        }
+        ast::Expr::Attribute(node) => collect_expr_bindings(&node.value, names),
+        ast::Expr::Subscript(node) => {
+            collect_expr_bindings(&node.value, names);
+            collect_expr_bindings(&node.slice, names);
+        }
+        ast::Expr::Starred(node) => collect_expr_bindings(&node.value, names),
+        ast::Expr::Compare(node) => {
+            collect_expr_bindings(&node.left, names);
+            for comparator in &node.comparators {
+                collect_expr_bindings(comparator, names);
+            }
+        }
+        ast::Expr::FormattedValue(node) => {
+            collect_expr_bindings(&node.value, names);
+            if let Some(value) = node.format_spec.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::JoinedStr(node) => {
+            for value in &node.values {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::ListComp(node) => {
+            collect_expr_bindings(&node.elt, names);
+            collect_comprehension_bindings(&node.generators, names);
+        }
+        ast::Expr::SetComp(node) => {
+            collect_expr_bindings(&node.elt, names);
+            collect_comprehension_bindings(&node.generators, names);
+        }
+        ast::Expr::DictComp(node) => {
+            collect_expr_bindings(&node.key, names);
+            collect_expr_bindings(&node.value, names);
+            collect_comprehension_bindings(&node.generators, names);
+        }
+        ast::Expr::GeneratorExp(node) => {
+            collect_expr_bindings(&node.elt, names);
+            collect_comprehension_bindings(&node.generators, names);
+        }
+        ast::Expr::Await(node) => collect_expr_bindings(&node.value, names),
+        ast::Expr::Yield(node) => {
+            if let Some(value) = node.value.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::YieldFrom(node) => collect_expr_bindings(&node.value, names),
+        ast::Expr::Slice(node) => {
+            if let Some(value) = node.lower.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+            if let Some(value) = node.upper.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+            if let Some(value) = node.step.as_ref() {
+                collect_expr_bindings(value, names);
+            }
+        }
+        ast::Expr::Constant(_) | ast::Expr::Name(_) => {}
+    }
+}
+
+fn collect_comprehension_bindings(
+    comprehensions: &[ast::Comprehension],
+    names: &mut BTreeSet<String>,
+) {
+    for comprehension in comprehensions {
+        collect_target_bindings(&comprehension.target, names);
+        collect_expr_bindings(&comprehension.iter, names);
+        for condition in &comprehension.ifs {
+            collect_expr_bindings(condition, names);
+        }
     }
 }
 
@@ -1421,6 +1587,22 @@ fn extract_typed_marker_rows_stmt(
             }
             Ok(())
         }
+        ast::Stmt::Assert(node) => {
+            extract_ref_rows_expr(&node.test, &format!("{path}/test"), Some(path), package)?;
+            if let Some(msg) = node.msg.as_ref() {
+                extract_ref_rows_expr(msg, &format!("{path}/msg"), Some(path), package)?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Raise(node) => {
+            if let Some(exc) = node.exc.as_ref() {
+                extract_ref_rows_expr(exc, &format!("{path}/exc"), Some(path), package)?;
+            }
+            if let Some(cause) = node.cause.as_ref() {
+                extract_ref_rows_expr(cause, &format!("{path}/cause"), Some(path), package)?;
+            }
+            Ok(())
+        }
         ast::Stmt::For(node) => {
             let iter_path = format!("{path}/iter");
             if call_expr_name(&node.iter) == Some("astichi_for") {
@@ -1469,7 +1651,17 @@ fn extract_typed_marker_rows_stmt(
                     package,
                 )?;
             }
-            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+            extract_ref_rows_arguments(
+                &node.args,
+                &format!("{path}/args"),
+                Some(path),
+                package,
+            )?;
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            if let Some(returns) = node.returns.as_ref() {
+                extract_ref_rows_expr(returns, &format!("{path}/returns"), Some(path), package)?;
+            }
+            Ok(())
         }
         ast::Stmt::AsyncFunctionDef(node) => {
             for (index, decorator) in node.decorator_list.iter().enumerate() {
@@ -1480,13 +1672,31 @@ fn extract_typed_marker_rows_stmt(
                     package,
                 )?;
             }
-            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)
+            extract_ref_rows_arguments(
+                &node.args,
+                &format!("{path}/args"),
+                Some(path),
+                package,
+            )?;
+            extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
+            if let Some(returns) = node.returns.as_ref() {
+                extract_ref_rows_expr(returns, &format!("{path}/returns"), Some(path), package)?;
+            }
+            Ok(())
         }
         ast::Stmt::ClassDef(node) => {
             for (index, base) in node.bases.iter().enumerate() {
                 extract_ref_rows_expr(
                     base,
                     &format!("{path}/bases[{index}]"),
+                    Some(path),
+                    package,
+                )?;
+            }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                extract_ref_rows_expr(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
                     Some(path),
                     package,
                 )?;
@@ -1505,6 +1715,14 @@ fn extract_typed_marker_rows_stmt(
             extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
             for (index, handler) in node.handlers.iter().enumerate() {
                 let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                if let Some(type_) = handler.type_.as_ref() {
+                    extract_ref_rows_expr(
+                        type_,
+                        &format!("{path}/handlers[{index}]/type"),
+                        Some(path),
+                        package,
+                    )?;
+                }
                 extract_typed_marker_rows_stmt_list(
                     &handler.body,
                     &format!("{path}/handlers[{index}]/body"),
@@ -1533,6 +1751,89 @@ fn extract_typed_marker_rows_stmt_list(
     Ok(())
 }
 
+fn extract_ref_rows_arguments(
+    args: &ast::Arguments,
+    path: &str,
+    statement_path: Option<&str>,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    let mut default_index = 0usize;
+    for (index, arg) in args.posonlyargs.iter().enumerate() {
+        extract_ref_rows_arg(
+            &arg.def,
+            &format!("{path}/posonlyargs[{index}]"),
+            statement_path,
+            package,
+        )?;
+        if let Some(default) = arg.default.as_ref() {
+            extract_ref_rows_expr(
+                default,
+                &format!("{path}/defaults[{default_index}]"),
+                statement_path,
+                package,
+            )?;
+            default_index += 1;
+        }
+    }
+    for (index, arg) in args.args.iter().enumerate() {
+        extract_ref_rows_arg(
+            &arg.def,
+            &format!("{path}/args[{index}]"),
+            statement_path,
+            package,
+        )?;
+        if let Some(default) = arg.default.as_ref() {
+            extract_ref_rows_expr(
+                default,
+                &format!("{path}/defaults[{default_index}]"),
+                statement_path,
+                package,
+            )?;
+            default_index += 1;
+        }
+    }
+    if let Some(arg) = args.vararg.as_ref() {
+        extract_ref_rows_arg(arg, &format!("{path}/vararg"), statement_path, package)?;
+    }
+    for (index, arg) in args.kwonlyargs.iter().enumerate() {
+        extract_ref_rows_arg(
+            &arg.def,
+            &format!("{path}/kwonlyargs[{index}]"),
+            statement_path,
+            package,
+        )?;
+        if let Some(default) = arg.default.as_ref() {
+            extract_ref_rows_expr(
+                default,
+                &format!("{path}/kw_defaults[{index}]"),
+                statement_path,
+                package,
+            )?;
+        }
+    }
+    if let Some(arg) = args.kwarg.as_ref() {
+        extract_ref_rows_arg(arg, &format!("{path}/kwarg"), statement_path, package)?;
+    }
+    Ok(())
+}
+
+fn extract_ref_rows_arg(
+    arg: &ast::Arg,
+    path: &str,
+    statement_path: Option<&str>,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    if let Some(annotation) = arg.annotation.as_ref() {
+        extract_ref_rows_expr(
+            annotation,
+            &format!("{path}/annotation"),
+            statement_path,
+            package,
+        )?;
+    }
+    Ok(())
+}
+
 fn extract_ref_rows_expr(
     expr: &ast::Expr,
     path: &str,
@@ -1541,7 +1842,7 @@ fn extract_ref_rows_expr(
 ) -> PyResult<()> {
     match expr {
         ast::Expr::Call(node) => {
-            if astichi_call_name(&node.func) == Some("astichi_ref") {
+            if call_name(&node.func) == Some("astichi_ref") {
                 let marker_id = package.marker_id_for("astichi_ref", path)?;
                 package.add_ref_marker(
                     marker_id,
@@ -1631,6 +1932,12 @@ fn extract_ref_rows_expr(
             package,
         ),
         ast::Expr::Lambda(node) => {
+            extract_ref_rows_arguments(
+                &node.args,
+                &format!("{path}/args"),
+                statement_path,
+                package,
+            )?;
             extract_ref_rows_expr(&node.body, &format!("{path}/body"), statement_path, package)
         }
         ast::Expr::IfExp(node) => {
@@ -1726,13 +2033,16 @@ fn extract_ref_rows_expr(
             extract_ref_rows_expr_list(&node.values, path, "values", statement_path, package)
         }
         ast::Expr::ListComp(node) => {
-            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)?;
+            extract_ref_rows_comprehensions(&node.generators, path, statement_path, package)
         }
         ast::Expr::SetComp(node) => {
-            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)?;
+            extract_ref_rows_comprehensions(&node.generators, path, statement_path, package)
         }
         ast::Expr::GeneratorExp(node) => {
-            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)
+            extract_ref_rows_expr(&node.elt, &format!("{path}/elt"), statement_path, package)?;
+            extract_ref_rows_comprehensions(&node.generators, path, statement_path, package)
         }
         ast::Expr::DictComp(node) => {
             extract_ref_rows_expr(&node.key, &format!("{path}/key"), statement_path, package)?;
@@ -1741,7 +2051,8 @@ fn extract_ref_rows_expr(
                 &format!("{path}/value"),
                 statement_path,
                 package,
-            )
+            )?;
+            extract_ref_rows_comprehensions(&node.generators, path, statement_path, package)
         }
         ast::Expr::Await(node) => extract_ref_rows_expr(
             &node.value,
@@ -1791,6 +2102,37 @@ fn extract_ref_rows_expr_list(
             statement_path,
             package,
         )?;
+    }
+    Ok(())
+}
+
+fn extract_ref_rows_comprehensions(
+    comprehensions: &[ast::Comprehension],
+    path: &str,
+    statement_path: Option<&str>,
+    package: &mut PackageBuilder,
+) -> PyResult<()> {
+    for (index, comprehension) in comprehensions.iter().enumerate() {
+        extract_ref_rows_expr(
+            &comprehension.target,
+            &format!("{path}/generators[{index}]/target"),
+            statement_path,
+            package,
+        )?;
+        extract_ref_rows_expr(
+            &comprehension.iter,
+            &format!("{path}/generators[{index}]/iter"),
+            statement_path,
+            package,
+        )?;
+        for (if_index, condition) in comprehension.ifs.iter().enumerate() {
+            extract_ref_rows_expr(
+                condition,
+                &format!("{path}/generators[{index}]/ifs[{if_index}]"),
+                statement_path,
+                package,
+            )?;
+        }
     }
     Ok(())
 }
@@ -1972,6 +2314,33 @@ fn expr_context_name(ctx: ast::ExprContext) -> &'static str {
 
 struct MarkerState {
     source_order: usize,
+    pending_pyimports: Vec<PendingPyImportMarker>,
+    pending_comments: Vec<PendingCommentMarker>,
+}
+
+impl MarkerState {
+    fn new() -> Self {
+        Self {
+            source_order: 0,
+            pending_pyimports: Vec::new(),
+            pending_comments: Vec::new(),
+        }
+    }
+}
+
+struct PendingPyImportMarker {
+    marker_id: usize,
+    source_order: usize,
+    scope_id: usize,
+    module_path: Option<Vec<String>>,
+    names: Vec<String>,
+    as_name: Option<String>,
+    flags: Vec<String>,
+}
+
+struct PendingCommentMarker {
+    marker_id: usize,
+    payload: String,
 }
 
 #[derive(Clone, Copy)]
@@ -2138,6 +2507,50 @@ fn visit_stmt_markers(
             }
             Ok(())
         }
+        ast::Stmt::Assert(node) => {
+            visit_expr_markers(
+                &node.test,
+                &format!("{path}/test"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
+            if let Some(msg) = node.msg.as_ref() {
+                visit_expr_markers(
+                    msg,
+                    &format!("{path}/msg"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::Raise(node) => {
+            if let Some(exc) = node.exc.as_ref() {
+                visit_expr_markers(
+                    exc,
+                    &format!("{path}/exc"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            if let Some(cause) = node.cause.as_ref() {
+                visit_expr_markers(
+                    cause,
+                    &format!("{path}/cause"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
+        }
         ast::Stmt::For(node) => {
             visit_expr_markers(
                 &node.target,
@@ -2219,6 +2632,22 @@ fn visit_stmt_markers(
             )
         }
         ast::Stmt::With(node) => {
+            if let Some(item) = node.items.first() {
+                if let ast::Expr::Call(call) = &item.context_expr {
+                    if call_name(&call.func) == Some("astichi_hole") {
+                        append_marker_for_call(
+                            "astichi_hole",
+                            call,
+                            path,
+                            Some(path),
+                            scopes,
+                            package,
+                            marker_state,
+                        )?;
+                        return Ok(());
+                    }
+                }
+            }
             for (index, item) in node.items.iter().enumerate() {
                 visit_expr_markers(
                     &item.context_expr,
@@ -2248,6 +2677,14 @@ fn visit_stmt_markers(
             )
         }
         ast::Stmt::FunctionDef(node) => {
+            append_definitional_payload_marker(
+                node.name.as_str(),
+                path,
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            );
             append_suffix_identifier_marker(
                 node.name.as_str(),
                 path,
@@ -2259,7 +2696,7 @@ fn visit_stmt_markers(
                 false,
             );
             for (index, decorator) in node.decorator_list.iter().enumerate() {
-                visit_expr_markers(
+                append_decorator_marker_for_expr(
                     decorator,
                     &format!("{path}/decorator_list[{index}]"),
                     Some(path),
@@ -2282,9 +2719,38 @@ fn visit_stmt_markers(
                 scopes,
                 package,
                 marker_state,
-            )
+            )?;
+            if let Some(returns) = node.returns.as_ref() {
+                visit_expr_markers(
+                    returns,
+                    &format!("{path}/returns"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
         }
         ast::Stmt::AsyncFunctionDef(node) => {
+            append_definitional_payload_marker(
+                node.name.as_str(),
+                path,
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            );
             append_suffix_identifier_marker(
                 node.name.as_str(),
                 path,
@@ -2296,7 +2762,7 @@ fn visit_stmt_markers(
                 false,
             );
             for (index, decorator) in node.decorator_list.iter().enumerate() {
-                visit_expr_markers(
+                append_decorator_marker_for_expr(
                     decorator,
                     &format!("{path}/decorator_list[{index}]"),
                     Some(path),
@@ -2319,7 +2785,28 @@ fn visit_stmt_markers(
                 scopes,
                 package,
                 marker_state,
-            )
+            )?;
+            if let Some(returns) = node.returns.as_ref() {
+                visit_expr_markers(
+                    returns,
+                    &format!("{path}/returns"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
         }
         ast::Stmt::ClassDef(node) => {
             append_suffix_identifier_marker(
@@ -2333,7 +2820,7 @@ fn visit_stmt_markers(
                 false,
             );
             for (index, decorator) in node.decorator_list.iter().enumerate() {
-                visit_expr_markers(
+                append_decorator_marker_for_expr(
                     decorator,
                     &format!("{path}/decorator_list[{index}]"),
                     Some(path),
@@ -2352,13 +2839,46 @@ fn visit_stmt_markers(
                     marker_state,
                 )?;
             }
+            for (index, keyword) in node.keywords.iter().enumerate() {
+                if let Some(arg) = keyword.arg.as_ref() {
+                    append_suffix_identifier_marker(
+                        arg.as_str(),
+                        &format!("{path}/keywords[{index}]"),
+                        Some(path),
+                        SuffixMarkerContext::Identifier,
+                        scopes,
+                        package,
+                        marker_state,
+                        false,
+                    );
+                }
+                visit_expr_markers(
+                    &keyword.value,
+                    &format!("{path}/keywords[{index}]/value"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
             visit_stmt_list_markers(
                 &node.body,
                 &format!("{path}/body"),
                 scopes,
                 package,
                 marker_state,
-            )
+            )?;
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
+                visit_expr_markers(
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                )?;
+            }
+            Ok(())
         }
         ast::Stmt::Try(node) => {
             visit_stmt_list_markers(
@@ -2370,6 +2890,16 @@ fn visit_stmt_markers(
             )?;
             for (index, handler) in node.handlers.iter().enumerate() {
                 let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                if let Some(type_) = handler.type_.as_ref() {
+                    visit_expr_markers(
+                        type_,
+                        &format!("{path}/handlers[{index}]/type"),
+                        Some(path),
+                        scopes,
+                        package,
+                        marker_state,
+                    )?;
+                }
                 visit_stmt_list_markers(
                     &handler.body,
                     &format!("{path}/handlers[{index}]/body"),
@@ -2424,25 +2954,48 @@ fn visit_arguments_markers(
     package: &mut PackageBuilder,
     marker_state: &mut MarkerState,
 ) -> PyResult<()> {
+    let mut default_index = 0usize;
     for (index, arg) in args.posonlyargs.iter().enumerate() {
-        visit_arg_with_default_markers(
-            arg,
+        visit_arg_markers(
+            &arg.def,
             &format!("{path}/posonlyargs[{index}]"),
             statement_path,
             scopes,
             package,
             marker_state,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            visit_expr_markers(
+                default,
+                &format!("{path}/defaults[{default_index}]"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            default_index += 1;
+        }
     }
     for (index, arg) in args.args.iter().enumerate() {
-        visit_arg_with_default_markers(
-            arg,
+        visit_arg_markers(
+            &arg.def,
             &format!("{path}/args[{index}]"),
             statement_path,
             scopes,
             package,
             marker_state,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            visit_expr_markers(
+                default,
+                &format!("{path}/defaults[{default_index}]"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            default_index += 1;
+        }
     }
     if let Some(arg) = args.vararg.as_ref() {
         visit_arg_markers(
@@ -2455,48 +3008,29 @@ fn visit_arguments_markers(
         )?;
     }
     for (index, arg) in args.kwonlyargs.iter().enumerate() {
-        visit_arg_with_default_markers(
-            arg,
+        visit_arg_markers(
+            &arg.def,
             &format!("{path}/kwonlyargs[{index}]"),
             statement_path,
             scopes,
             package,
             marker_state,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            visit_expr_markers(
+                default,
+                &format!("{path}/kw_defaults[{index}]"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+        }
     }
     if let Some(arg) = args.kwarg.as_ref() {
         visit_arg_markers(
             arg,
             &format!("{path}/kwarg"),
-            statement_path,
-            scopes,
-            package,
-            marker_state,
-        )?;
-    }
-    Ok(())
-}
-
-fn visit_arg_with_default_markers(
-    arg: &ast::ArgWithDefault,
-    path: &str,
-    statement_path: Option<&str>,
-    scopes: &[ScopeSpec],
-    package: &mut PackageBuilder,
-    marker_state: &mut MarkerState,
-) -> PyResult<()> {
-    visit_arg_markers(
-        &arg.def,
-        path,
-        statement_path,
-        scopes,
-        package,
-        marker_state,
-    )?;
-    if let Some(default) = arg.default.as_ref() {
-        visit_expr_markers(
-            default,
-            &format!("{path}/default"),
             statement_path,
             scopes,
             package,
@@ -2597,7 +3131,7 @@ fn visit_expr_markers(
                     package,
                     marker_state,
                 )?;
-                if call_name(&node.func) == Some("astichi_ref")
+                if astichi_call_name(&node.func) == Some("astichi_ref")
                     && keyword.arg.as_ref().map(|arg| arg.as_str()) == Some("external")
                 {
                     append_external_ref_bind_marker(
@@ -2669,14 +3203,24 @@ fn visit_expr_markers(
             package,
             marker_state,
         ),
-        ast::Expr::Lambda(node) => visit_expr_markers(
-            &node.body,
-            &format!("{path}/body"),
-            statement_path,
-            scopes,
-            package,
-            marker_state,
-        ),
+        ast::Expr::Lambda(node) => {
+            visit_arguments_markers(
+                &node.args,
+                &format!("{path}/args"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_expr_markers(
+                &node.body,
+                &format!("{path}/body"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
         ast::Expr::IfExp(node) => {
             visit_expr_markers(
                 &node.test,
@@ -2840,30 +3384,60 @@ fn visit_expr_markers(
             package,
             marker_state,
         ),
-        ast::Expr::ListComp(node) => visit_expr_markers(
-            &node.elt,
-            &format!("{path}/elt"),
-            statement_path,
-            scopes,
-            package,
-            marker_state,
-        ),
-        ast::Expr::SetComp(node) => visit_expr_markers(
-            &node.elt,
-            &format!("{path}/elt"),
-            statement_path,
-            scopes,
-            package,
-            marker_state,
-        ),
-        ast::Expr::GeneratorExp(node) => visit_expr_markers(
-            &node.elt,
-            &format!("{path}/elt"),
-            statement_path,
-            scopes,
-            package,
-            marker_state,
-        ),
+        ast::Expr::ListComp(node) => {
+            visit_expr_markers(
+                &node.elt,
+                &format!("{path}/elt"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_comprehension_markers(
+                &node.generators,
+                path,
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::SetComp(node) => {
+            visit_expr_markers(
+                &node.elt,
+                &format!("{path}/elt"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_comprehension_markers(
+                &node.generators,
+                path,
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
+        ast::Expr::GeneratorExp(node) => {
+            visit_expr_markers(
+                &node.elt,
+                &format!("{path}/elt"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_comprehension_markers(
+                &node.generators,
+                path,
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )
+        }
         ast::Expr::DictComp(node) => {
             visit_expr_markers(
                 &node.key,
@@ -2876,6 +3450,14 @@ fn visit_expr_markers(
             visit_expr_markers(
                 &node.value,
                 &format!("{path}/value"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+            visit_comprehension_markers(
+                &node.generators,
+                path,
                 statement_path,
                 scopes,
                 package,
@@ -2983,6 +3565,45 @@ fn visit_expr_list_markers(
     Ok(())
 }
 
+fn visit_comprehension_markers(
+    comprehensions: &[ast::Comprehension],
+    path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    for (index, comprehension) in comprehensions.iter().enumerate() {
+        visit_expr_markers(
+            &comprehension.target,
+            &format!("{path}/generators[{index}]/target"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+        visit_expr_markers(
+            &comprehension.iter,
+            &format!("{path}/generators[{index}]/iter"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+        for (if_index, condition) in comprehension.ifs.iter().enumerate() {
+            visit_expr_markers(
+                condition,
+                &format!("{path}/generators[{index}]/ifs[{if_index}]"),
+                statement_path,
+                scopes,
+                package,
+                marker_state,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn append_marker_for_call(
     source_name: &str,
     node: &ast::ExprCall,
@@ -2995,8 +3616,14 @@ fn append_marker_for_call(
     if !is_package_marker(source_name) {
         return Ok(());
     }
+    if source_name == "astichi_insert" && node.args.len() != 2 {
+        return Ok(());
+    }
     let scope = scope_for_ast_path(scopes, ast_path);
     let mut flags = vec!["call_context".to_string()];
+    if statement_path == Some(ast_path) {
+        flags.push("is_statement_marker".to_string());
+    }
     if source_name == "astichi_keep" {
         flags.push("is_metadata_marker".to_string());
     }
@@ -3020,20 +3647,51 @@ fn append_marker_for_call(
     );
     if source_name == "astichi_pyimport" {
         let (module_path, names, as_name, flags) = pyimport_marker_payload(node);
-        package.add_pyimport_marker(
+        marker_state.pending_pyimports.push(PendingPyImportMarker {
             marker_id,
-            marker_state.source_order,
-            scope.scope_id,
+            source_order: marker_state.source_order,
+            scope_id: scope.scope_id,
             module_path,
             names,
             as_name,
             flags,
-        );
+        });
     } else if source_name == "astichi_comment" {
         if let Some(payload) = string_arg(node, 0) {
-            package.add_comment_marker(marker_id, &payload);
+            marker_state
+                .pending_comments
+                .push(PendingCommentMarker { marker_id, payload });
         }
     }
+    marker_state.source_order += 1;
+    Ok(())
+}
+
+fn append_decorator_marker_for_expr(
+    expr: &ast::Expr,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    let ast::Expr::Call(node) = expr else {
+        return Ok(());
+    };
+    if call_name(&node.func) != Some("astichi_insert") || node.args.len() != 1 {
+        return Ok(());
+    }
+    let scope = scope_for_ast_path(scopes, ast_path);
+    package.add_marker(
+        marker_state.source_order,
+        "insert",
+        "astichi_insert",
+        ast_path,
+        statement_path,
+        scope,
+        &marker_resource_name("astichi_insert", node),
+        vec!["decorator_context".to_string()],
+    );
     marker_state.source_order += 1;
     Ok(())
 }
@@ -3093,6 +3751,38 @@ fn append_alias_suffix_markers(
             false,
         );
     }
+}
+
+fn append_definitional_payload_marker(
+    name: &str,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> bool {
+    let marker_kind = match name {
+        "astichi_params" => "params",
+        "astichi_elif" => "elif",
+        _ => return false,
+    };
+    let scope = scope_for_ast_path(scopes, ast_path);
+    let mut flags = vec!["definitional_context".to_string()];
+    if statement_path == Some(ast_path) {
+        flags.push("is_statement_marker".to_string());
+    }
+    package.add_marker(
+        marker_state.source_order,
+        marker_kind,
+        name,
+        ast_path,
+        statement_path,
+        scope,
+        name,
+        flags,
+    );
+    marker_state.source_order += 1;
+    true
 }
 
 fn append_suffix_identifier_marker(
@@ -3197,6 +3887,7 @@ fn is_package_marker(source_name: &str) -> bool {
             | "astichi_keep"
             | "astichi_pyimport"
             | "astichi_for"
+            | "astichi_elif"
     )
 }
 
@@ -3206,6 +3897,7 @@ fn marker_kind(source_name: &str) -> &str {
         "astichi_comment" => "comment",
         "astichi_ref" => "ref",
         "astichi_for" => "unroll",
+        "astichi_elif" => "elif",
         other => other.strip_prefix("astichi_").unwrap_or(other),
     }
 }
@@ -3218,7 +3910,8 @@ fn marker_resource_name(source_name: &str, node: &ast::ExprCall) -> String {
         | "astichi_import"
         | "astichi_pass"
         | "astichi_keep"
-        | "astichi_insert" => name_arg(node, 0).unwrap_or_default(),
+        | "astichi_insert"
+        | "astichi_elif" => name_arg(node, 0).unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -3356,7 +4049,10 @@ fn sorted_unique(names: &[String]) -> Vec<String> {
 }
 
 fn call_name(expr: &ast::Expr) -> Option<&str> {
-    astichi_call_name(expr)
+    match expr {
+        ast::Expr::Name(node) => Some(node.id.as_str()),
+        _ => None,
+    }
 }
 
 fn astichi_call_name(expr: &ast::Expr) -> Option<&str> {
@@ -3369,7 +4065,7 @@ fn astichi_call_name(expr: &ast::Expr) -> Option<&str> {
 
 fn call_expr_name(expr: &ast::Expr) -> Option<&str> {
     match expr {
-        ast::Expr::Call(node) => astichi_call_name(&node.func),
+        ast::Expr::Call(node) => call_name(&node.func),
         _ => None,
     }
 }

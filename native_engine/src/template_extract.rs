@@ -705,13 +705,21 @@ fn block_production_line_number(
     fallback: u32,
 ) -> usize {
     if let Some(line_number) = root_shell_block_line_number(module, source_map) {
-        return line_number;
+        return origin_adjusted_line(line_number, fallback);
     }
     let entries = root_body_entries(module);
     let Some(entry) = first_non_prefix_entry(&entries).or_else(|| entries.first()) else {
         return fallback as usize;
     };
-    statement_line(entry.stmt, source_map)
+    origin_adjusted_line(statement_line(entry.stmt, source_map), fallback)
+}
+
+fn origin_adjusted_line(source_line: usize, fallback: u32) -> usize {
+    if source_line == 1 {
+        fallback as usize
+    } else {
+        source_line
+    }
 }
 
 fn root_shell_block_line_number(module: &ast::ModModule, source_map: &SourceMap) -> Option<usize> {
@@ -1419,7 +1427,7 @@ fn expr_records(
             &node.value,
             &(path.to_string() + "/value"),
             source_map,
-            context,
+            ExprRecordContext::PositionalVariadic,
             owner,
             records,
         ),
@@ -1491,14 +1499,17 @@ fn expr_records(
             owner,
             records,
         ),
-        ast::Expr::Lambda(node) => expr_records(
-            &node.body,
-            &(path.to_string() + "/body"),
-            source_map,
-            ExprRecordContext::Expression,
-            owner,
-            records,
-        ),
+        ast::Expr::Lambda(node) => {
+            function_argument_suffix_records(&node.args, path, owner, source_map, records)?;
+            expr_records(
+                &node.body,
+                &(path.to_string() + "/body"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )
+        }
         ast::Expr::IfExp(node) => {
             expr_records(
                 &node.test,
@@ -2029,32 +2040,65 @@ fn function_argument_suffix_records(
     source_map: &SourceMap,
     records: &mut Vec<ExtractedRecord>,
 ) -> PyResult<()> {
+    let mut default_index = 0usize;
     for (index, arg) in args.posonlyargs.iter().enumerate() {
-        arg_with_default_records(
-            arg,
+        arg_records(
+            &arg.def,
             &format!("{path}/args/posonlyargs[{index}]"),
             source_map,
             owner,
             records,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            expr_records(
+                default,
+                &format!("{path}/args/defaults[{default_index}]"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            default_index += 1;
+        }
     }
     for (index, arg) in args.args.iter().enumerate() {
-        arg_with_default_records(
-            arg,
+        arg_records(
+            &arg.def,
             &format!("{path}/args/args[{index}]"),
             source_map,
             owner,
             records,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            expr_records(
+                default,
+                &format!("{path}/args/defaults[{default_index}]"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            default_index += 1;
+        }
     }
     for (index, arg) in args.kwonlyargs.iter().enumerate() {
-        arg_with_default_records(
-            arg,
+        arg_records(
+            &arg.def,
             &format!("{path}/args/kwonlyargs[{index}]"),
             source_map,
             owner,
             records,
         )?;
+        if let Some(default) = arg.default.as_ref() {
+            expr_records(
+                default,
+                &format!("{path}/args/kw_defaults[{index}]"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+        }
     }
     if let Some(arg) = args.vararg.as_ref() {
         arg_records(
@@ -2070,27 +2114,6 @@ fn function_argument_suffix_records(
             arg,
             &(path.to_string() + "/args/kwarg"),
             source_map,
-            owner,
-            records,
-        )?;
-    }
-    Ok(())
-}
-
-fn arg_with_default_records(
-    arg: &ast::ArgWithDefault,
-    path: &str,
-    source_map: &SourceMap,
-    owner: &[String],
-    records: &mut Vec<ExtractedRecord>,
-) -> PyResult<()> {
-    arg_records(&arg.def, path, source_map, owner, records)?;
-    if let Some(default) = arg.default.as_ref() {
-        expr_records(
-            default,
-            &(path.to_string() + "/default"),
-            source_map,
-            ExprRecordContext::Expression,
             owner,
             records,
         )?;
@@ -2278,7 +2301,8 @@ fn direct_call_record(
             Ok(())
         }
         "astichi_import" | "astichi_pass" => {
-            let resource_name = first_name_arg(node, name)?;
+            let raw_resource_name = first_name_arg(node, name)?;
+            let resource_name = strip_arg_suffix(&raw_resource_name).unwrap_or(raw_resource_name);
             records.push(record_with_owner(
                 path,
                 &authored_summary(&resource_name, source_map.line(node.range)),

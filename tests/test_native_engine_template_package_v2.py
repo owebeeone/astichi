@@ -93,6 +93,11 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
             "def run(field_name__astichi_arg__):\n"
             "    return field_name__astichi_arg__\n"
         ),
+        (
+            "def astichi_params(*, field_name__astichi_arg__: "
+            "astichi_ref(external=value_type_path)):\n"
+            "    pass\n"
+        ),
         "result = call(field_name__astichi_arg__=value)\n",
         (
             "from yidl.generation.data_def_sys import REQUIRED, dds_property\n"
@@ -101,6 +106,71 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
             "    slot_names = astichi_ref(external=slot_names_path)\n"
             "    field_name__astichi_arg__: astichi_ref(external=value_type_path)\n"
             "    astichi_hole(body)\n"
+        ),
+        (
+            "if not isinstance(\n"
+            "    astichi_pass(field_name, outer_bind=True),\n"
+            "    astichi_ref(external=value_type_path),\n"
+            "):\n"
+            "    raise TypeError(\n"
+            "        astichi_bind_external(error_prefix)\n"
+            "        + type(astichi_pass(field_name, outer_bind=True)).__name__\n"
+            "    )\n"
+        ),
+        (
+            "if name in astichi_bind_external(frozen_names):\n"
+            "    raise AttributeError(astichi_bind_external(error_message))\n"
+        ),
+        (
+            "astichi_pass(pieces, outer_bind=True).append(\n"
+            "    astichi_bind_external(label)\n"
+            "    + repr(astichi_pass(self, outer_bind=True).astichi_ref(external=field_path))\n"
+            ")\n"
+        ),
+        "astichi_import(record__astichi_arg__)\nrecord__astichi_arg__\n",
+        (
+            "getattr(\n"
+            "    astichi_pass(record__astichi_arg__, outer_bind=True),\n"
+            "    astichi_bind_external(storage_name),\n"
+            "    NOT_PROVIDED,\n"
+            ")\n"
+        ),
+        (
+            "astichi_funcargs(\n"
+            "    astichi_pass(record__astichi_arg__, outer_bind=True)\n"
+            ")\n"
+        ),
+        (
+            "astichi_pass(values, outer_bind=True)[\n"
+            "    astichi_bind_external(start):astichi_bind_external(stop)\n"
+            "]\n"
+        ),
+        "values = (*astichi_hole(value_entries),)\n",
+        (
+            "if condition:\n"
+            "    pass\n"
+            "elif astichi_elif(commit_order_key_body):\n"
+            "    pass\n"
+        ),
+        "with astichi_hole(commit_transaction_body) as astichi_fallback:\n    pass\n",
+        (
+            "mapping = {\n"
+            "    key: index for index, key in enumerate(\n"
+            "        astichi_pass(tx_keys_for_map_name__astichi_arg__, outer_bind=True)\n"
+            "    )\n"
+            "}\n"
+        ),
+        (
+            "@property_setter_target_name__astichi_arg__.setter\n"
+            "def property_setter_name__astichi_arg__(self, value):\n"
+            "    state._y_require_active_transaction(astichi_bind_external(tx_index))\n"
+        ),
+        (
+            "astichi_pass(state, outer_bind=True).astichi_ref(external=state_slot)._ = value\n"
+        ),
+        (
+            "lambda value__astichi_arg__=astichi_bind_external(default_value): "
+            "await_value(astichi_ref(external=value_type_path))\n"
         ),
     ],
 )
@@ -135,6 +205,23 @@ def test_native_template_package_v2_rejects_ref_statement_context_when_available
             "package_v2.py",
             1,
         )
+
+
+def test_native_template_package_v2_block_production_uses_origin_line_when_source_is_not_padded() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    source = "value = 1\n"
+    actual = module.extract_template_package_v2_snapshot(
+        _engine_with_current_bundle(module),
+        source,
+        "package_v2.py",
+        217,
+    )
+    expected = astichi.compile(source, line_number=217)._lower_template.package_v2.snapshot()
+
+    assert actual == expected
 
 
 @pytest.mark.parametrize(
