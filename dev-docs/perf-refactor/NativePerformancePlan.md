@@ -1,6 +1,6 @@
 # Native Performance Roll-Build Plan
 
-Status: ready for roll-build planning.
+Status: revised after `perf-native/p6a-artifact-boundary`.
 
 This plan starts after the native lower-engine path is functionally selectable
 by default. At this point native correctness is proven for the current Astichi
@@ -13,12 +13,43 @@ native mirrors around it.
 
 ## Current Baseline
 
-The current local profile for `pyrolyze.runtime.context_lcm` is:
+The original local profile for `pyrolyze.runtime.context_lcm` was:
 
 | Mode | Wall time | Meaning |
 | --- | ---: | --- |
 | `ASTICHI_LOWER_ENGINE=python` | about 1.9-2.0s | Python lower path only |
 | default `auto` selecting native | about 2.4s | native hooks active, but hybrid |
+
+The latest post-`p6a` local counter run changes the shape materially:
+
+| Mode | Wall time | Meaning |
+| --- | ---: | --- |
+| `ASTICHI_LOWER_ENGINE=python` | about 0.83s | Python lower path through the new batch facade |
+| `ASTICHI_LOWER_ENGINE=native` | about 0.94s | native-selected path, still slower due to native batch/query overhead |
+
+The old Python hot counters are no longer the measured problem:
+
+- `rebuild_composable=0`
+- `candidate_lookup_lower=0`
+- `assembly_scope_apply=0`
+- `to_executable_ast=0`
+- `copy_python_ast=8`
+
+The remaining measured native gap is scope execution shape:
+
+- `native_scope_batch=1057`
+- `native_scope_batch_size=1659`
+- `native_candidate_query_composable=591`
+- `native_candidate_query_external=421`
+- `native_candidate_query_identifier=647`
+- `native_scope_append_edge=591`
+- `native_scope_append_overlay=1068`
+- `native_scope_mark_satisfied=1068`
+
+These counters show that P4/P5 moved the public API and YIDL runtime onto a
+request-stream facade, but did not yet make the native engine execute the
+whole stream authoritatively in one native operation. The Python facade still
+loops over requests and still mirrors enough state for Python materialization.
 
 Native counters prove the native path is active:
 
@@ -30,15 +61,17 @@ Native counters prove the native path is active:
 - `native_scope_append_overlay`
 - `native_scope_mark_satisfied`
 
-The remaining Python hot counters still explain the regression:
+The remaining native counters now explain the regression:
 
-- `rebuild_composable`
-- `candidate_lookup_lower`
-- `assembly_scope_apply`
-- `to_executable_ast`
+- native candidate query counts scaling with request count;
+- native append/mark counts scaling with request count;
+- facade batch calls that cannot chain target application with immediately
+  dependent binding requests;
+- Python lower-state mirror replay kept alive for materialization compatibility.
 
-Performance work is not complete until native mode reduces those Python hot
-counters or moves them to explicitly named slow/debug paths.
+Performance work is not complete until native mode executes request batches in
+the lower layer without re-entering Python per request, then materializes from
+that native-owned state without requiring Python lower-state replay.
 
 ## Performance Target
 
@@ -48,9 +81,34 @@ thresholds.
 | Result | `context_lcm` target | Notes |
 | --- | ---: | --- |
 | acceptable | <= forced Python | native no longer regresses |
-| good | about 1.2s | most duplicate Python lower work removed |
-| strong | 0.8-1.0s | native compile, specialization, scope, and materialization own the hot path |
+| good | <= 0.8s | true native batch apply beats the forced Python batch facade |
+| strong | 0.6-0.75s | native scope and materialization own the hot path |
 | stretch | 0.5-0.7s | requires YIDL/import/startup/final artifact costs to also be tight |
+
+## Current Roll-Build State
+
+Completed checkpoints:
+
+- `perf-native/p0-baseline`
+- `perf-native/p1-facade`
+- `perf-native/p2a-package-parity`
+- `perf-native/p2b-facade-projection`
+- `perf-native/p2c-native-compile`
+- `perf-native/p3a-artifact-wrap`
+- `perf-native/p3b-shadow-fix`
+- `perf-native/p3b-specialization`
+- `perf-native/p4-batch-scope`
+- `perf-native/p5-yidl-batch`
+- `perf-native/p6a-artifact-boundary`
+
+Remaining checkpoints:
+
+- P5b: true native batch scope engine.
+- P5c: chained YIDL request coalescing.
+- P6b: native operation materialization.
+- P6c: native hygiene and artifact cutover, tagged as
+  `perf-native/p6-materialization`.
+- P7: cleanup and closeout.
 
 ## Roll-Build Rules For This Plan
 
@@ -397,82 +455,159 @@ Stop if:
 - External-value ownership becomes ambiguous across Python/native lifetime
   boundaries.
 
-## Phase P4: Batched Native Scope Resolution
+## Phase P4: Batched Scope Facade
 
-Goal: stop crossing the Python/native boundary once per candidate lookup and
-once per apply operation.
+Goal: establish an ordered request-stream API that can later be executed by
+the native lower engine as one operation.
+
+Status: completed as `perf-native/p4-batch-scope`.
+
+Completed work:
+
+- `perf-native/p4-batch-scope` completed the public request-stream facade and
+  `AssemblyScope.apply_batch(...)`.
+- Added compatibility wrappers so existing `find_candidates(...)` and
+  `apply(...)` callers continue to work.
+- Proved the YIDL assembly order can be represented as an explicit request
+  stream.
+- Added facade-level counters for batch count, request count, and candidate
+  count.
+
+Result:
+
+- Public Python counters `candidate_lookup_lower` and `assembly_scope_apply`
+  can be removed from the hot report when callers use `apply_batch(...)`.
+- This checkpoint intentionally did not complete true native batch execution.
+  The facade still resolves and applies one request at a time internally.
+- P5b owns the native engine implementation that will make this API a real
+  lower-layer batch operation.
+
+## Phase P5: YIDL Batch Facade Integration
+
+Goal: put the ordered request-stream facade on the real lifecycle-generation
+hot path.
+
+Status: completed as `perf-native/p5-yidl-batch`.
+
+Completed work:
+
+- `perf-native/p5-yidl-batch` completed YIDL runtime integration and removed
+  the public per-call `candidate_lookup_lower` / `assembly_scope_apply`
+  counters from the lifecycle workload.
+- Updated the YIDL-facing assembly runtime to emit `BindingRequest` streams.
+- Preserved compatibility wrappers for non-batch callers.
+- Validated the generated lifecycle output through the existing suites.
+
+Result:
+
+- The lifecycle workload now emits 1057 batch facade calls for 1659 ordered
+  requests.
+- Native query/apply counters still scale with those requests because P5 used
+  the facade loop instead of a native batch engine.
+- P5c owns coalescing target insertion plus immediately dependent bindings so
+  the request count can stay explicit while the batch-call count drops.
+
+## Phase P5b: True Native Batch Scope Engine
+
+Goal: make `AssemblyScope.apply_batch(...)` delegate an ordered request stream
+to one native operation instead of looping through native candidate/apply calls
+from Python.
 
 Work:
 
-- Add a native batch API that accepts a sequence of resource requests and
-  applies compatible candidate results against one native assembly state.
-- The batch request must cover composable resources, external values,
-  identifier binds, build path selectors, owner selectors, order, and
-  edge-local overlays.
-- Keep the existing Python `AssemblyScope.find_candidates(...)` and
-  `apply(...)` APIs as compatibility wrappers, but route batch-capable callers
-  through the batch API.
-- Return compact diagnostics for missing or ambiguous resources without
-  projecting full inventory.
-- Add counters for batch size, candidate count, and native apply count.
+- Add a native `assembly_state_apply_request_batch(...)` API that accepts an
+  ordered request stream against one native assembly state.
+- The native request stream must cover:
+  - composable resources by native template handle plus build name/index/order;
+  - external values by Python-owned request token;
+  - identifier values by spelling;
+  - demand name, build selector, owner selector;
+  - equivalent-demand-site selection for binding marker coalescing.
+- Native execution must resolve one request, apply it, update native indexes,
+  then continue to the next request so later selectors can observe earlier
+  identifier/external overlays and inserted occurrences.
+- Return a compact event stream for Python compatibility state:
+  selected target record, created occurrence build path, appended edge,
+  appended overlay, satisfied record, and diagnostics for missing/ambiguous
+  requests.
+- Keep Python ownership of external object values, but store them by returned
+  native overlay id without re-querying inventory.
+- Add explicit counters for:
+  `native_scope_batch_engine`,
+  `native_scope_batch_engine_request_count`,
+  `native_scope_batch_engine_candidate_count`,
+  and temporary `python_scope_mirror_replay` if Python lower-state replay is
+  still needed for materialization compatibility.
+- Keep the old facade loop as fallback when native is unavailable or a request
+  surface is not yet supported.
 
 Acceptance:
 
-- Focused native scope tests cover batch composable, external, and identifier
-  resolution.
-- Existing per-call APIs still pass their tests.
+- Focused native tests prove a mixed batch can insert a composable, bind
+  identifiers, bind externals, and then resolve later requests against the
+  modified native state.
+- Missing and ambiguous diagnostics identify the failing request index/name
+  without projecting full inventory.
+- Existing `find_candidates(...)` and `apply(...)` compatibility APIs still
+  pass their tests.
 - Full Astichi suite passes.
-- YIDL lifecycle workload can use the batch route or an adapter that emits the
-  same request sequence.
+- Full available YIDL suite passes.
+- Lifecycle benchmark shows `native_scope_batch_engine` counters and no longer
+  reports per-request `native_candidate_query_*` and `native_scope_append_*`
+  counters as the dominant shape.
 
 Expected performance movement:
 
-- `candidate_lookup_lower` and `assembly_scope_apply` should drop materially.
-- Native call count should drop from thousands of small calls to a small number
-  of batches.
+- Native should become competitive with forced Python, or the remaining gap
+  should move to explicitly named Python mirror replay/materialization counters.
 
-Tag after success: `perf-native/p4-batch-scope`.
+Tag after success: `perf-native/p5b-native-batch-engine`.
 
 Stop if:
 
-- The YIDL assembly order cannot be represented as an explicit request stream.
-- Batch diagnostics lose enough context that failures become hard to debug.
+- Native cannot update request-order-dependent indexes without data missing
+  from the package-v2 contract.
+- Python lower-state replay remains as expensive as the current facade loop and
+  cannot be isolated behind a temporary compatibility counter.
 
-## Phase P5: YIDL Assembly Integration
+## Phase P5c: Chained YIDL Request Coalescing
 
-Goal: put the batch scope API on the real lifecycle-generation hot path.
+Goal: reduce batch call count by allowing one YIDL contribution to emit a
+target request followed by binding requests that refer to the target result.
 
 Work:
 
-- Update Astichi/YIDL-facing assembly adapters to emit the batch request stream
-  where possible.
-- Keep compatibility wrappers for non-batch callers.
-- Validate the generated lifecycle output with existing final goldens and the
-  `context_lcm` benchmark.
-- Add a focused integration test or fixture proving the lifecycle path uses the
-  batch counters.
+- Extend the batch request contract with a stable "previous result" reference
+  that can bind against the just-created occurrence/build path.
+- Update YIDL contribution application so target insertion and contribution
+  bindings can be emitted as one ordered request stream when the build path is
+  concrete.
+- Preserve the existing separate request behavior for dynamic selectors and
+  cases where later requests cannot safely refer to a prior result.
+- Add focused YIDL runtime tests for target-plus-binding coalescing and for a
+  dynamic-selector fallback.
+- Add counters for coalesced contributions and fallback contributions.
 
 Acceptance:
 
-- YIDL lifecycle workload uses native batch counters in native mode.
-- Per-operation `candidate_lookup_lower` and `assembly_scope_apply` no longer
-  dominate the counter report.
 - Full Astichi suite passes.
-- Available YIDL/Pyrolyze validation passes.
+- Full available YIDL suite passes.
+- Lifecycle benchmark reduces `native_scope_batch` / native batch-engine call
+  count materially below the P5b count while preserving the same request count.
+- Final generated lifecycle output is unchanged.
 
 Expected performance movement:
 
-- Native `context_lcm` should be in the "good" range, around 1.2s, unless final
-  artifact creation has become the dominant cost.
+- Native batch overhead should drop again, especially on workloads where most
+  contributions have one target request followed by one or more bindings.
 
-Tag after success: `perf-native/p5-yidl-batch`.
+Tag after success: `perf-native/p5c-yidl-chain-batches`.
 
 Stop if:
 
-- YIDL needs an API break beyond the scope API boundary already accepted for
-  this refactor.
-- The integration requires restoring full Python inventory projection on the
-  success path.
+- Chained requests blur YIDL semantics or make failure diagnostics ambiguous.
+- Dynamic selectors cannot be cleanly separated from concrete-selector
+  coalescing.
 
 ## Phase P6: Native Materialization And Artifact Boundary
 
@@ -490,15 +625,88 @@ Status note:
   stream and run the corresponding hygiene/managed-import decisions without
   relying on the Python lower materializer.
 
+Remaining work:
+
+- P6b: recursively materialize native operation streams into a native
+  workspace.
+- P6c: move hygiene, managed imports, and final artifact cutover to the native
+  lower layer.
+
+Do not tag `perf-native/p6-materialization` until both subphases are complete.
+
+### Phase P6b: Native Operation Materialization
+
+Goal: materialize the native occurrence/edge/overlay graph recursively into a
+native workspace for the current operation stream.
+
 Work:
 
-- Materialize from native occurrence/edge/overlay state into a native
-  workspace.
-- Run hygiene and managed import placement from native package/state data.
+- Add a native orchestration API that starts from the root occurrence, sorts
+  edge operations deterministically by order and edge id, materializes child
+  occurrences, and applies operations into the parent workspace.
+- Reuse existing native workspace primitives for expression, block,
+  parameter, call-argument, identifier overlay, external overlay, and literal
+  `astichi_ref(...)` lowering.
+- Add missing native workspace primitives for current operation surfaces not
+  covered by the primitive API, especially elif clause insertion and
+  defaulted/fallback block-hole handling.
+- Pass Python-owned external values to native as validated literal expression
+  source or a compact literal payload map keyed by overlay id.
+- Return a native materialized artifact handle plus a deterministic structural
+  materialization snapshot.
+- Keep Python lower materialization available as fallback and oracle.
+- Add counters for `native_materialize_operation_stream`,
+  `native_materialize_workspace_copy`, and explicit fallback.
+
+Acceptance:
+
+- Native materialization snapshots match Python lower materialization snapshots
+  for expression, block, params, call-args, named-variadic call-args, elif,
+  identifier overlays, external overlays, literal refs, and defaulted block
+  holes.
+- Existing final goldens pass when native operation materialization is enabled
+  for supported surfaces.
+- Full Astichi suite passes.
+- Full available YIDL suite passes.
+- Lifecycle benchmark reports native materialization counters and no Python
+  builder merge on the success path.
+
+Expected performance movement:
+
+- Lower materialization plan/build buckets should shrink or move to native
+  counters. If Python mirror replay remains, this phase may be neutral until
+  P6c.
+
+Tag after success: `perf-native/p6b-native-operation-materialization`.
+
+Stop if:
+
+- Operation ordering cannot be reproduced from native state without adding
+  data to the request/event contract.
+- A current operation surface has no native AST manipulation strategy that can
+  preserve final golden output.
+
+### Phase P6c: Native Hygiene And Artifact Cutover
+
+Goal: complete the lower-layer responsibility boundary: hygiene, managed
+imports, unresolved gates, and final artifact copy run from native package/state
+data until the explicit CPython AST boundary.
+
+Work:
+
+- Execute native hygiene operations represented by the package-v2/materialized
+  state contract:
+  `rename_if_collides`, `keep_name`, `managed_import_request`,
+  `gate_no_unresolved`, marker stripping, and managed-import insertion.
+- Preserve Python reference behavior as oracle, but do not call Python hygiene
+  or Python materialization on native success paths.
+- Make `scope.build()` return the native materialized artifact wrapper for
+  native-selected supported states.
 - Copy CPython AST nodes only at `copy_python_ast`, public runtime compile, or
   explicit debug/source rendering boundaries.
-- Keep structural and final-source goldens as the correctness gates.
-- Add counters for native materialization, native hygiene, and CPython AST copy.
+- Keep source rendering and inventory projection as explicit slow/debug paths.
+- Add counters for `native_hygiene`, `native_managed_imports`,
+  `native_unresolved_gate`, `copy_python_ast`, and fallback.
 
 Acceptance:
 
@@ -507,13 +715,16 @@ Acceptance:
 - Existing final goldens pass.
 - Structural materialization snapshots remain deterministic.
 - Full Astichi suite passes.
-- YIDL lifecycle workload runs and reports native materialization counters.
+- Full available YIDL suite passes.
+- YIDL lifecycle workload runs and reports native materialization/hygiene
+  counters.
+- Lifecycle counter shape has `copy_python_ast` only at the explicit artifact
+  boundary and no Python lower materialization success-path counters.
 
 Expected performance movement:
 
-- Native `to_executable_ast` and lower materialization buckets should shrink or
-  move to native counters.
-- Strong target range, about 0.8-1.0s, becomes plausible after this phase.
+- Strong target range, about 0.6-0.75s, becomes plausible after this phase if
+  P5b/P5c also removed the native batch overhead.
 
 Tag after success: `perf-native/p6-materialization`.
 
@@ -528,6 +739,12 @@ Stop if:
 
 Goal: remove temporary hybrid adapters from the native success path and make the
 performance result easy to verify.
+
+Prerequisite:
+
+- P5b, P5c, and full P6 must be complete. Do not start cleanup while Python
+  lower-state mirror replay or Python materialization fallback remains part of
+  the native success path.
 
 Work:
 
@@ -574,8 +791,13 @@ Closeout counter shape should be:
   paths;
 - Python `candidate_lookup_lower` and `assembly_scope_apply` no longer called
   once per YIDL edge/resource;
+- native candidate query/apply/append counters no longer scaling one-for-one
+  with YIDL resource requests; batch-engine counters should describe the
+  request stream directly;
 - Python `to_executable_ast` replaced by native materialization plus explicit
   CPython AST copy counters;
+- Python lower-state mirror replay absent from native success-path counter
+  runs, or explicitly measured as a remaining blocker before closeout;
 - debug inventory projection absent from success-path counter runs.
 
 ## Non-Goals For This Roll-Build
