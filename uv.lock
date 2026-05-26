@@ -3,12 +3,12 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-19T11:58:22.80953Z"
+exclude-newer = "2026-05-19T13:36:36.405406Z"
 exclude-newer-span = "P1W"
 
 [[package]]
 name = "astichi"
-version = "1.0.0"
+version = "1.0.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
