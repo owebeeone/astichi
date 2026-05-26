@@ -51,6 +51,11 @@ Run the normal local suite:
 uv run --with pytest pytest -q
 ```
 
+By default, pytest runs each test twice when the native extension is built:
+once with `ASTICHI_LOWER_ENGINE=python` and once with `ASTICHI_LOWER_ENGINE=native`.
+Direct native-engine unit modules (`test_native_engine_*`) opt out of the matrix.
+Set `ASTICHI_LOWER_ENGINE_MATRIX=0` to disable the dual-engine run.
+
 Regenerate canonical goldens with Python 3.14:
 
 ```bash

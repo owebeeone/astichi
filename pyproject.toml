@@ -43,6 +43,7 @@ testpaths = ["tests"]
 
 [tool.astichi.test-matrix]
 python = ["3.12", "3.13", "3.14", "3.15"]
+lower_engine = ["python", "native"]
 
 # Hatchling uses `src/` layout; Pyright/Basedpyright need the same path so
 # `import astichi` resolves when analyzing files under `docs/` (and from the
