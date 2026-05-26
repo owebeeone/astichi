@@ -6,10 +6,19 @@ import argparse
 from collections import Counter
 from collections import defaultdict
 import json
+import os
 from pathlib import Path
 import sys
 import time
 from types import ModuleType
+
+
+HOT_COUNTERS = (
+    "rebuild_composable",
+    "candidate_lookup_lower",
+    "assembly_scope_apply",
+    "to_executable_ast",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,15 +28,32 @@ def main(argv: list[str] | None = None) -> int:
         default="pyrolyze.runtime.context_lcm",
         help="module import that triggers the lifecycle decorator workload",
     )
+    parser.add_argument(
+        "--engine",
+        choices=("python", "auto", "native"),
+        default="auto",
+        help=(
+            "lower-engine request for this process; auto clears "
+            "ASTICHI_LOWER_ENGINE"
+        ),
+    )
+    parser.add_argument(
+        "--require-native-counters",
+        action="store_true",
+        help="fail if no Astichi native_* counters are observed",
+    )
     args = parser.parse_args(argv)
 
+    _configure_engine_request(args.engine)
     _configure_import_paths()
     _install_black_stub_if_needed()
 
+    from astichi.lower_engine.native import select_lower_engine
     from astichi.perf_counters import collect_perf_counters
     import yidl.generation.assembly_runtime as assembly_runtime
     import yidl_lifecycle.lifecycle as lifecycle_module
 
+    lower_engine = select_lower_engine(args.engine)
     rows: list[dict[str, float | str]] = []
     totals: defaultdict[str, float] = defaultdict(float)
     yidl_counts: Counter[str] = Counter()
@@ -147,15 +173,23 @@ def main(argv: list[str] | None = None) -> int:
         assembly_runtime._select_contribution = original_select_contribution
         assembly_runtime._apply_contribution = original_apply_contribution
 
+    astichi_snapshot = counters.snapshot()
+    counter_summary = _counter_summary(astichi_snapshot)
+    if args.require_native_counters and not counter_summary["native_counts"]:
+        raise SystemExit("expected at least one native_* Astichi counter")
+
     summary = {
         "case": args.module,
         "decorated_classes": len(rows),
+        "engine_request": args.engine,
+        "selected_lower_engine": lower_engine.snapshot(),
         "timings_seconds": {
             "import_wall": elapsed,
             **dict(sorted(totals.items())),
         },
         "rows": rows,
-        "astichi_counters": counters.snapshot(),
+        "astichi_counters": astichi_snapshot,
+        "astichi_counter_summary": counter_summary,
         "yidl_runtime_counters": {
             "counts": dict(sorted(yidl_counts.items())),
             "seconds": dict(sorted(yidl_seconds.items())),
@@ -164,6 +198,13 @@ def main(argv: list[str] | None = None) -> int:
     json.dump(summary, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
+
+
+def _configure_engine_request(engine: str) -> None:
+    if engine == "auto":
+        os.environ.pop("ASTICHI_LOWER_ENGINE", None)
+    else:
+        os.environ["ASTICHI_LOWER_ENGINE"] = engine
 
 
 def _configure_import_paths() -> None:
@@ -203,6 +244,50 @@ def _install_black_stub_if_needed() -> None:
         module.FileMode = FileMode
         module.format_str = format_str
         sys.modules["black"] = module
+
+
+def _counter_summary(
+    snapshot: dict[str, dict[str, int | float]],
+) -> dict[str, dict[str, int | float] | list[dict[str, int | float | str]]]:
+    counts = snapshot["counts"]
+    seconds = snapshot["seconds"]
+    native_counts = {
+        key: value for key, value in counts.items() if key.startswith("native_")
+    }
+    native_seconds = {
+        key: value for key, value in seconds.items() if key.startswith("native_")
+    }
+    python_counts = {
+        key: value for key, value in counts.items() if not key.startswith("native_")
+    }
+    python_seconds = {
+        key: value for key, value in seconds.items() if not key.startswith("native_")
+    }
+    return {
+        "hot_counts": {key: counts.get(key, 0) for key in HOT_COUNTERS},
+        "hot_seconds": {key: seconds.get(key, 0.0) for key in HOT_COUNTERS},
+        "native_counts": dict(sorted(native_counts.items())),
+        "native_seconds": dict(sorted(native_seconds.items())),
+        "top_python_counts": _top_counter_items(python_counts, "count"),
+        "top_python_seconds": _top_counter_items(python_seconds, "seconds"),
+    }
+
+
+def _top_counter_items(
+    values: dict[str, int | float],
+    value_key: str,
+    *,
+    limit: int = 12,
+) -> list[dict[str, int | float | str]]:
+    rows = [
+        {"name": key, value_key: value}
+        for key, value in sorted(
+            values.items(),
+            key=lambda item: (-float(item[1]), item[0]),
+        )
+        if value
+    ]
+    return rows[:limit]
 
 
 if __name__ == "__main__":

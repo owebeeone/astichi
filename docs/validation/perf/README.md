@@ -25,6 +25,10 @@ candidate lookup/materialization:
 uv run --with frozendict python docs/validation/perf/yidl_lifecycle_import_baseline.py
 ```
 
+Pass `--engine python`, `--engine auto`, or `--engine native` to compare lower
+engine routes. Use `--require-native-counters` with `--engine native` when a
+checkpoint must prove the native scope path was exercised.
+
 The generated-AST cache probe exercises the opt-in builder cache and reports
 cold, warm in-process, warm disk, unparse, and compile timings:
 

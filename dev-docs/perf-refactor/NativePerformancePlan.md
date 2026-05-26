@@ -92,6 +92,18 @@ and print:
 - top Python counter counts;
 - top Python counter seconds.
 
+The committed harness for this plan is:
+
+```bash
+uv run --with frozendict python \
+  docs/validation/perf/yidl_lifecycle_import_baseline.py --engine native \
+  --require-native-counters
+```
+
+Use `--engine python`, `--engine auto`, and `--engine native` for comparative
+runs. The harness reports `selected_lower_engine`, full Astichi counters,
+native counter summaries, and top Python hot counters as JSON.
+
 The benchmark gate for each phase is comparative:
 
 - forced Python;
