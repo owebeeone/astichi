@@ -84,6 +84,24 @@ def test_native_template_package_v2_partial_capability_when_available() -> None:
             "for n in astichi_for(range(2)):\n"
             "    other = n\n"
         ),
+        "class record_class_name__astichi_arg__:\n    pass\n",
+        (
+            "field_name__astichi_arg__: "
+            "astichi_ref(external=value_type_path)\n"
+        ),
+        (
+            "def run(field_name__astichi_arg__):\n"
+            "    return field_name__astichi_arg__\n"
+        ),
+        "result = call(field_name__astichi_arg__=value)\n",
+        (
+            "from yidl.generation.data_def_sys import REQUIRED, dds_property\n"
+            "\n"
+            "class record_class_name__astichi_arg__:\n"
+            "    slot_names = astichi_ref(external=slot_names_path)\n"
+            "    field_name__astichi_arg__: astichi_ref(external=value_type_path)\n"
+            "    astichi_hole(body)\n"
+        ),
     ],
 )
 def test_native_template_package_v2_snapshot_matches_python_reference_when_available(
@@ -119,16 +137,36 @@ def test_native_template_package_v2_rejects_ref_statement_context_when_available
         )
 
 
-def test_native_template_package_v2_source_registration_stores_package_rows_when_available() -> None:
+@pytest.mark.parametrize(
+    "source, first_resource",
+    [
+        (
+            "def run():\n"
+            "    result = astichi_hole(value)\n"
+            "    return astichi_ref(\"pkg.value\")\n",
+            "value",
+        ),
+        (
+            "field_name__astichi_arg__: "
+            "astichi_ref(external=value_type_path)\n",
+            "field_name",
+        ),
+        (
+            "class record_class_name__astichi_arg__:\n"
+            "    slot_names = astichi_ref(external=slot_names_path)\n"
+            "    astichi_hole(body)\n",
+            "record_class_name",
+        ),
+    ],
+)
+def test_native_template_package_v2_source_registration_stores_package_rows_when_available(
+    source: str,
+    first_resource: str,
+) -> None:
     module = load_native_extension(required=False)
     if module is None:
         pytest.skip("native engine extension is not built")
 
-    source = (
-        "def run():\n"
-        "    result = astichi_hole(value)\n"
-        "    return astichi_ref(\"pkg.value\")\n"
-    )
     engine = _engine_with_current_bundle(module)
     template = module.register_template_package_v2_source(
         engine,
@@ -145,7 +183,7 @@ def test_native_template_package_v2_source_registration_stores_package_rows_when
     module.assembly_state_append_occurrence(engine, state, template, ("Root",))
     structural = module.assembly_state_snapshot(engine, state)
     assert structural["templates"][0]["record_count"] == len(expected["records"])
-    assert structural["records"][0]["resource_name"] == "value"
+    assert structural["records"][0]["resource_name"] == first_resource
 
 
 def test_native_template_package_v2_source_registration_is_deterministic_when_available() -> None:

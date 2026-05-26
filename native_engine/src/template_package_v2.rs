@@ -8,6 +8,9 @@ use crate::handles::EngineHandle;
 use crate::occurrence_store::NativeTemplateHandle;
 
 const PACKAGE_SCHEMA: &str = "astichi.lower-template-package.v2";
+const ARG_SUFFIX: &str = "__astichi_arg__";
+const KEEP_SUFFIX: &str = "__astichi_keep__";
+const PARAM_HOLE_SUFFIX: &str = "__astichi_param_hole__";
 
 #[derive(Clone)]
 struct ScopeSpec {
@@ -1971,6 +1974,19 @@ struct MarkerState {
     source_order: usize,
 }
 
+#[derive(Clone, Copy)]
+enum SuffixMarkerContext {
+    Definitional,
+    Identifier,
+}
+
+#[derive(Clone, Copy)]
+struct SuffixMarkerSpec {
+    source_name: &'static str,
+    marker_kind: &'static str,
+    metadata_marker: bool,
+}
+
 fn visit_stmt_markers(
     stmt: &ast::Stmt,
     path: &str,
@@ -1979,6 +1995,48 @@ fn visit_stmt_markers(
     marker_state: &mut MarkerState,
 ) -> PyResult<()> {
     match stmt {
+        ast::Stmt::Import(node) => {
+            for (index, alias) in node.names.iter().enumerate() {
+                append_alias_suffix_markers(
+                    alias,
+                    &format!("{path}/names[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                );
+            }
+            Ok(())
+        }
+        ast::Stmt::ImportFrom(node) => {
+            if let Some(module) = node.module.as_ref() {
+                for segment in module.as_str().split('.') {
+                    if append_suffix_identifier_marker(
+                        segment,
+                        path,
+                        Some(path),
+                        SuffixMarkerContext::Identifier,
+                        scopes,
+                        package,
+                        marker_state,
+                        false,
+                    ) {
+                        break;
+                    }
+                }
+            }
+            for (index, alias) in node.names.iter().enumerate() {
+                append_alias_suffix_markers(
+                    alias,
+                    &format!("{path}/names[{index}]"),
+                    Some(path),
+                    scopes,
+                    package,
+                    marker_state,
+                );
+            }
+            Ok(())
+        }
         ast::Stmt::Expr(node) => visit_expr_markers(
             &node.value,
             &format!("{path}/value"),
@@ -2190,6 +2248,16 @@ fn visit_stmt_markers(
             )
         }
         ast::Stmt::FunctionDef(node) => {
+            append_suffix_identifier_marker(
+                node.name.as_str(),
+                path,
+                Some(path),
+                SuffixMarkerContext::Definitional,
+                scopes,
+                package,
+                marker_state,
+                false,
+            );
             for (index, decorator) in node.decorator_list.iter().enumerate() {
                 visit_expr_markers(
                     decorator,
@@ -2200,6 +2268,14 @@ fn visit_stmt_markers(
                     marker_state,
                 )?;
             }
+            visit_arguments_markers(
+                &node.args,
+                &format!("{path}/args"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
             visit_stmt_list_markers(
                 &node.body,
                 &format!("{path}/body"),
@@ -2209,6 +2285,16 @@ fn visit_stmt_markers(
             )
         }
         ast::Stmt::AsyncFunctionDef(node) => {
+            append_suffix_identifier_marker(
+                node.name.as_str(),
+                path,
+                Some(path),
+                SuffixMarkerContext::Definitional,
+                scopes,
+                package,
+                marker_state,
+                false,
+            );
             for (index, decorator) in node.decorator_list.iter().enumerate() {
                 visit_expr_markers(
                     decorator,
@@ -2219,6 +2305,14 @@ fn visit_stmt_markers(
                     marker_state,
                 )?;
             }
+            visit_arguments_markers(
+                &node.args,
+                &format!("{path}/args"),
+                Some(path),
+                scopes,
+                package,
+                marker_state,
+            )?;
             visit_stmt_list_markers(
                 &node.body,
                 &format!("{path}/body"),
@@ -2228,20 +2322,30 @@ fn visit_stmt_markers(
             )
         }
         ast::Stmt::ClassDef(node) => {
-            for (index, base) in node.bases.iter().enumerate() {
+            append_suffix_identifier_marker(
+                node.name.as_str(),
+                path,
+                Some(path),
+                SuffixMarkerContext::Definitional,
+                scopes,
+                package,
+                marker_state,
+                false,
+            );
+            for (index, decorator) in node.decorator_list.iter().enumerate() {
                 visit_expr_markers(
-                    base,
-                    &format!("{path}/bases[{index}]"),
+                    decorator,
+                    &format!("{path}/decorator_list[{index}]"),
                     Some(path),
                     scopes,
                     package,
                     marker_state,
                 )?;
             }
-            for (index, decorator) in node.decorator_list.iter().enumerate() {
+            for (index, base) in node.bases.iter().enumerate() {
                 visit_expr_markers(
-                    decorator,
-                    &format!("{path}/decorator_list[{index}]"),
+                    base,
+                    &format!("{path}/bases[{index}]"),
                     Some(path),
                     scopes,
                     package,
@@ -2312,6 +2416,127 @@ fn visit_stmt_list_markers(
     Ok(())
 }
 
+fn visit_arguments_markers(
+    args: &ast::Arguments,
+    path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    for (index, arg) in args.posonlyargs.iter().enumerate() {
+        visit_arg_with_default_markers(
+            arg,
+            &format!("{path}/posonlyargs[{index}]"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    for (index, arg) in args.args.iter().enumerate() {
+        visit_arg_with_default_markers(
+            arg,
+            &format!("{path}/args[{index}]"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    if let Some(arg) = args.vararg.as_ref() {
+        visit_arg_markers(
+            arg,
+            &format!("{path}/vararg"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    for (index, arg) in args.kwonlyargs.iter().enumerate() {
+        visit_arg_with_default_markers(
+            arg,
+            &format!("{path}/kwonlyargs[{index}]"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    if let Some(arg) = args.kwarg.as_ref() {
+        visit_arg_markers(
+            arg,
+            &format!("{path}/kwarg"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    Ok(())
+}
+
+fn visit_arg_with_default_markers(
+    arg: &ast::ArgWithDefault,
+    path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    visit_arg_markers(
+        &arg.def,
+        path,
+        statement_path,
+        scopes,
+        package,
+        marker_state,
+    )?;
+    if let Some(default) = arg.default.as_ref() {
+        visit_expr_markers(
+            default,
+            &format!("{path}/default"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    Ok(())
+}
+
+fn visit_arg_markers(
+    arg: &ast::Arg,
+    path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) -> PyResult<()> {
+    append_suffix_identifier_marker(
+        arg.arg.as_str(),
+        path,
+        statement_path,
+        SuffixMarkerContext::Identifier,
+        scopes,
+        package,
+        marker_state,
+        true,
+    );
+    if let Some(annotation) = arg.annotation.as_ref() {
+        visit_expr_markers(
+            annotation,
+            &format!("{path}/annotation"),
+            statement_path,
+            scopes,
+            package,
+            marker_state,
+        )?;
+    }
+    Ok(())
+}
+
 fn visit_expr_markers(
     expr: &ast::Expr,
     path: &str,
@@ -2352,6 +2577,18 @@ fn visit_expr_markers(
                 )?;
             }
             for (index, keyword) in node.keywords.iter().enumerate() {
+                if let Some(arg) = keyword.arg.as_ref() {
+                    append_suffix_identifier_marker(
+                        arg.as_str(),
+                        &format!("{path}/keywords[{index}]"),
+                        statement_path,
+                        SuffixMarkerContext::Identifier,
+                        scopes,
+                        package,
+                        marker_state,
+                        false,
+                    );
+                }
                 visit_expr_markers(
                     &keyword.value,
                     &format!("{path}/keywords[{index}]/value"),
@@ -2707,7 +2944,20 @@ fn visit_expr_markers(
             }
             Ok(())
         }
-        ast::Expr::Constant(_) | ast::Expr::Name(_) => Ok(()),
+        ast::Expr::Name(node) => {
+            append_suffix_identifier_marker(
+                node.id.as_str(),
+                path,
+                statement_path,
+                SuffixMarkerContext::Identifier,
+                scopes,
+                package,
+                marker_state,
+                false,
+            );
+            Ok(())
+        }
+        ast::Expr::Constant(_) => Ok(()),
     }
 }
 
@@ -2811,6 +3061,125 @@ fn append_external_ref_bind_marker(
         vec!["call_context".to_string()],
     );
     marker_state.source_order += 1;
+}
+
+fn append_alias_suffix_markers(
+    alias: &ast::Alias,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+) {
+    append_suffix_identifier_marker(
+        alias.name.as_str(),
+        ast_path,
+        statement_path,
+        SuffixMarkerContext::Identifier,
+        scopes,
+        package,
+        marker_state,
+        false,
+    );
+    if let Some(asname) = alias.asname.as_ref() {
+        append_suffix_identifier_marker(
+            asname.as_str(),
+            ast_path,
+            statement_path,
+            SuffixMarkerContext::Identifier,
+            scopes,
+            package,
+            marker_state,
+            false,
+        );
+    }
+}
+
+fn append_suffix_identifier_marker(
+    name: &str,
+    ast_path: &str,
+    statement_path: Option<&str>,
+    context: SuffixMarkerContext,
+    scopes: &[ScopeSpec],
+    package: &mut PackageBuilder,
+    marker_state: &mut MarkerState,
+    allow_param_hole: bool,
+) -> bool {
+    let Some((spec, resource_name)) = suffix_marker_spec(name, allow_param_hole) else {
+        return false;
+    };
+    let scope = scope_for_ast_path(scopes, ast_path);
+    let mut flags = Vec::new();
+    match context {
+        SuffixMarkerContext::Definitional => flags.push("definitional_context".to_string()),
+        SuffixMarkerContext::Identifier => flags.push("identifier_context".to_string()),
+    }
+    if statement_path == Some(ast_path) {
+        flags.push("is_statement_marker".to_string());
+    }
+    if spec.metadata_marker {
+        flags.push("is_metadata_marker".to_string());
+    }
+    package.add_marker(
+        marker_state.source_order,
+        spec.marker_kind,
+        spec.source_name,
+        ast_path,
+        statement_path,
+        scope,
+        &resource_name,
+        flags,
+    );
+    marker_state.source_order += 1;
+    true
+}
+
+fn suffix_marker_spec(
+    name: &str,
+    allow_param_hole: bool,
+) -> Option<(SuffixMarkerSpec, String)> {
+    if let Some(base) = valid_suffix_base(name, ARG_SUFFIX) {
+        return Some((
+            SuffixMarkerSpec {
+                source_name: "astichi_arg_identifier",
+                marker_kind: "arg_identifier",
+                metadata_marker: true,
+            },
+            base,
+        ));
+    }
+    if let Some(base) = valid_suffix_base(name, KEEP_SUFFIX) {
+        return Some((
+            SuffixMarkerSpec {
+                source_name: "astichi_keep_identifier",
+                marker_kind: "keep_identifier",
+                metadata_marker: true,
+            },
+            base,
+        ));
+    }
+    if allow_param_hole {
+        if let Some(base) = valid_suffix_base(name, PARAM_HOLE_SUFFIX) {
+            return Some((
+                SuffixMarkerSpec {
+                    source_name: "astichi_param_hole_identifier",
+                    marker_kind: "param_hole_identifier",
+                    metadata_marker: false,
+                },
+                base,
+            ));
+        }
+    }
+    None
+}
+
+fn valid_suffix_base(name: &str, suffix: &str) -> Option<String> {
+    let base = name.strip_suffix(suffix)?;
+    if is_ascii_identifier(base) {
+        Some(base.to_string())
+    } else {
+        None
+    }
 }
 
 fn is_package_marker(source_name: &str) -> bool {

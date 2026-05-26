@@ -189,7 +189,86 @@ Stop if:
   that cannot be made explicit slow paths.
 - The facade boundary would make native and Python semantics diverge.
 
-## Phase P2: Native Compile Without Python Lower Extraction
+## Phase P2a: Native Package-V2 Parity For Current Surfaces
+
+Goal: make native package-v2 extraction match the Python lower package oracle
+for the lifecycle/YIDL marker shapes before any facade projection cutover.
+
+Work:
+
+- Add focused parity fixtures for current lifecycle-heavy surfaces:
+  `__astichi_arg__` definitional markers, `__astichi_arg__` identifier sites,
+  call keyword-name identifier sites, `astichi_ref(external=...)`, imports,
+  holes, and compact YIDL-like mixed templates.
+- Fix native generic marker extraction so marker ids, source order, AST paths,
+  statement paths, marker kinds, operation keys, resource names, and flags match
+  Python `recognize_markers(...)` package rows.
+- Fix typed native rows that depend on generic marker ids: pyimport, comment,
+  ref, unroll, and managed import rows.
+- Keep the Python facade projection unchanged in this phase. This phase proves
+  native package data is complete enough to become authoritative later.
+
+Acceptance:
+
+- Native package-v2 snapshots match the Python oracle for the new parity
+  fixtures and the existing package-v2 fixtures.
+- Native source registration stores the same package rows for those fixtures.
+- Focused native package-v2 tests pass after rebuilding the native extension.
+- Full Astichi suite passes.
+- The lifecycle benchmark still reports native counters without
+  builder-adapter fallback.
+
+Expected performance movement:
+
+- None required. This is a correctness prerequisite for P2b/P2c.
+
+Tag after success: `perf-native/p2a-package-parity`.
+
+Stop if:
+
+- RustPython AST shape prevents exact parity for a Python surface that Astichi
+  already supports. Patch the native AST normalization design before cutting
+  over.
+- Native would need Python `recognize_markers(...)` on the hot path to pass
+  parity.
+
+## Phase P2b: Native Package-Backed Facade Projection
+
+Goal: make the Python facade consume native package-v2 rows as the lower
+projection in native-selected mode without triggering adapter fallback.
+
+Work:
+
+- Rebuild `LowerTemplateBinding` rows from the native package-v2 snapshot when
+  native is selected.
+- Keep explicit debug/source/materialization projection hooks available.
+- Preserve compatibility projection records only where candidate objects still
+  require Python `InventoryRecord` instances.
+- Add counters or focused tests proving native-selected compile no longer uses
+  Python package rows as the authoritative lower projection.
+
+Acceptance:
+
+- Native-selected compile returns a facade whose lower package rows are native
+  package-v2 rows.
+- Existing diagnostics and structural snapshots still have a projection path.
+- The lifecycle benchmark reports native counters, no builder-adapter fallback,
+  and no large `rebuild_composable` regression.
+- Full Astichi suite passes.
+
+Expected performance movement:
+
+- Small or neutral. This removes a prerequisite boundary but still leaves
+  Python inventory construction in native compile until P2c.
+
+Tag after success: `perf-native/p2b-facade-projection`.
+
+Stop if:
+
+- Candidate compatibility still requires enough Python `InventoryRecord`
+  reconstruction that the checkpoint would be misleading.
+
+## Phase P2c: Native Compile Without Python Lower Extraction
 
 Goal: when native is selected, `astichi.compile(...)` should stop building the
 Python lower template and Python inventory merely to attach native metadata.
@@ -211,8 +290,7 @@ Acceptance:
   `register_inventory_template(...)`.
 - Native compile success path does not build Python `Inventory` for candidate
   lookup.
-- Current native package/snapshot goldens still match the Python oracle where
-  the snapshot contract requires equality.
+- P2a native package/snapshot parity remains green.
 - Full Astichi suite passes.
 - YIDL lifecycle workload still runs.
 
@@ -222,7 +300,7 @@ Expected performance movement:
 - `rebuild_composable` and Python lower-template construction should drop
   materially in native counter runs.
 
-Tag after success: `perf-native/p2-native-compile`.
+Tag after success: `perf-native/p2c-native-compile`.
 
 Stop if:
 
