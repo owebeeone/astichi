@@ -100,11 +100,11 @@ Completed checkpoints:
 - `perf-native/p4-batch-scope`
 - `perf-native/p5-yidl-batch`
 - `perf-native/p5b-native-batch-engine`
+- `perf-native/p5c-yidl-chain-batches`
 - `perf-native/p6a-artifact-boundary`
 
 Remaining checkpoints:
 
-- P5c: chained YIDL request coalescing.
 - P6b: native operation materialization.
 - P6c: native hygiene and artifact cutover, tagged as
   `perf-native/p6-materialization`.
@@ -597,6 +597,25 @@ Stop if:
 
 Goal: reduce batch call count by allowing one YIDL contribution to emit a
 target request followed by binding requests that refer to the target result.
+
+Status: completed as `perf-native/p5c-yidl-chain-batches`.
+
+Completed work:
+
+- YIDL now coalesces a contribution target request with its immediate binding
+  requests when the contribution has one concrete build target.
+- Dynamic and multi-target selectors stay on the existing separate request
+  path.
+- Production contributions still traverse nested production edges after
+  coalesced binding application.
+- Added YIDL counters for coalesced contribution batches and request count.
+
+Result:
+
+- The lifecycle workload reduces native batch-engine calls from 1057 to 591
+  while preserving 1659 ordered requests.
+- Current YIDL did not need an opaque previous-result token because the
+  inserted build path is concrete and deterministic at the runtime boundary.
 
 Work:
 
