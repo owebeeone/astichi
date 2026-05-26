@@ -186,6 +186,10 @@ impl NativeAssemblyState {
             .ok_or_else(|| crate::errors::stale_handle_error("unknown native occurrence handle"))
     }
 
+    pub(crate) fn occurrences(&self) -> &[NativeOccurrence] {
+        &self.occurrences
+    }
+
     pub(crate) fn edge(&self, index: usize) -> PyResult<&NativeEdge> {
         self.edges
             .get(index)
@@ -196,6 +200,14 @@ impl NativeAssemblyState {
         self.overlays
             .get(index)
             .ok_or_else(|| crate::errors::stale_handle_error("unknown native overlay handle"))
+    }
+
+    pub(crate) fn edges(&self) -> &[NativeEdge] {
+        &self.edges
+    }
+
+    pub(crate) fn overlays(&self) -> &[NativeOverlay] {
+        &self.overlays
     }
 
     fn append_occurrence(
@@ -270,6 +282,14 @@ impl NativeOccurrence {
     pub(crate) fn template_index(&self) -> usize {
         self.template_index
     }
+
+    pub(crate) fn parent_occurrence_index(&self) -> Option<usize> {
+        self.parent_occurrence_index
+    }
+
+    pub(crate) fn live(&self) -> bool {
+        self.live
+    }
 }
 
 #[derive(Clone)]
@@ -291,6 +311,10 @@ impl NativeEdge {
 
     pub(crate) fn operation_key(&self) -> &str {
         &self.operation_key
+    }
+
+    pub(crate) fn order(&self) -> i64 {
+        self.order
     }
 }
 

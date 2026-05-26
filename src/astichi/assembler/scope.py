@@ -39,10 +39,13 @@ from astichi.lowering.markers import (
     ARG_IDENTIFIER,
     BIND_EXTERNAL,
     ELIF,
+    EXPORT,
     HOLE,
     IMPORT,
+    KEEP,
     PARAM_HOLE_IDENTIFIER,
     PASS,
+    PYIMPORT,
     strip_identifier_suffix,
 )
 from astichi.lowering.sentinel_attrs import match_transparent_sentinel
@@ -67,6 +70,7 @@ from astichi.model import (
     SourceLocation,
     StaticResourceName,
     empty_inventory,
+    value_to_ast,
 )
 from astichi.model.composable import Composable
 from astichi.model.descriptors import (
@@ -97,6 +101,9 @@ _UNRESOLVED_LOWER_CALL_DEMANDS = frozenset(
         BIND_EXTERNAL.source_name,
         IMPORT.source_name,
         PASS.source_name,
+        KEEP.source_name,
+        EXPORT.source_name,
+        PYIMPORT.source_name,
     )
 )
 
@@ -1553,9 +1560,71 @@ class AssemblyScope:
         return True
 
     def _lower_materialize_if_supported(self) -> BasicComposable | None:
+        native = self._try_native_materialize_if_supported()
+        if native is not None:
+            return native
         return self._try_lower_materialize_expression_overlay_subset(
             self.lower_materialization_plan()
         )
+
+    def _try_native_materialize_if_supported(self) -> BasicComposable | None:
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return None
+        root_occurrence_id = self._native_materialization_root()
+        if root_occurrence_id is None:
+            return None
+        root = self._lower_composable_by_occurrence.get(root_occurrence_id)
+        if root is None:
+            return None
+        counters = active_perf_counters()
+        try:
+            external_literals = {
+                overlay_id.index: ast.unparse(value_to_ast(value))
+                for overlay_id, value in self._external_value_by_overlay.items()
+            }
+            if counters is None:
+                tree = self._native_module.assembly_state_materialize_to_python_ast(
+                    self._native_engine_handle,
+                    self._native_state_handle,
+                    external_literals,
+                    root_occurrence_id.index,
+                )
+            else:
+                with counters.measure("native_materialize_operation_stream"):
+                    tree = self._native_module.assembly_state_materialize_to_python_ast(
+                        self._native_engine_handle,
+                        self._native_state_handle,
+                        external_literals,
+                        root_occurrence_id.index,
+                    )
+        except (TypeError, ValueError, RuntimeError):
+            if counters is not None:
+                counters.increment("native_materialize_operation_stream_fallback")
+            return None
+        if not isinstance(tree, ast.Module):
+            raise TypeError("native materializer must return ast.Module")
+        if counters is not None:
+            counters.increment("native_materialize_workspace_copy")
+        if _tree_has_unresolved_lower_astichi_demands(tree):
+            if counters is not None:
+                counters.increment("native_materialize_operation_stream_fallback")
+            return None
+        return BasicComposable(
+            tree=tree,
+            origin=root.origin,
+            bound_externals=frozenset(),
+            _already_materialized=True,
+        )
+
+    def _native_materialization_root(self) -> OccurrenceId | None:
+        for occurrence in self._lower_state.occurrences:
+            if occurrence.parent_occurrence_id is None and occurrence.live:
+                return occurrence.occurrence_id
+        return None
 
     def _append_lower_pyimport_hygiene(
         self,

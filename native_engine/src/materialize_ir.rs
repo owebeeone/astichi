@@ -1,10 +1,14 @@
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
+
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
 use crate::occurrence_store::{
     NativeAssemblyStateHandle, NativeEdgeHandle, NativeOverlayHandle, NativeTemplateHandle,
+    RecordKey,
 };
 
 const HANDLE_KIND_WORKSPACE: &str = "materialization-workspace";
@@ -280,7 +284,7 @@ fn materialization_workspace_apply_parameter_edge(
             "edge belongs to another native assembly state",
         ));
     }
-    let (target_path, payload_args) = {
+    let (target_path, target_name, payload_args) = {
         let workspace_ref = engine.workspace(workspace.index)?;
         let state_ref = engine.state(state.state_index())?;
         let edge_ref = state_ref.edge(edge.edge_index())?;
@@ -301,6 +305,12 @@ fn materialization_workspace_apply_parameter_edge(
         let target_path = target_template
             .locator_ast_path_for_record(target_key.template_record_index())?
             .to_string();
+        let target_name = target_template
+            .records()
+            .get(target_key.template_record_index())
+            .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))?
+            .resource_name()
+            .to_string();
         let source_occurrence = state_ref.occurrence(edge_ref.source_occurrence_index())?;
         let source_template = engine.template(source_occurrence.template_index())?;
         let source_module = source_template.module().ok_or_else(|| {
@@ -309,10 +319,15 @@ fn materialization_workspace_apply_parameter_edge(
         let source_path = source_template
             .unique_locator_ast_path_for_surface("astichi.surface.parameter.production")?;
         let payload_args = clone_function_args_at_path(source_module, source_path)?;
-        (target_path, payload_args)
+        (target_path, target_name, payload_args)
     };
     let workspace_ref = engine.workspace_mut(workspace.index)?;
-    splice_parameters_at_path(workspace_ref.module_mut(), &target_path, payload_args)
+    splice_parameters_at_path(
+        workspace_ref.module_mut(),
+        &target_path,
+        &target_name,
+        payload_args,
+    )
 }
 
 #[pyfunction(name = "materialization_workspace_apply_call_argument_edge")]
@@ -467,6 +482,41 @@ fn materialization_workspace_apply_identifier_overlay(
     rewrite_identifier_in_module(workspace_ref.module_mut(), &authored_name, &resolved_name)
 }
 
+#[pyfunction(name = "assembly_state_materialize_to_python_ast")]
+#[pyo3(signature = (engine, state, external_literals, root_occurrence_index = None, location_policy = "fix_missing"))]
+fn assembly_state_materialize_to_python_ast(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    state: PyRef<'_, NativeAssemblyStateHandle>,
+    external_literals: &Bound<'_, PyDict>,
+    root_occurrence_index: Option<usize>,
+    location_policy: &str,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), state.owner_id())?;
+    let state_ref = engine.state(state.state_index())?;
+    let root = match root_occurrence_index {
+        Some(index) => {
+            state_ref.occurrence(index)?;
+            index
+        }
+        None => default_root_occurrence_index(state_ref)?,
+    };
+    let external_literals = parse_external_literals(external_literals)?;
+    let mut cache = BTreeMap::new();
+    let mut visiting = BTreeSet::new();
+    let module = materialize_occurrence_module(
+        &engine,
+        state_ref,
+        root,
+        &external_literals,
+        &mut cache,
+        &mut visiting,
+    )?;
+    crate::parser_ir::convert_module_artifact(py, "", &module, location_policy)
+        .map(|(artifact, _stats)| artifact)
+}
+
 #[pyfunction(name = "materialization_workspace_copy_to_python_ast")]
 #[pyo3(signature = (engine, workspace, location_policy = "fix_missing"))]
 fn materialization_workspace_copy_to_python_ast(
@@ -541,6 +591,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
+        assembly_state_materialize_to_python_ast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
         materialization_workspace_copy_to_python_ast,
         m
     )?)?;
@@ -559,6 +613,449 @@ fn ensure_owner(expected: u64, actual: u64) -> PyResult<()> {
         ));
     }
     Ok(())
+}
+
+fn parse_external_literals(dict: &Bound<'_, PyDict>) -> PyResult<BTreeMap<usize, String>> {
+    let mut values = BTreeMap::new();
+    for (key, value) in dict.iter() {
+        let overlay_index = key
+            .extract::<usize>()
+            .map_err(|_| crate::errors::schema_error("external literal keys must be integers"))?;
+        let expression_source = value.extract::<String>().map_err(|_| {
+            crate::errors::schema_error("external literal values must be expression source strings")
+        })?;
+        values.insert(overlay_index, expression_source);
+    }
+    Ok(values)
+}
+
+fn default_root_occurrence_index(
+    state: &crate::occurrence_store::NativeAssemblyState,
+) -> PyResult<usize> {
+    state
+        .occurrences()
+        .iter()
+        .enumerate()
+        .find_map(|(index, occurrence)| {
+            if occurrence.parent_occurrence_index().is_none() && occurrence.live() {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| crate::errors::schema_error("native assembly state has no root occurrence"))
+}
+
+fn materialize_occurrence_module(
+    engine: &EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    occurrence_index: usize,
+    external_literals: &BTreeMap<usize, String>,
+    cache: &mut BTreeMap<usize, ast::ModModule>,
+    visiting: &mut BTreeSet<usize>,
+) -> PyResult<ast::ModModule> {
+    if let Some(module) = cache.get(&occurrence_index) {
+        return Ok(module.clone());
+    }
+    if !visiting.insert(occurrence_index) {
+        return Err(crate::errors::schema_error(
+            "cycle detected while materializing native occurrence graph",
+        ));
+    }
+    let occurrence = state.occurrence(occurrence_index)?;
+    if !occurrence.live() {
+        return Err(crate::errors::schema_error(
+            "cannot materialize a dead native occurrence",
+        ));
+    }
+    let template = engine.template(occurrence.template_index())?;
+    let mut module = template
+        .module()
+        .ok_or_else(|| {
+            crate::errors::schema_error("native template does not carry native parser IR")
+        })?
+        .clone();
+
+    let mut edges = state
+        .edges()
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.target_record().occurrence_index() == occurrence_index)
+        .collect::<Vec<_>>();
+    edges.sort_by_key(|(edge_index, edge)| (edge.order(), *edge_index));
+    let mut materialized_edges = Vec::new();
+    for (edge_index, edge) in edges {
+        let source = materialize_occurrence_module(
+            engine,
+            state,
+            edge.source_occurrence_index(),
+            external_literals,
+            cache,
+            visiting,
+        )?;
+        materialized_edges.push(MaterializedEdgeInput {
+            edge_index,
+            source_module: source,
+        });
+    }
+    apply_materialized_edges(engine, state, &mut module, &materialized_edges)?;
+
+    for (overlay_index, overlay) in state.overlays().iter().enumerate() {
+        if overlay.target_record().occurrence_index() != occurrence_index {
+            continue;
+        }
+        apply_materialized_overlay(engine, state, &mut module, overlay_index, external_literals)?;
+    }
+    lower_native_statement_markers_in_module(&mut module)?;
+    lower_literal_refs_in_module(&mut module)?;
+
+    visiting.remove(&occurrence_index);
+    cache.insert(occurrence_index, module.clone());
+    Ok(module)
+}
+
+struct MaterializedEdgeInput {
+    edge_index: usize,
+    source_module: ast::ModModule,
+}
+
+fn apply_materialized_edges(
+    engine: &EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    module: &mut ast::ModModule,
+    edges: &[MaterializedEdgeInput],
+) -> PyResult<()> {
+    let mut grouped: BTreeMap<(RecordKey, String), Vec<&MaterializedEdgeInput>> = BTreeMap::new();
+    for edge_input in edges {
+        let edge = state.edge(edge_input.edge_index)?;
+        grouped
+            .entry((edge.target_record(), edge.operation_key().to_string()))
+            .or_default()
+            .push(edge_input);
+    }
+    let mut ordered = Vec::new();
+    for ((target_record, operation_key), group) in grouped {
+        let statement_key =
+            edge_group_statement_sort_key(engine, state, target_record, &operation_key)?;
+        ordered.push((statement_key, target_record, operation_key, group));
+    }
+    ordered.sort_by(compare_edge_groups);
+    for (_statement_key, target_record, operation_key, group) in ordered {
+        apply_materialized_edge_group(
+            engine,
+            state,
+            module,
+            target_record,
+            &operation_key,
+            &group,
+        )?;
+    }
+    Ok(())
+}
+
+fn edge_group_statement_sort_key(
+    engine: &EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    target_record: RecordKey,
+    operation_key: &str,
+) -> PyResult<Option<(usize, Vec<(String, usize)>)>> {
+    let target_template = template_for_record(engine, state, target_record)?;
+    let target_path = target_template
+        .locator_ast_path_for_record(target_record.template_record_index())?
+        .to_string();
+    let statement_path = match operation_key {
+        "astichi.operation.splice_body_at_marker" => statement_path_for_locator(&target_path)?,
+        "astichi.operation.append_clause" => if_statement_path_for_elif_locator(&target_path)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(ast_path_order_key(&statement_path)?))
+}
+
+fn compare_edge_groups<'a>(
+    left: &(
+        Option<(usize, Vec<(String, usize)>)>,
+        RecordKey,
+        String,
+        Vec<&'a MaterializedEdgeInput>,
+    ),
+    right: &(
+        Option<(usize, Vec<(String, usize)>)>,
+        RecordKey,
+        String,
+        Vec<&'a MaterializedEdgeInput>,
+    ),
+) -> Ordering {
+    match (&left.0, &right.0) {
+        (Some(left_key), Some(right_key)) => right_key.cmp(left_key),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => (left.1, &left.2).cmp(&(right.1, &right.2)),
+    }
+}
+
+fn ast_path_order_key(path: &str) -> PyResult<(usize, Vec<(String, usize)>)> {
+    let segments = parse_ast_path(path)?;
+    Ok((
+        segments.len(),
+        segments
+            .into_iter()
+            .map(|segment| (segment.field, segment.index.unwrap_or(usize::MAX)))
+            .collect(),
+    ))
+}
+
+fn apply_materialized_edge_group(
+    engine: &EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    module: &mut ast::ModModule,
+    target_record: RecordKey,
+    operation_key: &str,
+    edges: &[&MaterializedEdgeInput],
+) -> PyResult<()> {
+    let target_template = template_for_record(engine, state, target_record)?;
+    let target_path = target_template
+        .locator_ast_path_for_record(target_record.template_record_index())?
+        .to_string();
+    match operation_key {
+        "astichi.operation.replace_expression" => {
+            let edge = only_edge(edges, operation_key)?;
+            let native_edge = state.edge(edge.edge_index)?;
+            let source_occurrence = state.occurrence(native_edge.source_occurrence_index())?;
+            let source_template = engine.template(source_occurrence.template_index())?;
+            let source_path = source_template
+                .unique_locator_ast_path_for_surface("astichi.surface.expression.production")?;
+            let replacement = clone_expr_at_path(&edge.source_module, source_path)?;
+            replace_expr_at_path(module, &target_path, replacement)
+        }
+        "astichi.operation.splice_body_at_marker" => {
+            let target_statement_path = statement_path_for_locator(&target_path)?;
+            let mut statements = Vec::new();
+            for edge in edges {
+                statements.extend(edge.source_module.body.clone());
+            }
+            replace_statements_at_path(module, &target_statement_path, statements)
+        }
+        "astichi.operation.splice_parameters" => {
+            let mut payload_args = empty_arguments();
+            for edge in edges {
+                let native_edge = state.edge(edge.edge_index)?;
+                let source_occurrence = state.occurrence(native_edge.source_occurrence_index())?;
+                let source_template = engine.template(source_occurrence.template_index())?;
+                let source_path = source_template
+                    .unique_locator_ast_path_for_surface("astichi.surface.parameter.production")?;
+                append_argument_payload(
+                    &mut payload_args,
+                    clone_function_args_at_path(&edge.source_module, source_path)?,
+                )?;
+            }
+            let target_name = target_template
+                .records()
+                .get(target_record.template_record_index())
+                .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))?
+                .resource_name()
+                .to_string();
+            splice_parameters_at_path(module, &target_path, &target_name, payload_args)
+        }
+        "astichi.operation.splice_call_arguments" => {
+            let mut payload_args = Vec::new();
+            let mut payload_keywords = Vec::new();
+            for edge in edges {
+                let native_edge = state.edge(edge.edge_index)?;
+                let source_occurrence = state.occurrence(native_edge.source_occurrence_index())?;
+                let source_template = engine.template(source_occurrence.template_index())?;
+                let (mut args, mut keywords) = materialized_call_argument_payload(
+                    source_template,
+                    &edge.source_module,
+                    &target_path,
+                )?;
+                payload_args.append(&mut args);
+                payload_keywords.append(&mut keywords);
+            }
+            splice_call_arguments_at_path(module, &target_path, payload_args, payload_keywords)
+        }
+        "astichi.operation.append_clause" => {
+            let marker_if_path = if_statement_path_for_elif_locator(&target_path)?;
+            let marker_if = clone_if_at_path(module, &marker_if_path)?;
+            let mut chain = marker_if.orelse.clone();
+            for edge in edges.iter().rev() {
+                let native_edge = state.edge(edge.edge_index)?;
+                let source_occurrence = state.occurrence(native_edge.source_occurrence_index())?;
+                let source_template = engine.template(source_occurrence.template_index())?;
+                let source_path = source_template
+                    .unique_locator_ast_path_for_surface("astichi.surface.elif.production")?;
+                let payload_if = clone_elif_payload_if_at_path(&edge.source_module, source_path)?;
+                chain = vec![ast::Stmt::If(ast::StmtIf {
+                    range: marker_if.range,
+                    test: payload_if.test.clone(),
+                    body: payload_if.body.clone(),
+                    orelse: chain,
+                })];
+            }
+            replace_statements_at_path(module, &marker_if_path, chain)
+        }
+        other => Err(crate::errors::schema_error(&format!(
+            "native recursive materializer cannot apply `{other}`"
+        ))),
+    }
+}
+
+fn only_edge<'a>(
+    edges: &'a [&MaterializedEdgeInput],
+    operation_key: &str,
+) -> PyResult<&'a MaterializedEdgeInput> {
+    if edges.len() == 1 {
+        Ok(edges[0])
+    } else {
+        Err(crate::errors::schema_error(&format!(
+            "native recursive materializer expected one `{operation_key}` edge"
+        )))
+    }
+}
+
+fn empty_arguments() -> ast::Arguments {
+    ast::Arguments {
+        range: Default::default(),
+        posonlyargs: Vec::new(),
+        args: Vec::new(),
+        vararg: None,
+        kwonlyargs: Vec::new(),
+        kwarg: None,
+    }
+}
+
+fn append_argument_payload(
+    target: &mut ast::Arguments,
+    mut payload: ast::Arguments,
+) -> PyResult<()> {
+    if let Some(vararg) = payload.vararg.take() {
+        if target.vararg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native recursive parameter materializer would create multiple varargs",
+            ));
+        }
+        target.vararg = Some(vararg);
+    }
+    if let Some(kwarg) = payload.kwarg.take() {
+        if target.kwarg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native recursive parameter materializer would create multiple kwargs",
+            ));
+        }
+        target.kwarg = Some(kwarg);
+    }
+    target.posonlyargs.append(&mut payload.posonlyargs);
+    target.args.append(&mut payload.args);
+    target.kwonlyargs.append(&mut payload.kwonlyargs);
+    Ok(())
+}
+
+fn materialized_call_argument_payload(
+    source_template: &crate::occurrence_store::NativeTemplate,
+    source_module: &ast::ModModule,
+    target_path: &str,
+) -> PyResult<(Vec<ast::Expr>, Vec<ast::Keyword>)> {
+    if let Ok(source_path) =
+        source_template.unique_locator_ast_path_for_surface("astichi.surface.funcargs.production")
+    {
+        return clone_funcargs_payload_at_path(source_module, source_path);
+    }
+    let source_path = source_template
+        .unique_locator_ast_path_for_surface("astichi.surface.expression.production")?;
+    let expression = clone_expr_at_path(source_module, source_path)?;
+    if target_path.contains("/keywords[") {
+        return expression_to_keyword_payload(expression);
+    }
+    Ok((vec![expression], Vec::new()))
+}
+
+fn expression_to_keyword_payload(
+    expression: ast::Expr,
+) -> PyResult<(Vec<ast::Expr>, Vec<ast::Keyword>)> {
+    match expression {
+        ast::Expr::Dict(node) => {
+            let mut keywords = Vec::new();
+            for (key, value) in node.keys.into_iter().zip(node.values.into_iter()) {
+                let Some(key) = key else {
+                    return Err(crate::errors::schema_error(
+                        "native named-variadic expression payload cannot contain ** unpacking",
+                    ));
+                };
+                let ast::Expr::Constant(constant) = key else {
+                    return Err(crate::errors::schema_error(
+                        "native named-variadic expression payload keys must be string constants",
+                    ));
+                };
+                let ast::Constant::Str(name) = constant.value else {
+                    return Err(crate::errors::schema_error(
+                        "native named-variadic expression payload keys must be strings",
+                    ));
+                };
+                keywords.push(ast::Keyword {
+                    range: Default::default(),
+                    arg: Some(ast::Identifier::new(name)),
+                    value,
+                });
+            }
+            Ok((Vec::new(), keywords))
+        }
+        _ => Err(crate::errors::schema_error(
+            "native named-variadic expression payload must be a dict literal",
+        )),
+    }
+}
+
+fn apply_materialized_overlay(
+    engine: &EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    module: &mut ast::ModModule,
+    overlay_index: usize,
+    external_literals: &BTreeMap<usize, String>,
+) -> PyResult<()> {
+    let overlay = state.overlay(overlay_index)?;
+    match overlay.kind() {
+        "external" => {
+            let expression_source = external_literals.get(&overlay_index).ok_or_else(|| {
+                crate::errors::schema_error("native materializer is missing external literal")
+            })?;
+            let replacement = parse_expression_module(expression_source, "<astichi-external>")?;
+            substitute_external_literal_in_module(module, overlay.source_label(), &replacement)?;
+            Ok(())
+        }
+        "identifier" | "identifier_suffix" => {
+            let record = template_record_for_record(engine, state, overlay.target_record())?;
+            let authored_name = if overlay.kind() == "identifier_suffix" {
+                format!("{}__astichi_arg__", record.resource_name())
+            } else {
+                record.resource_name().to_string()
+            };
+            rewrite_identifier_in_module(module, &authored_name, overlay.source_label())?;
+            Ok(())
+        }
+        other => Err(crate::errors::schema_error(&format!(
+            "native recursive materializer cannot apply `{other}` overlay"
+        ))),
+    }
+}
+
+fn template_for_record<'a>(
+    engine: &'a EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    record: RecordKey,
+) -> PyResult<&'a crate::occurrence_store::NativeTemplate> {
+    let occurrence = state.occurrence(record.occurrence_index())?;
+    engine.template(occurrence.template_index())
+}
+
+fn template_record_for_record<'a>(
+    engine: &'a EngineHandle,
+    state: &crate::occurrence_store::NativeAssemblyState,
+    record: RecordKey,
+) -> PyResult<&'a crate::occurrence_store::NativeTemplateRecord> {
+    let template = template_for_record(engine, state, record)?;
+    template
+        .records()
+        .get(record.template_record_index())
+        .ok_or_else(|| crate::errors::stale_handle_error("unknown native template record"))
 }
 
 fn body_kinds(body: &[ast::Stmt]) -> Vec<&'static str> {
@@ -584,6 +1081,168 @@ fn statement_path_for_locator(path: &str) -> PyResult<String> {
         return Ok(statement_path.to_string());
     }
     Ok(path.to_string())
+}
+
+fn if_statement_path_for_elif_locator(path: &str) -> PyResult<String> {
+    let Some((statement_path, field_name)) = path.rsplit_once('/') else {
+        return Err(crate::errors::schema_error(
+            "elif locator does not include a statement path",
+        ));
+    };
+    if field_name != "test" {
+        return Err(crate::errors::schema_error(
+            "elif locator must point at an if-test expression",
+        ));
+    }
+    Ok(statement_path.to_string())
+}
+
+fn clone_if_at_path(module: &ast::ModModule, path: &str) -> PyResult<ast::StmtIf> {
+    match clone_stmt_at_path(module, path)? {
+        ast::Stmt::If(node) => Ok(node),
+        other => Err(crate::errors::schema_error(&format!(
+            "native elif target expected If, got {}",
+            stmt_kind(&other)
+        ))),
+    }
+}
+
+fn clone_elif_payload_if_at_path(module: &ast::ModModule, path: &str) -> PyResult<ast::StmtIf> {
+    let stmt = clone_stmt_at_path(module, path)?;
+    let ast::Stmt::FunctionDef(function) = stmt else {
+        return Err(crate::errors::schema_error(
+            "native elif production expected astichi_elif function",
+        ));
+    };
+    if function.name.as_str() != "astichi_elif" {
+        return Err(crate::errors::schema_error(
+            "native elif production function must be named astichi_elif",
+        ));
+    }
+    let payloads = function
+        .body
+        .into_iter()
+        .filter(|stmt| !is_marker_only_statement(stmt))
+        .collect::<Vec<_>>();
+    if payloads.len() != 1 {
+        return Err(crate::errors::schema_error(
+            "native elif production must contain exactly one branch",
+        ));
+    }
+    match payloads.into_iter().next().expect("length checked above") {
+        ast::Stmt::If(node) if node.orelse.is_empty() => Ok(node),
+        _ => Err(crate::errors::schema_error(
+            "native elif production branch must be an if without else",
+        )),
+    }
+}
+
+fn is_marker_only_statement(stmt: &ast::Stmt) -> bool {
+    let ast::Stmt::Expr(node) = stmt else {
+        return false;
+    };
+    let ast::Expr::Call(call) = node.value.as_ref() else {
+        return false;
+    };
+    matches!(
+        astichi_call_name(&call.func),
+        Some("astichi_keep" | "astichi_import" | "astichi_pass" | "astichi_export")
+    )
+}
+
+fn clone_stmt_at_path(module: &ast::ModModule, path: &str) -> PyResult<ast::Stmt> {
+    let segments = parse_ast_path(path)?;
+    clone_stmt_from_stmt_list(&module.body, &segments)
+}
+
+fn clone_stmt_from_stmt_list(body: &[ast::Stmt], segments: &[PathSegment]) -> PyResult<ast::Stmt> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "statement path cannot be the module root",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native statement path expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body statement segment requires an index"))?;
+    let stmt = body.get(index).ok_or_else(|| {
+        crate::errors::schema_error("native statement body index is out of range")
+    })?;
+    if rest.is_empty() {
+        return Ok(stmt.clone());
+    }
+    clone_stmt_from_stmt(stmt, rest)
+}
+
+fn clone_stmt_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<ast::Stmt> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Ok(stmt.clone());
+    };
+    match stmt {
+        ast::Stmt::FunctionDef(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::ClassDef(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::If(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::If(node) if first.field == "orelse" => {
+            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
+        }
+        ast::Stmt::For(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::For(node) if first.field == "orelse" => {
+            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
+        }
+        ast::Stmt::AsyncFor(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::AsyncFor(node) if first.field == "orelse" => {
+            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
+        }
+        ast::Stmt::While(node) if first.field == "body" => {
+            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
+        }
+        ast::Stmt::While(node) if first.field == "orelse" => {
+            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
+        }
+        _ => Err(crate::errors::schema_error(&format!(
+            "native statement path cannot enter field `{}` on {}",
+            first.field,
+            stmt_kind(stmt)
+        ))),
+    }
+}
+
+fn clone_stmt_from_nested_stmt_list(
+    body: &[ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+) -> PyResult<ast::Stmt> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} statement segment requires an index",
+            segment.field
+        ))
+    })?;
+    let stmt = body.get(index).ok_or_else(|| {
+        crate::errors::schema_error("native statement body index is out of range")
+    })?;
+    if rest.is_empty() {
+        return Ok(stmt.clone());
+    }
+    clone_stmt_from_stmt(stmt, rest)
 }
 
 #[derive(Clone)]
@@ -1134,9 +1793,118 @@ fn replace_expr_in_expr(
 fn splice_parameters_at_path(
     module: &mut ast::ModModule,
     target_path: &str,
+    target_name: &str,
     payload_args: ast::Arguments,
 ) -> PyResult<()> {
     let segments = parse_ast_path(target_path)?;
+    if parameter_path_targets_hole(module, &segments, target_name) {
+        return splice_parameters_in_stmt_list(&mut module.body, &segments, payload_args);
+    }
+    let Some(args) =
+        find_function_args_with_parameter_hole_in_stmt_list(&mut module.body, target_name)
+    else {
+        return Err(crate::errors::schema_error(
+            "native parameter splice could not find matching parameter hole",
+        ));
+    };
+    splice_payload_into_parameter_hole(args, target_name, payload_args)
+}
+
+fn parameter_path_targets_hole(
+    module: &ast::ModModule,
+    segments: &[PathSegment],
+    target_name: &str,
+) -> bool {
+    let Some(function_segments) = parameter_function_segments(segments) else {
+        return false;
+    };
+    function_args_at_segments(&module.body, function_segments)
+        .is_some_and(|args| arguments_have_parameter_hole(args, target_name))
+}
+
+fn parameter_function_segments(segments: &[PathSegment]) -> Option<&[PathSegment]> {
+    let args_index = segments
+        .iter()
+        .position(|segment| segment.field == "args")?;
+    Some(&segments[..args_index])
+}
+
+fn function_args_at_segments<'a>(
+    body: &'a [ast::Stmt],
+    segments: &[PathSegment],
+) -> Option<&'a ast::Arguments> {
+    let (first, rest) = segments.split_first()?;
+    if first.field != "body" {
+        return None;
+    }
+    let stmt = body.get(first.index?)?;
+    function_args_in_stmt_at_segments(stmt, rest)
+}
+
+fn function_args_in_stmt_at_segments<'a>(
+    stmt: &'a ast::Stmt,
+    segments: &[PathSegment],
+) -> Option<&'a ast::Arguments> {
+    if segments.is_empty() {
+        return match stmt {
+            ast::Stmt::FunctionDef(node) => Some(&node.args),
+            ast::Stmt::AsyncFunctionDef(node) => Some(&node.args),
+            _ => None,
+        };
+    }
+    let (first, rest) = segments.split_first()?;
+    match stmt {
+        ast::Stmt::FunctionDef(node) if first.field == "body" => {
+            function_args_at_segments(&node.body, segments)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
+            function_args_at_segments(&node.body, segments)
+        }
+        ast::Stmt::ClassDef(node) if first.field == "body" => {
+            let child = node.body.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::If(node) if first.field == "body" => {
+            let child = node.body.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::If(node) if first.field == "orelse" => {
+            let child = node.orelse.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::For(node) if first.field == "body" => {
+            let child = node.body.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::For(node) if first.field == "orelse" => {
+            let child = node.orelse.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::AsyncFor(node) if first.field == "body" => {
+            let child = node.body.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::AsyncFor(node) if first.field == "orelse" => {
+            let child = node.orelse.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::While(node) if first.field == "body" => {
+            let child = node.body.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        ast::Stmt::While(node) if first.field == "orelse" => {
+            let child = node.orelse.get(first.index?)?;
+            function_args_in_stmt_at_segments(child, rest)
+        }
+        _ => None,
+    }
+}
+
+fn splice_parameters_in_stmt_list(
+    body: &mut [ast::Stmt],
+    segments: &[PathSegment],
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
     let Some((first, rest)) = segments.split_first() else {
         return Err(crate::errors::schema_error(
             "parameter splice requires an argument path",
@@ -1151,27 +1919,390 @@ fn splice_parameters_at_path(
     let index = first
         .index
         .ok_or_else(|| crate::errors::schema_error("body parameter segment requires an index"))?;
-    let stmt = module.body.get_mut(index).ok_or_else(|| {
+    let stmt = body.get_mut(index).ok_or_else(|| {
         crate::errors::schema_error("native parameter body index is out of range")
     })?;
+    splice_parameters_in_stmt(stmt, rest, payload_args)
+}
+
+fn splice_parameters_in_stmt(
+    stmt: &mut ast::Stmt,
+    segments: &[PathSegment],
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "parameter splice requires an argument path",
+        ));
+    };
+    let stmt_name = stmt_kind(stmt);
     match stmt {
-        ast::Stmt::FunctionDef(node) => {
-            splice_parameters_in_arguments(&mut node.args, rest, payload_args)
-        }
-        ast::Stmt::AsyncFunctionDef(node) => {
-            splice_parameters_in_arguments(&mut node.args, rest, payload_args)
-        }
+        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
+            "args" => splice_parameters_in_arguments(&mut node.args, segments, payload_args),
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
+            "args" => splice_parameters_in_arguments(&mut node.args, segments, payload_args),
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::ClassDef(node) => match first.field.as_str() {
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::If(node) => match first.field.as_str() {
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            "orelse" => {
+                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::For(node) => match first.field.as_str() {
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            "orelse" => {
+                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            "orelse" => {
+                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::While(node) => match first.field.as_str() {
+            "body" => {
+                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
+            }
+            "orelse" => {
+                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native parameter splice cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
         _ => Err(crate::errors::schema_error(&format!(
-            "native parameter splice expected function, got {}",
-            stmt_kind(stmt)
+            "native parameter splice cannot enter statement field `{}` on {}",
+            first.field, stmt_name
         ))),
     }
+}
+
+fn splice_parameters_in_nested_stmt_list(
+    body: &mut [ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} parameter segment requires an index",
+            segment.field
+        ))
+    })?;
+    let stmt = body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native parameter body index is out of range")
+    })?;
+    splice_parameters_in_stmt(stmt, rest, payload_args)
+}
+
+fn find_function_args_with_parameter_hole_in_stmt_list<'a>(
+    body: &'a mut [ast::Stmt],
+    target_name: &str,
+) -> Option<&'a mut Box<ast::Arguments>> {
+    for stmt in body {
+        match stmt {
+            ast::Stmt::FunctionDef(node) => {
+                if arguments_have_parameter_hole(&node.args, target_name) {
+                    return Some(&mut node.args);
+                }
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::AsyncFunctionDef(node) => {
+                if arguments_have_parameter_hole(&node.args, target_name) {
+                    return Some(&mut node.args);
+                }
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::ClassDef(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::If(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::For(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::AsyncFor(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::While(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::With(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::AsyncWith(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::Try(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                for handler in &mut node.handlers {
+                    match handler {
+                        ast::ExceptHandler::ExceptHandler(handler) => {
+                            if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                                &mut handler.body,
+                                target_name,
+                            ) {
+                                return Some(args);
+                            }
+                        }
+                    }
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.finalbody,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::TryStar(node) => {
+                if let Some(args) =
+                    find_function_args_with_parameter_hole_in_stmt_list(&mut node.body, target_name)
+                {
+                    return Some(args);
+                }
+                for handler in &mut node.handlers {
+                    match handler {
+                        ast::ExceptHandler::ExceptHandler(handler) => {
+                            if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                                &mut handler.body,
+                                target_name,
+                            ) {
+                                return Some(args);
+                            }
+                        }
+                    }
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.orelse,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+                if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                    &mut node.finalbody,
+                    target_name,
+                ) {
+                    return Some(args);
+                }
+            }
+            ast::Stmt::Match(node) => {
+                for case in &mut node.cases {
+                    if let Some(args) = find_function_args_with_parameter_hole_in_stmt_list(
+                        &mut case.body,
+                        target_name,
+                    ) {
+                        return Some(args);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn arguments_have_parameter_hole(args: &ast::Arguments, target_name: &str) -> bool {
+    args.posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .chain(args.kwonlyargs.iter())
+        .any(|arg| is_parameter_hole_for_name(&arg.def.arg, target_name))
+}
+
+fn is_parameter_hole_for_name(name: &str, target_name: &str) -> bool {
+    name == format!("{target_name}__astichi_param_hole__")
+}
+
+fn splice_payload_into_parameter_hole(
+    target_args: &mut Box<ast::Arguments>,
+    target_name: &str,
+    payload_args: ast::Arguments,
+) -> PyResult<()> {
+    if let Some(index) = target_args
+        .posonlyargs
+        .iter()
+        .position(|arg| is_parameter_hole_for_name(&arg.def.arg, target_name))
+    {
+        let mut payload_args = payload_args;
+        let mut inserted = Vec::new();
+        inserted.extend(std::mem::take(&mut payload_args.posonlyargs));
+        inserted.extend(std::mem::take(&mut payload_args.args));
+        target_args.posonlyargs.splice(index..index + 1, inserted);
+        return append_parameter_payload_trailing(target_args, payload_args);
+    }
+    if let Some(index) = target_args
+        .args
+        .iter()
+        .position(|arg| is_parameter_hole_for_name(&arg.def.arg, target_name))
+    {
+        let mut payload_args = payload_args;
+        let mut inserted = Vec::new();
+        inserted.extend(std::mem::take(&mut payload_args.posonlyargs));
+        inserted.extend(std::mem::take(&mut payload_args.args));
+        target_args.args.splice(index..index + 1, inserted);
+        return append_parameter_payload_trailing(target_args, payload_args);
+    }
+    if let Some(index) = target_args
+        .kwonlyargs
+        .iter()
+        .position(|arg| is_parameter_hole_for_name(&arg.def.arg, target_name))
+    {
+        let mut payload_args = payload_args;
+        target_args.kwonlyargs.splice(
+            index..index + 1,
+            std::mem::take(&mut payload_args.kwonlyargs),
+        );
+        append_parameter_payload_trailing(target_args, payload_args)?;
+        return Ok(());
+    }
+    Err(crate::errors::schema_error(
+        "native parameter splice could not find matching parameter hole",
+    ))
+}
+
+fn append_parameter_payload_trailing(
+    target_args: &mut Box<ast::Arguments>,
+    mut payload_args: ast::Arguments,
+) -> PyResult<()> {
+    if let Some(vararg) = payload_args.vararg.take() {
+        if target_args.vararg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native parameter splice would create multiple varargs",
+            ));
+        }
+        target_args.vararg = Some(vararg);
+    }
+    target_args.kwonlyargs.append(&mut payload_args.kwonlyargs);
+    if let Some(kwarg) = payload_args.kwarg.take() {
+        if target_args.kwarg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native parameter splice would create multiple kwargs",
+            ));
+        }
+        target_args.kwarg = Some(kwarg);
+    }
+    Ok(())
 }
 
 fn splice_parameters_in_arguments(
     target_args: &mut Box<ast::Arguments>,
     segments: &[PathSegment],
-    payload_args: ast::Arguments,
+    mut payload_args: ast::Arguments,
 ) -> PyResult<()> {
     if segments.len() != 2 || segments[0].field != "args" {
         return Err(crate::errors::schema_error(
@@ -1185,14 +2316,8 @@ fn splice_parameters_in_arguments(
     let mut inserted = Vec::new();
     inserted.extend(payload_args.posonlyargs);
     inserted.extend(payload_args.args);
-    if payload_args.vararg.is_some()
-        || !payload_args.kwonlyargs.is_empty()
-        || payload_args.kwarg.is_some()
-    {
-        return Err(crate::errors::schema_error(
-            "native parameter splice primitive only supports positional payloads",
-        ));
-    }
+    let vararg = payload_args.vararg.take();
+    let kwarg = payload_args.kwarg.take();
     match target_segment.field.as_str() {
         "posonlyargs" => {
             if index >= target_args.posonlyargs.len() {
@@ -1201,7 +2326,6 @@ fn splice_parameters_in_arguments(
                 ));
             }
             target_args.posonlyargs.splice(index..index + 1, inserted);
-            Ok(())
         }
         "args" => {
             if index >= target_args.args.len() {
@@ -1210,13 +2334,30 @@ fn splice_parameters_in_arguments(
                 ));
             }
             target_args.args.splice(index..index + 1, inserted);
-            Ok(())
         }
         _ => Err(crate::errors::schema_error(&format!(
             "native parameter splice does not support `{}`",
             target_segment.field
-        ))),
+        )))?,
     }
+    if let Some(vararg) = vararg {
+        if target_args.vararg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native parameter splice would create multiple varargs",
+            ));
+        }
+        target_args.vararg = Some(vararg);
+    }
+    target_args.kwonlyargs.append(&mut payload_args.kwonlyargs);
+    if let Some(kwarg) = kwarg {
+        if target_args.kwarg.is_some() {
+            return Err(crate::errors::schema_error(
+                "native parameter splice would create multiple kwargs",
+            ));
+        }
+        target_args.kwarg = Some(kwarg);
+    }
+    Ok(())
 }
 
 fn splice_call_arguments_at_path(
@@ -1225,37 +2366,387 @@ fn splice_call_arguments_at_path(
     payload_args: Vec<ast::Expr>,
     payload_keywords: Vec<ast::Keyword>,
 ) -> PyResult<()> {
-    let (call_path, arg_index) = call_argument_parent_path(target_path)?;
-    let call = call_expr_mut_at_path(module, &call_path)?;
-    if !payload_keywords.is_empty() {
-        return Err(crate::errors::schema_error(
-            "native call-argument splice primitive only supports positional payloads",
-        ));
+    let (call_path, arg_kind, arg_index) = call_argument_parent_path(target_path)?;
+    match arg_kind {
+        CallArgumentKind::Positional => {
+            if !payload_keywords.is_empty() {
+                return Err(crate::errors::schema_error(
+                    "native positional call-argument splice received keyword payloads",
+                ));
+            }
+            let call = call_expr_mut_at_path(module, &call_path)?;
+            if arg_index >= call.args.len() {
+                return Err(crate::errors::schema_error(
+                    "native call argument index is out of range",
+                ));
+            }
+            call.args.splice(arg_index..arg_index + 1, payload_args);
+        }
+        CallArgumentKind::Keyword => {
+            if !payload_args.is_empty() {
+                return Err(crate::errors::schema_error(
+                    "native keyword call-argument splice received positional payloads",
+                ));
+            }
+            let call = call_expr_mut_at_path(module, &call_path)?;
+            if arg_index >= call.keywords.len() {
+                return Err(crate::errors::schema_error(
+                    "native call keyword index is out of range",
+                ));
+            }
+            call.keywords
+                .splice(arg_index..arg_index + 1, payload_keywords);
+        }
+        CallArgumentKind::SequenceStarred => {
+            if !payload_keywords.is_empty() {
+                return Err(crate::errors::schema_error(
+                    "native sequence call-argument splice received keyword payloads",
+                ));
+            }
+            let elts = sequence_expr_elts_mut_at_path(module, &call_path)?;
+            if arg_index >= elts.len() {
+                return Err(crate::errors::schema_error(
+                    "native sequence argument index is out of range",
+                ));
+            }
+            elts.splice(arg_index..arg_index + 1, payload_args);
+        }
     }
-    if arg_index >= call.args.len() {
-        return Err(crate::errors::schema_error(
-            "native call argument index is out of range",
-        ));
-    }
-    call.args.splice(arg_index..arg_index + 1, payload_args);
     Ok(())
 }
 
-fn call_argument_parent_path(target_path: &str) -> PyResult<(String, usize)> {
-    let Some((prefix, tail)) = target_path.rsplit_once("/args[") else {
+enum CallArgumentKind {
+    Positional,
+    Keyword,
+    SequenceStarred,
+}
+
+fn call_argument_parent_path(target_path: &str) -> PyResult<(String, CallArgumentKind, usize)> {
+    if let Some((prefix, tail)) = target_path.rsplit_once("/args[") {
+        let Some(index_text) = tail.strip_suffix("]/value") else {
+            return Err(crate::errors::schema_error(
+                "native call-argument splice expected starred args[index]/value locator",
+            ));
+        };
+        return Ok((
+            prefix.to_string(),
+            CallArgumentKind::Positional,
+            parse_call_argument_index(index_text)?,
+        ));
+    }
+    if let Some((prefix, tail)) = target_path.rsplit_once("/elts[") {
+        let Some(index_text) = tail.strip_suffix("]/value") else {
+            return Err(crate::errors::schema_error(
+                "native call-argument splice expected starred elts[index]/value locator",
+            ));
+        };
+        return Ok((
+            prefix.to_string(),
+            CallArgumentKind::SequenceStarred,
+            parse_call_argument_index(index_text)?,
+        ));
+    }
+    let Some((prefix, tail)) = target_path.rsplit_once("/keywords[") else {
         return Err(crate::errors::schema_error(
-            "native call-argument splice expected args[index] locator",
+            "native call-argument splice expected args[index], keywords[index], or elts[index] locator",
         ));
     };
     let Some(index_text) = tail.strip_suffix("]/value") else {
         return Err(crate::errors::schema_error(
-            "native call-argument splice expected starred args[index]/value locator",
+            "native call-argument splice expected keyword keywords[index]/value locator",
         ));
     };
+    Ok((
+        prefix.to_string(),
+        CallArgumentKind::Keyword,
+        parse_call_argument_index(index_text)?,
+    ))
+}
+
+fn parse_call_argument_index(index_text: &str) -> PyResult<usize> {
     let index = index_text.parse::<usize>().map_err(|_| {
         crate::errors::schema_error("native call-argument index is not an unsigned integer")
     })?;
-    Ok((prefix.to_string(), index))
+    Ok(index)
+}
+
+fn sequence_expr_elts_mut_at_path<'a>(
+    module: &'a mut ast::ModModule,
+    path: &str,
+) -> PyResult<&'a mut Vec<ast::Expr>> {
+    let expr = expr_mut_at_path(module, path)?;
+    match expr {
+        ast::Expr::Tuple(node) => Ok(&mut node.elts),
+        ast::Expr::List(node) => Ok(&mut node.elts),
+        _ => Err(crate::errors::schema_error(
+            "native sequence call-argument path did not resolve to tuple/list",
+        )),
+    }
+}
+
+fn expr_mut_at_path<'a>(module: &'a mut ast::ModModule, path: &str) -> PyResult<&'a mut ast::Expr> {
+    let segments = parse_ast_path(path)?;
+    expr_mut_from_stmt_list(&mut module.body, &segments)
+}
+
+fn expr_mut_from_stmt_list<'a>(
+    body: &'a mut [ast::Stmt],
+    segments: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "expression path cannot be the module root",
+        ));
+    };
+    if first.field != "body" {
+        return Err(crate::errors::schema_error(&format!(
+            "native expression path expected body segment, got `{}`",
+            first.field
+        )));
+    }
+    let index = first
+        .index
+        .ok_or_else(|| crate::errors::schema_error("body expression segment requires an index"))?;
+    let stmt = body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    expr_mut_from_stmt(stmt, rest)
+}
+
+fn expr_mut_from_stmt<'a>(
+    stmt: &'a mut ast::Stmt,
+    segments: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Err(crate::errors::schema_error(
+            "expression path must include a statement expression field",
+        ));
+    };
+    let stmt_name = stmt_kind(stmt);
+    match stmt {
+        ast::Stmt::Expr(node) => match first.field.as_str() {
+            "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::Assign(node) => match first.field.as_str() {
+            "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
+            "targets" => expr_mut_from_indexed_expr(&mut node.targets, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::Return(node) => match first.field.as_str() {
+            "value" => match node.value.as_mut() {
+                Some(value) => expr_mut_from_boxed_expr(value, rest),
+                None => Err(crate::errors::schema_error(
+                    "return expression value is missing",
+                )),
+            },
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::ClassDef(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::If(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::For(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::While(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::With(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncWith(node) => match first.field.as_str() {
+            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression path cannot enter statement field `{}` on {}",
+            first.field, stmt_name
+        ))),
+    }
+}
+
+fn expr_mut_from_nested_stmt_list<'a>(
+    body: &'a mut [ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} expression segment requires an index",
+            segment.field
+        ))
+    })?;
+    let stmt = body.get_mut(index).ok_or_else(|| {
+        crate::errors::schema_error("native expression body index is out of range")
+    })?;
+    expr_mut_from_stmt(stmt, rest)
+}
+
+fn expr_mut_from_boxed_expr<'a>(
+    slot: &'a mut Box<ast::Expr>,
+    rest: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    if rest.is_empty() {
+        return Ok(slot.as_mut());
+    }
+    expr_mut_from_expr(slot.as_mut(), rest)
+}
+
+fn expr_mut_from_indexed_expr<'a>(
+    items: &'a mut [ast::Expr],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!(
+            "{} expression segment requires an index",
+            segment.field
+        ))
+    })?;
+    let item = items
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native expression index is out of range"))?;
+    if rest.is_empty() {
+        return Ok(item);
+    }
+    expr_mut_from_expr(item, rest)
+}
+
+fn expr_mut_from_expr<'a>(
+    expr: &'a mut ast::Expr,
+    segments: &[PathSegment],
+) -> PyResult<&'a mut ast::Expr> {
+    let Some((first, rest)) = segments.split_first() else {
+        return Ok(expr);
+    };
+    let expr_name = expr_kind(expr);
+    match expr {
+        ast::Expr::Call(node) => match first.field.as_str() {
+            "func" => expr_mut_from_boxed_expr(&mut node.func, rest),
+            "args" => expr_mut_from_indexed_expr(&mut node.args, first, rest),
+            "keywords" => {
+                let index = first.index.ok_or_else(|| {
+                    crate::errors::schema_error("call keywords segment requires an index")
+                })?;
+                let keyword = node.keywords.get_mut(index).ok_or_else(|| {
+                    crate::errors::schema_error("native call keyword index is out of range")
+                })?;
+                expr_mut_from_expr(&mut keyword.value, rest)
+            }
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Attribute(node) => match first.field.as_str() {
+            "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::BinOp(node) => match first.field.as_str() {
+            "left" => expr_mut_from_boxed_expr(&mut node.left, rest),
+            "right" => expr_mut_from_boxed_expr(&mut node.right, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Tuple(node) => match first.field.as_str() {
+            "elts" => expr_mut_from_indexed_expr(&mut node.elts, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::List(node) => match first.field.as_str() {
+            "elts" => expr_mut_from_indexed_expr(&mut node.elts, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Starred(node) => match first.field.as_str() {
+            "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Subscript(node) => match first.field.as_str() {
+            "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
+            "slice" => expr_mut_from_boxed_expr(&mut node.slice, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        _ => Err(crate::errors::schema_error(&format!(
+            "native expression path cannot enter field `{}` on {}",
+            first.field, expr_name
+        ))),
+    }
 }
 
 fn call_expr_mut_at_path<'a>(
@@ -1295,21 +2786,102 @@ fn call_expr_mut_from_stmt<'a>(
     };
     let stmt_name = stmt_kind(stmt);
     match stmt {
-        ast::Stmt::Expr(node) if first.field == "value" => {
-            call_expr_mut_from_expr(&mut node.value, rest)
-        }
-        ast::Stmt::Assign(node) if first.field == "value" => {
-            call_expr_mut_from_expr(&mut node.value, rest)
-        }
-        ast::Stmt::Return(node) if first.field == "value" => match node.value.as_mut() {
-            Some(value) => call_expr_mut_from_expr(value, rest),
-            None => Err(crate::errors::schema_error("return call value is missing")),
+        ast::Stmt::Expr(node) => match first.field.as_str() {
+            "value" => call_expr_mut_from_expr(&mut node.value, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::Assign(node) => match first.field.as_str() {
+            "value" => call_expr_mut_from_expr(&mut node.value, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::Return(node) => match first.field.as_str() {
+            "value" => match node.value.as_mut() {
+                Some(value) => call_expr_mut_from_expr(value, rest),
+                None => Err(crate::errors::schema_error("return call value is missing")),
+            },
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::ClassDef(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::If(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::For(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
+        },
+        ast::Stmt::While(node) => match first.field.as_str() {
+            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
+            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native call path cannot enter statement field `{}` on {}",
+                first.field, stmt_name
+            ))),
         },
         _ => Err(crate::errors::schema_error(&format!(
             "native call path cannot enter statement field `{}` on {}",
             first.field, stmt_name
         ))),
     }
+}
+
+fn call_expr_mut_from_stmt_list<'a>(
+    body: &'a mut [ast::Stmt],
+    segment: &PathSegment,
+    rest: &[PathSegment],
+) -> PyResult<&'a mut ast::ExprCall> {
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!("{} call segment requires an index", segment.field))
+    })?;
+    let stmt = body
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native call body index is out of range"))?;
+    call_expr_mut_from_stmt(stmt, rest)
 }
 
 fn call_expr_mut_from_expr<'a>(
@@ -1350,6 +2922,428 @@ fn call_expr_mut_from_expr<'a>(
             "native call path cannot enter field `{}` on {}",
             first.field, expr_name
         ))),
+    }
+}
+
+fn lower_native_statement_markers_in_module(module: &mut ast::ModModule) -> PyResult<()> {
+    lower_native_statement_markers_in_stmt_list(&mut module.body)
+}
+
+fn lower_native_statement_markers_in_stmt_list(body: &mut Vec<ast::Stmt>) -> PyResult<()> {
+    rename_native_pyimport_collisions(body)?;
+    let original = std::mem::take(body);
+    for stmt in original {
+        body.append(&mut lower_native_statement_markers_in_stmt(stmt)?);
+    }
+    Ok(())
+}
+
+fn rename_native_pyimport_collisions(body: &mut [ast::Stmt]) -> PyResult<()> {
+    let import_names = pyimport_final_names_in_stmt_list(body)?;
+    if import_names.is_empty() {
+        return Ok(());
+    }
+    let existing = existing_binding_names_for_pyimport_scope(body);
+    let mut unavailable = existing
+        .union(&import_names)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for name in import_names.intersection(&existing) {
+        let replacement = fresh_native_scoped_name(name, &unavailable);
+        unavailable.insert(replacement.clone());
+        rewrite_identifier_in_non_pyimport_stmt_list(body, name, &replacement)?;
+    }
+    Ok(())
+}
+
+fn pyimport_final_names_in_stmt_list(body: &[ast::Stmt]) -> PyResult<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    for stmt in body {
+        let ast::Stmt::Expr(node) = stmt else {
+            continue;
+        };
+        for name in pyimport_final_names_from_expr(&node.value)? {
+            names.insert(name);
+        }
+    }
+    Ok(names)
+}
+
+fn pyimport_final_names_from_expr(expr: &ast::Expr) -> PyResult<Vec<String>> {
+    let ast::Expr::Call(call) = expr else {
+        return Ok(Vec::new());
+    };
+    if astichi_call_name(&call.func) != Some("astichi_pyimport") {
+        return Ok(Vec::new());
+    }
+    if let Some(names_expr) = keyword_expr(call, "names") {
+        let ast::Expr::Tuple(tuple) = names_expr else {
+            return Err(crate::errors::schema_error(
+                "native pyimport names must be a tuple of names",
+            ));
+        };
+        return tuple
+            .elts
+            .iter()
+            .map(|item| match item {
+                ast::Expr::Name(name) => Ok(name.id.to_string()),
+                _ => Err(crate::errors::schema_error(
+                    "native pyimport names must contain only names",
+                )),
+            })
+            .collect();
+    }
+    if let Some(ast::Expr::Name(name)) = keyword_expr(call, "as_") {
+        return Ok(vec![name.id.to_string()]);
+    }
+    let module_expr = keyword_expr(call, "module")
+        .ok_or_else(|| crate::errors::schema_error("native pyimport marker is missing module"))?;
+    let module_path = dotted_expr_path(module_expr).ok_or_else(|| {
+        crate::errors::schema_error("native pyimport module must be a dotted name")
+    })?;
+    Ok(module_path.into_iter().next().into_iter().collect())
+}
+
+fn existing_binding_names_for_pyimport_scope(body: &[ast::Stmt]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for stmt in body {
+        collect_existing_binding_names_stmt(stmt, &mut names);
+    }
+    names
+}
+
+fn collect_existing_binding_names_stmt(stmt: &ast::Stmt, names: &mut BTreeSet<String>) {
+    match stmt {
+        ast::Stmt::Expr(node) if is_pyimport_call_expr(&node.value) => {}
+        ast::Stmt::FunctionDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::ClassDef(node) => {
+            names.insert(node.name.to_string());
+        }
+        ast::Stmt::Assign(node) => {
+            for target in &node.targets {
+                collect_store_binding_names_expr(target, names);
+            }
+        }
+        ast::Stmt::AnnAssign(node) => {
+            collect_store_binding_names_expr(&node.target, names);
+        }
+        ast::Stmt::AugAssign(node) => {
+            collect_store_binding_names_expr(&node.target, names);
+        }
+        ast::Stmt::For(node) => {
+            collect_store_binding_names_expr(&node.target, names);
+        }
+        ast::Stmt::AsyncFor(node) => {
+            collect_store_binding_names_expr(&node.target, names);
+        }
+        ast::Stmt::With(node) => {
+            for item in &node.items {
+                if let Some(optional_vars) = item.optional_vars.as_ref() {
+                    collect_store_binding_names_expr(optional_vars, names);
+                }
+            }
+        }
+        ast::Stmt::AsyncWith(node) => {
+            for item in &node.items {
+                if let Some(optional_vars) = item.optional_vars.as_ref() {
+                    collect_store_binding_names_expr(optional_vars, names);
+                }
+            }
+        }
+        ast::Stmt::Import(node) => {
+            for alias in &node.names {
+                names.insert(
+                    alias
+                        .asname
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| {
+                            alias
+                                .name
+                                .split('.')
+                                .next()
+                                .unwrap_or(alias.name.as_str())
+                                .to_string()
+                        }),
+                );
+            }
+        }
+        ast::Stmt::ImportFrom(node) => {
+            for alias in &node.names {
+                names.insert(
+                    alias
+                        .asname
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| alias.name.to_string()),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_store_binding_names_expr(expr: &ast::Expr, names: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Name(node) => {
+            names.insert(node.id.to_string());
+        }
+        ast::Expr::Tuple(node) => {
+            for item in &node.elts {
+                collect_store_binding_names_expr(item, names);
+            }
+        }
+        ast::Expr::List(node) => {
+            for item in &node.elts {
+                collect_store_binding_names_expr(item, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fresh_native_scoped_name(name: &str, unavailable: &BTreeSet<String>) -> String {
+    let mut counter = 1;
+    loop {
+        let candidate = format!("{name}__astichi_scoped_{counter}");
+        if !unavailable.contains(&candidate) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
+fn rewrite_identifier_in_non_pyimport_stmt_list(
+    body: &mut [ast::Stmt],
+    authored_name: &str,
+    resolved_name: &str,
+) -> PyResult<usize> {
+    let mut count = 0;
+    for stmt in body {
+        if matches!(stmt, ast::Stmt::Expr(node) if is_pyimport_call_expr(&node.value)) {
+            continue;
+        }
+        count += rewrite_identifier_in_stmt(stmt, authored_name, resolved_name)?;
+    }
+    Ok(count)
+}
+
+fn lower_native_statement_markers_in_stmt(mut stmt: ast::Stmt) -> PyResult<Vec<ast::Stmt>> {
+    match &mut stmt {
+        ast::Stmt::Expr(node) => {
+            if let Some(mut imports) = pyimport_statements_from_expr(&node.value)? {
+                return Ok({
+                    for import in &mut imports {
+                        lower_native_statement_markers_in_stmt_fields(import)?;
+                    }
+                    imports
+                });
+            }
+            if is_boundary_call_expr(&node.value) {
+                return Ok(Vec::new());
+            }
+        }
+        ast::Stmt::With(node) => {
+            for item in &mut node.items {
+                lower_literal_refs_in_expr(&mut item.context_expr)?;
+                if let Some(optional_vars) = item.optional_vars.as_mut() {
+                    lower_literal_refs_in_expr(optional_vars)?;
+                }
+            }
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            if is_defaulted_block_fallback_with(node) {
+                return Ok(std::mem::take(&mut node.body));
+            }
+        }
+        _ => {}
+    }
+    lower_native_statement_markers_in_stmt_fields(&mut stmt)?;
+    Ok(vec![stmt])
+}
+
+fn lower_native_statement_markers_in_stmt_fields(stmt: &mut ast::Stmt) -> PyResult<()> {
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            strip_unfilled_parameter_holes(&mut node.args);
+            lower_native_statement_markers_in_stmt_list(&mut node.body)
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            strip_unfilled_parameter_holes(&mut node.args);
+            lower_native_statement_markers_in_stmt_list(&mut node.body)
+        }
+        ast::Stmt::ClassDef(node) => lower_native_statement_markers_in_stmt_list(&mut node.body),
+        ast::Stmt::If(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)
+        }
+        ast::Stmt::For(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)
+        }
+        ast::Stmt::AsyncFor(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)
+        }
+        ast::Stmt::While(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)
+        }
+        ast::Stmt::With(node) => lower_native_statement_markers_in_stmt_list(&mut node.body),
+        ast::Stmt::AsyncWith(node) => lower_native_statement_markers_in_stmt_list(&mut node.body),
+        ast::Stmt::Try(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            for handler in &mut node.handlers {
+                match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        lower_native_statement_markers_in_stmt_list(&mut handler.body)?;
+                    }
+                }
+            }
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.finalbody)
+        }
+        ast::Stmt::TryStar(node) => {
+            lower_native_statement_markers_in_stmt_list(&mut node.body)?;
+            for handler in &mut node.handlers {
+                match handler {
+                    ast::ExceptHandler::ExceptHandler(handler) => {
+                        lower_native_statement_markers_in_stmt_list(&mut handler.body)?;
+                    }
+                }
+            }
+            lower_native_statement_markers_in_stmt_list(&mut node.orelse)?;
+            lower_native_statement_markers_in_stmt_list(&mut node.finalbody)
+        }
+        ast::Stmt::Match(node) => {
+            for case in &mut node.cases {
+                lower_native_statement_markers_in_stmt_list(&mut case.body)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn strip_unfilled_parameter_holes(args: &mut ast::Arguments) {
+    args.posonlyargs
+        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
+    args.args
+        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
+    args.kwonlyargs
+        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
+}
+
+fn is_unfilled_parameter_hole_name(name: &str) -> bool {
+    name.ends_with("__astichi_param_hole__")
+}
+
+fn is_defaulted_block_fallback_with(node: &ast::StmtWith) -> bool {
+    if node.items.len() != 1 {
+        return false;
+    }
+    let item = &node.items[0];
+    let ast::Expr::Call(call) = &item.context_expr else {
+        return false;
+    };
+    if astichi_call_name(&call.func) != Some("astichi_hole") {
+        return false;
+    }
+    matches!(
+        item.optional_vars.as_deref(),
+        Some(ast::Expr::Name(name)) if name.id.as_str() == "astichi_fallback"
+    )
+}
+
+fn is_boundary_call_expr(expr: &ast::Expr) -> bool {
+    let ast::Expr::Call(call) = expr else {
+        return false;
+    };
+    matches!(
+        astichi_call_name(&call.func),
+        Some("astichi_pass" | "astichi_import" | "astichi_export")
+    )
+}
+
+fn pyimport_statements_from_expr(expr: &ast::Expr) -> PyResult<Option<Vec<ast::Stmt>>> {
+    let ast::Expr::Call(call) = expr else {
+        return Ok(None);
+    };
+    if !is_pyimport_call_expr(expr) {
+        return Ok(None);
+    }
+    let module_expr = keyword_expr(call, "module")
+        .ok_or_else(|| crate::errors::schema_error("native pyimport marker is missing module"))?;
+    let module_path = dotted_expr_path(module_expr).ok_or_else(|| {
+        crate::errors::schema_error("native pyimport module must be a dotted name")
+    })?;
+    if let Some(names_expr) = keyword_expr(call, "names") {
+        let ast::Expr::Tuple(tuple) = names_expr else {
+            return Err(crate::errors::schema_error(
+                "native pyimport names must be a tuple of names",
+            ));
+        };
+        let mut aliases = Vec::new();
+        for item in &tuple.elts {
+            let ast::Expr::Name(name) = item else {
+                return Err(crate::errors::schema_error(
+                    "native pyimport names must contain only names",
+                ));
+            };
+            aliases.push(ast::Alias {
+                range: Default::default(),
+                name: ast::Identifier::new(name.id.to_string()),
+                asname: None,
+            });
+        }
+        return Ok(Some(vec![ast::Stmt::ImportFrom(ast::StmtImportFrom {
+            range: Default::default(),
+            module: Some(ast::Identifier::new(module_path.join("."))),
+            names: aliases,
+            level: Some(ast::Int::new(0)),
+        })]));
+    }
+    let asname = keyword_expr(call, "as_").and_then(|expr| match expr {
+        ast::Expr::Name(name) => Some(ast::Identifier::new(name.id.to_string())),
+        _ => None,
+    });
+    Ok(Some(vec![ast::Stmt::Import(ast::StmtImport {
+        range: Default::default(),
+        names: vec![ast::Alias {
+            range: Default::default(),
+            name: ast::Identifier::new(module_path.join(".")),
+            asname,
+        }],
+    })]))
+}
+
+fn is_pyimport_call_expr(expr: &ast::Expr) -> bool {
+    let ast::Expr::Call(call) = expr else {
+        return false;
+    };
+    astichi_call_name(&call.func) == Some("astichi_pyimport")
+}
+
+fn keyword_expr<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a ast::Expr> {
+    call.keywords
+        .iter()
+        .find(|keyword| keyword.arg.as_deref() == Some(name))
+        .map(|keyword| &keyword.value)
+}
+
+fn dotted_expr_path(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::Name(name) => Some(vec![name.id.to_string()]),
+        ast::Expr::Attribute(node) => {
+            let mut path = dotted_expr_path(&node.value)?;
+            path.push(node.attr.to_string());
+            Some(path)
+        }
+        _ => None,
     }
 }
 
@@ -1541,6 +3535,10 @@ fn lower_literal_refs_in_expr(expr: &mut ast::Expr) -> PyResult<usize> {
         *expr = lowered;
         return Ok(1);
     }
+    if let Some(lowered) = lower_boundary_call_surface(expr)? {
+        *expr = lowered;
+        return Ok(1);
+    }
     match expr {
         ast::Expr::BoolOp(node) => lower_literal_refs_in_expr_list(&mut node.values),
         ast::Expr::NamedExpr(node) => {
@@ -1646,6 +3644,32 @@ fn lower_literal_refs_in_expr(expr: &mut ast::Expr) -> PyResult<usize> {
     }
 }
 
+fn lower_boundary_call_surface(expr: &ast::Expr) -> PyResult<Option<ast::Expr>> {
+    match expr {
+        ast::Expr::Call(node) if is_boundary_call_expr(expr) => Ok(node.args.first().cloned()),
+        ast::Expr::Attribute(node)
+            if matches!(node.attr.as_str(), "_" | "astichi_v")
+                && matches!(node.value.as_ref(), ast::Expr::Call(_)) =>
+        {
+            let ast::Expr::Call(call) = node.value.as_ref() else {
+                unreachable!("matches checked above");
+            };
+            if !matches!(
+                astichi_call_name(&call.func),
+                Some("astichi_pass" | "astichi_import" | "astichi_export")
+            ) {
+                return Ok(None);
+            }
+            let Some(mut replacement) = call.args.first().cloned() else {
+                return Ok(None);
+            };
+            set_ref_chain_context(&mut replacement, node.ctx)?;
+            Ok(Some(replacement))
+        }
+        _ => Ok(None),
+    }
+}
+
 fn lower_literal_refs_in_comprehensions(generators: &mut [ast::Comprehension]) -> PyResult<usize> {
     let mut count = 0;
     for generator in generators {
@@ -1659,8 +3683,7 @@ fn lower_literal_refs_in_comprehensions(generators: &mut [ast::Comprehension]) -
 fn lower_literal_ref_surface(expr: &ast::Expr) -> PyResult<Option<ast::Expr>> {
     match expr {
         ast::Expr::Call(node) if astichi_ref_call_segments(node)?.is_some() => {
-            let segments = astichi_ref_call_segments(node)?.expect("checked is_some");
-            Ok(Some(chain_expr(&segments, ast::ExprContext::Load)?))
+            lower_astichi_ref_call(node, ast::ExprContext::Load)
         }
         ast::Expr::Attribute(node)
             if matches!(node.attr.as_str(), "_" | "astichi_v")
@@ -1669,13 +3692,23 @@ fn lower_literal_ref_surface(expr: &ast::Expr) -> PyResult<Option<ast::Expr>> {
             let ast::Expr::Call(call) = node.value.as_ref() else {
                 unreachable!("matches checked above");
             };
-            match astichi_ref_call_segments(call)? {
-                Some(segments) => Ok(Some(chain_expr(&segments, node.ctx)?)),
-                None => Ok(None),
-            }
+            lower_astichi_ref_call(call, node.ctx)
         }
         _ => Ok(None),
     }
+}
+
+fn lower_astichi_ref_call(
+    node: &ast::ExprCall,
+    ctx: ast::ExprContext,
+) -> PyResult<Option<ast::Expr>> {
+    let Some(segments) = astichi_ref_call_segments(node)? else {
+        return Ok(None);
+    };
+    if let Some(base) = astichi_ref_call_base(node) {
+        return Ok(Some(chain_expr_from_base(base.clone(), &segments, ctx)?));
+    }
+    Ok(Some(chain_expr(&segments, ctx)?))
 }
 
 fn astichi_ref_call_segments(node: &ast::ExprCall) -> PyResult<Option<Vec<String>>> {
@@ -1695,6 +3728,17 @@ fn astichi_ref_call_segments(node: &ast::ExprCall) -> PyResult<Option<Vec<String
         ));
     }
     Ok(Some(segments))
+}
+
+fn astichi_ref_call_base(node: &ast::ExprCall) -> Option<&ast::Expr> {
+    let ast::Expr::Attribute(func) = node.func.as_ref() else {
+        return None;
+    };
+    if func.attr.as_str() == "astichi_ref" {
+        Some(func.value.as_ref())
+    } else {
+        None
+    }
 }
 
 fn astichi_call_name(expr: &ast::Expr) -> Option<&str> {
@@ -1744,6 +3788,35 @@ fn chain_expr(segments: &[String], ctx: ast::ExprContext) -> PyResult<ast::Expr>
         })
         .ok_or_else(|| crate::errors::schema_error("failed to build native ref chain"))?;
     set_ref_chain_context(&mut expr, ctx)?;
+    Ok(expr)
+}
+
+fn chain_expr_from_base(
+    mut base: ast::Expr,
+    segments: &[String],
+    ctx: ast::ExprContext,
+) -> PyResult<ast::Expr> {
+    if segments.is_empty() {
+        return Err(crate::errors::schema_error(
+            "native literal astichi_ref path is empty",
+        ));
+    }
+    lower_literal_refs_in_expr(&mut base)?;
+    force_load_context(&mut base);
+    let mut expr = base;
+    for (index, segment) in segments.iter().enumerate() {
+        let attr_ctx = if index + 1 == segments.len() {
+            ctx.clone()
+        } else {
+            ast::ExprContext::Load
+        };
+        expr = ast::Expr::Attribute(ast::ExprAttribute {
+            range: Default::default(),
+            value: Box::new(expr),
+            attr: ast::Identifier::new(segment.to_string()),
+            ctx: attr_ctx,
+        });
+    }
     Ok(expr)
 }
 
@@ -3665,32 +5738,32 @@ fn replace_statements_in_stmt(
     segments: &[PathSegment],
     replacement: Vec<ast::Stmt>,
 ) -> PyResult<()> {
-    let Some((first, _rest)) = segments.split_first() else {
+    let Some((first, rest)) = segments.split_first() else {
         return Err(crate::errors::schema_error(
             "statement splice requires a statement path",
         ));
     };
     match stmt {
         ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            replace_statements_in_body(&mut node.body, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
         }
         ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            replace_statements_in_body(&mut node.body, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
         }
         ast::Stmt::ClassDef(node) if first.field == "body" => {
-            replace_statements_in_body(&mut node.body, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
         }
         ast::Stmt::If(node) if first.field == "body" => {
-            replace_statements_in_body(&mut node.body, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
         }
         ast::Stmt::If(node) if first.field == "orelse" => {
-            replace_statements_in_body(&mut node.orelse, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.orelse, first, rest, replacement)
         }
         ast::Stmt::For(node) if first.field == "body" => {
-            replace_statements_in_body(&mut node.body, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
         }
         ast::Stmt::For(node) if first.field == "orelse" => {
-            replace_statements_in_body(&mut node.orelse, segments, replacement)
+            replace_statements_in_stmt_list(&mut node.orelse, first, rest, replacement)
         }
         _ => Err(crate::errors::schema_error(&format!(
             "native statement splice cannot enter field `{}` on {}",
@@ -3698,6 +5771,30 @@ fn replace_statements_in_stmt(
             stmt_kind(stmt)
         ))),
     }
+}
+
+fn replace_statements_in_stmt_list(
+    body: &mut Vec<ast::Stmt>,
+    segment: &PathSegment,
+    rest: &[PathSegment],
+    replacement: Vec<ast::Stmt>,
+) -> PyResult<()> {
+    let index = segment
+        .index
+        .ok_or_else(|| crate::errors::schema_error("statement splice segment requires an index"))?;
+    if rest.is_empty() {
+        if index >= body.len() {
+            return Err(crate::errors::schema_error(
+                "native splice body index is out of range",
+            ));
+        }
+        body.splice(index..index + 1, replacement);
+        return Ok(());
+    }
+    let stmt = body
+        .get_mut(index)
+        .ok_or_else(|| crate::errors::schema_error("native splice body index is out of range"))?;
+    replace_statements_in_stmt(stmt, rest, replacement)
 }
 
 fn replace_statement_in_body(

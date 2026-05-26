@@ -261,6 +261,217 @@ def test_native_materialization_workspace_applies_parameter_edge_when_available(
     )
 
 
+def test_native_materialization_workspace_applies_keyword_only_parameter_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "def run(value__astichi_param_hole__):\n"
+        "    pass\n",
+        "workspace.py",
+        1,
+    )
+    params_template = module.register_template_package_v2_source(
+        engine,
+        "def astichi_params(*, item=None):\n"
+        "    pass\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    params = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        params_template,
+        ("Root", "Params"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        params,
+        "astichi.operation.splice_parameters",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    module.materialization_workspace_apply_parameter_edge(engine, workspace, state, edge)
+
+    assert (
+        module.materialization_workspace_to_source(engine, workspace)
+        == "def run(*, item=None):\n    pass"
+    )
+
+
+def test_native_materialization_workspace_applies_nested_parameter_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "class Root:\n"
+        "    def run(self, value__astichi_param_hole__):\n"
+        "        pass\n",
+        "workspace.py",
+        1,
+    )
+    params_template = module.register_template_package_v2_source(
+        engine,
+        "def astichi_params(item=1):\n"
+        "    pass\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    params = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        params_template,
+        ("Root", "Params"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        params,
+        "astichi.operation.splice_parameters",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    module.materialization_workspace_apply_parameter_edge(engine, workspace, state, edge)
+
+    assert (
+        module.materialization_workspace_to_source(engine, workspace)
+        == "class Root:\n\n    def run(self, item=1):\n        pass"
+    )
+
+
+def test_native_assembly_state_parameter_splice_finds_shifted_hole_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "class Root:\n"
+        "    with astichi_hole(prelude) as astichi_fallback:\n"
+        "        pass\n"
+        "    def __init__(self, init_params__astichi_param_hole__):\n"
+        "        pass\n"
+        "    def count(self, value):\n"
+        "        pass\n",
+        "workspace.py",
+        1,
+    )
+    block_template = module.register_template_package_v2_source(
+        engine,
+        "first = 1\n"
+        "second = 2\n",
+        "workspace.py",
+        1,
+    )
+    params_template = module.register_template_package_v2_source(
+        engine,
+        "def astichi_params(count=0, *, transaction_manager=None):\n"
+        "    pass\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    block = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        block_template,
+        ("Root", "Prelude"),
+        root,
+    )
+    params = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        params_template,
+        ("Root", "Params"),
+        root,
+    )
+    prelude_record = _template_record_handle_by_name(
+        module,
+        engine,
+        state,
+        root_template,
+        root,
+        "prelude",
+    )
+    init_params_record = _template_record_handle_by_name(
+        module,
+        engine,
+        state,
+        root_template,
+        root,
+        "init_params",
+    )
+    module.assembly_state_append_edge(
+        engine,
+        state,
+        prelude_record,
+        block,
+        "astichi.operation.splice_body_at_marker",
+        0,
+    )
+    module.assembly_state_append_edge(
+        engine,
+        state,
+        init_params_record,
+        params,
+        "astichi.operation.splice_parameters",
+        1,
+    )
+
+    artifact = module.assembly_state_materialize_to_python_ast(
+        engine,
+        state,
+        {},
+        root.index,
+    )
+
+    assert ast.unparse(artifact) == (
+        "class Root:\n"
+        "    first = 1\n"
+        "    second = 2\n\n"
+        "    def __init__(self, count=0, *, transaction_manager=None):\n"
+        "        pass\n\n"
+        "    def count(self, value):\n"
+        "        pass"
+    )
+
+
 def test_native_materialization_workspace_applies_call_argument_edge_when_available() -> None:
     module = load_native_extension(required=False)
     if module is None:
@@ -313,6 +524,185 @@ def test_native_materialization_workspace_applies_call_argument_edge_when_availa
 
     assert module.materialization_workspace_to_source(engine, workspace) == (
         "result = func(1, 2)"
+    )
+
+
+def test_native_materialization_workspace_applies_sequence_call_argument_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "__slots__ = (*astichi_hole(state_slots),)\n",
+        "workspace.py",
+        1,
+    )
+    slots_template = module.register_template_package_v2_source(
+        engine,
+        "astichi_funcargs('_count', '_label')\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    slots = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        slots_template,
+        ("Root", "Slots"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        slots,
+        "astichi.operation.splice_call_arguments",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    module.materialization_workspace_apply_call_argument_edge(
+        engine,
+        workspace,
+        state,
+        edge,
+    )
+
+    assert module.materialization_workspace_to_source(engine, workspace) == (
+        "__slots__ = ('_count', '_label')"
+    )
+
+
+def test_native_materialization_workspace_applies_nested_call_argument_edge_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "if ready:\n"
+        "    result = func(*astichi_hole(args))\n",
+        "workspace.py",
+        1,
+    )
+    args_template = module.register_template_package_v2_source(
+        engine,
+        "astichi_funcargs(1)\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    args = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        args_template,
+        ("Root", "Args"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    edge = module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        args,
+        "astichi.operation.splice_call_arguments",
+        0,
+    )
+    workspace = module.materialization_workspace_create(engine, root_template)
+
+    module.materialization_workspace_apply_call_argument_edge(
+        engine,
+        workspace,
+        state,
+        edge,
+    )
+
+    assert module.materialization_workspace_to_source(engine, workspace) == (
+        "if ready:\n    result = func(1)"
+    )
+
+
+def test_native_assembly_state_materializes_elif_clause_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    root_template = module.register_template_package_v2_source(
+        engine,
+        "def dispatch(kind):\n"
+        "    if kind == 'base':\n"
+        "        return 'base'\n"
+        "    elif astichi_elif(branches):\n"
+        "        pass\n"
+        "    else:\n"
+        "        return 'fallback'\n",
+        "workspace.py",
+        1,
+    )
+    branch_template = module.register_template_package_v2_source(
+        engine,
+        "def astichi_elif():\n"
+        "    if kind == 'create':\n"
+        "        return 'created'\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        root_template,
+        ("Root",),
+    )
+    branch = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        branch_template,
+        ("Root", "Create"),
+        root,
+    )
+    target = module.assembly_state_record_handle(engine, state, root, 0)
+    module.assembly_state_append_edge(
+        engine,
+        state,
+        target,
+        branch,
+        "astichi.operation.append_clause",
+        0,
+    )
+
+    artifact = module.assembly_state_materialize_to_python_ast(
+        engine,
+        state,
+        {},
+        root.index,
+    )
+
+    assert ast.unparse(artifact) == (
+        "def dispatch(kind):\n"
+        "    if kind == 'base':\n"
+        "        return 'base'\n"
+        "    elif kind == 'create':\n"
+        "        return 'created'\n"
+        "    else:\n"
+        "        return 'fallback'"
     )
 
 
@@ -476,6 +866,51 @@ def test_native_materialization_workspace_applies_external_overlay_literal_ref_w
     )["resolved_kind"] == "Attribute"
 
 
+def test_native_assembly_state_lowers_method_ref_without_dropping_receiver_when_available() -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine,
+        "astichi_pass(state, outer_bind=True).astichi_ref(external=slot)._ = value\n",
+        "workspace.py",
+        1,
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        template,
+        ("Root",),
+    )
+    external_record = _template_record_handle_by_name(
+        module,
+        engine,
+        state,
+        template,
+        root,
+        "slot",
+    )
+    overlay = module.assembly_state_append_overlay(
+        engine,
+        state,
+        external_record,
+        "external",
+        "slot",
+    )
+
+    artifact = module.assembly_state_materialize_to_python_ast(
+        engine,
+        state,
+        {overlay.index: "'_field'"},
+        root.index,
+    )
+
+    assert ast.unparse(artifact) == "state._field = value"
+
+
 @pytest.mark.parametrize(
     ("source", "expected_count", "expected_source"),
     [
@@ -602,6 +1037,28 @@ def _engine_with_current_bundle(module: object) -> object:
     ).snapshot()
     module.register_surface_bundle(handle, deepcopy(bundle))
     return handle
+
+
+def _template_record_handle_by_name(
+    module: object,
+    engine: object,
+    state: object,
+    template: object,
+    occurrence: object,
+    resource_name: str,
+) -> object:
+    snapshot = module.template_package_v2_snapshot(engine, template)
+    record_index = next(
+        record["template_record_id"]
+        for record in snapshot["records"]
+        if record["resource_name"] == resource_name
+    )
+    return module.assembly_state_record_handle(
+        engine,
+        state,
+        occurrence,
+        record_index,
+    )
 
 
 def _apply_native_external_overlay_literal(

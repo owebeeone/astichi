@@ -61,7 +61,11 @@ result = astichi_hole(value)
     assert lower_source == ("class GeneratedClass:\n    default = 7\nresult = 40 + 2\n")
     counts = counters.snapshot()["counts"]
     assert counts["lower_materialize"] == 1
-    assert counts["lower_materialization_plan"] == 1
+    assert (
+        counts.get("lower_materialization_plan", 0)
+        + counts.get("native_materialize_operation_stream", 0)
+        == 1
+    )
     assert counts["lower_materialization_artifact"] == 1
     assert counts.get("rebuild_composable", 0) == 0
     assert counts.get("lower_materialization_adapter_fallback", 0) == 0

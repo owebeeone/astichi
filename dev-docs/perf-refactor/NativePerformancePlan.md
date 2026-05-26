@@ -1,6 +1,6 @@
 # Native Performance Roll-Build Plan
 
-Status: revised after `perf-native/p6a-artifact-boundary`.
+Status: completed through `perf-native/p6-materialization`; P7 cleanup remains.
 
 This plan starts after the native lower-engine path is functionally selectable
 by default. At this point native correctness is proven for the current Astichi
@@ -20,7 +20,7 @@ The original local profile for `pyrolyze.runtime.context_lcm` was:
 | `ASTICHI_LOWER_ENGINE=python` | about 1.9-2.0s | Python lower path only |
 | default `auto` selecting native | about 2.4s | native hooks active, but hybrid |
 
-The latest post-`p6a` local counter run changes the shape materially:
+The post-`p6a` local counter run changed the shape materially:
 
 | Mode | Wall time | Meaning |
 | --- | ---: | --- |
@@ -50,6 +50,20 @@ These counters show that P4/P5 moved the public API and YIDL runtime onto a
 request-stream facade, but did not yet make the native engine execute the
 whole stream authoritatively in one native operation. The Python facade still
 loops over requests and still mirrors enough state for Python materialization.
+
+After P6 native recursive materialization, the committed benchmark harness
+shows the native path ahead of the Python path on the local lifecycle workload:
+
+| Mode | Import wall | Total lifecycle build time | Meaning |
+| --- | ---: | ---: | --- |
+| `--engine python` | about 0.89s | about 0.81s | Python batch facade plus Python lower materialization plan |
+| `--engine native` | about 0.53s | about 0.45s | native batch engine plus native recursive materialization |
+
+The native P6 run reports `native_materialize_operation_stream=8`,
+`native_materialize_workspace_copy=8`, `copy_python_ast=8`, and no Python
+`lower_materialization_plan` counter on the success path. The remaining P7
+cleanup target is `python_scope_mirror_replay=1659`; it is compatibility mirror
+work for Python fallback/projection, not Python materialization.
 
 Native counters prove the native path is active:
 
@@ -102,12 +116,11 @@ Completed checkpoints:
 - `perf-native/p5b-native-batch-engine`
 - `perf-native/p5c-yidl-chain-batches`
 - `perf-native/p6a-artifact-boundary`
+- `perf-native/p6b-native-operation-materialization`
+- `perf-native/p6-materialization`
 
 Remaining checkpoints:
 
-- P6b: native operation materialization.
-- P6c: native hygiene and artifact cutover, tagged as
-  `perf-native/p6-materialization`.
 - P7: cleanup and closeout.
 
 ## Roll-Build Rules For This Plan
@@ -662,21 +675,24 @@ Status note:
   sub-checkpoint: already-materialized lower artifacts copy directly to
   CPython AST through an explicit `copy_python_ast` counter, so the lifecycle
   workload no longer reports `to_executable_ast` on that path.
-- The full `perf-native/p6-materialization` checkpoint remains open until the
-  native workspace can recursively materialize the current supported operation
-  stream and run the corresponding hygiene/managed-import decisions without
-  relying on the Python lower materializer.
+- `perf-native/p6b-native-operation-materialization` adds recursive native
+  occurrence/edge/overlay materialization for the current operation stream.
+- `perf-native/p6-materialization` completes the supported native success path
+  with marker stripping, fallback block handling, literal/method ref lowering,
+  parameter-hole relocation after statement splices, and pyimport collision
+  hygiene.
 
-Remaining work:
+Remaining work after P6:
 
-- P6b: recursively materialize native operation streams into a native
-  workspace.
-- P6c: move hygiene, managed imports, and final artifact cutover to the native
-  lower layer.
+- P7: remove or quarantine the Python lower-state mirror replay used for
+  fallback/projection compatibility.
 
-Do not tag `perf-native/p6-materialization` until both subphases are complete.
+Do not tag P7 until the mirror replay is gone from the native success path or is
+explicitly documented as a retained compatibility slow path.
 
 ### Phase P6b: Native Operation Materialization
+
+Status: completed as `perf-native/p6b-native-operation-materialization`.
 
 Goal: materialize the native occurrence/edge/overlay graph recursively into a
 native workspace for the current operation stream.
@@ -729,6 +745,8 @@ Stop if:
   preserve final golden output.
 
 ### Phase P6c: Native Hygiene And Artifact Cutover
+
+Status: completed as `perf-native/p6-materialization`.
 
 Goal: complete the lower-layer responsibility boundary: hygiene, managed
 imports, unresolved gates, and final artifact copy run from native package/state
@@ -784,9 +802,11 @@ performance result easy to verify.
 
 Prerequisite:
 
-- P5b, P5c, and full P6 must be complete. Do not start cleanup while Python
-  lower-state mirror replay or Python materialization fallback remains part of
-  the native success path.
+- P5b, P5c, and full P6 must be complete.
+- Python materialization fallback must not be part of the native success path.
+- Python lower-state mirror replay may still exist at P7 start, but P7 owns
+  either removing it from the success path or making it an explicit retained
+  compatibility slow path with measured cost.
 
 Work:
 
