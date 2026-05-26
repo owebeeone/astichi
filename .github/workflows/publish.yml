@@ -75,10 +75,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux: one arch per runner (aarch64 manylinux cannot run on x86_64 hosts).
           - os: ubuntu-latest
+            cibw_archs_linux: x86_64
+          - os: ubuntu-24.04-arm
+            cibw_archs_linux: aarch64
           - os: windows-latest
+            cibw_archs_linux: ""
           - os: macos-13 # x86_64
+            cibw_archs_linux: ""
           - os: macos-14 # arm64
+            cibw_archs_linux: ""
 
     steps:
       - uses: actions/checkout@v6
@@ -95,6 +102,7 @@ jobs:
       - name: Build wheels
         env:
           CIBW_BUILD_VERBOSITY: 1
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs_linux }}
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheels

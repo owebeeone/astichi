@@ -70,7 +70,8 @@ export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 /root/.cargo/bin/cargo --version
 """
-archs = ["x86_64", "aarch64"]
+# Default x86_64; publish workflow sets CIBW_ARCHS_LINUX=aarch64 on ubuntu-24.04-arm.
+archs = ["x86_64"]
 # Prepend cargo without replacing PATH: manylinux Python lives under /opt/python/...
 before-build = "export PATH=\"/root/.cargo/bin:${PATH}\""
 
