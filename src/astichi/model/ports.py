@@ -212,6 +212,39 @@ def extract_demand_ports(
     return _merge_demand_ports(ports)
 
 
+def merge_reprojected_demand_ports(
+    previous: tuple[DemandPort, ...],
+    current: tuple[DemandPort, ...],
+    *,
+    bound_externals: frozenset[str],
+) -> tuple[DemandPort, ...]:
+    """Preserve external-bind demands lost when re-deriving ports from lowered trees.
+
+    Native materialization and ``_refresh_composable`` can leave
+    ``astichi_ref(external=...)`` in the tree while port extraction only reports an
+    implied demand. Keep prior external-bind ports until ``bind()`` applies them.
+    """
+    current_external_names = {
+        port.name for port in current if port.is_external_bind_demand()
+    }
+    preserved = tuple(
+        port
+        for port in previous
+        if (
+            port.is_external_bind_demand()
+            and port.name not in current_external_names
+            and port.name not in bound_externals
+        )
+    )
+    if not preserved:
+        return current
+    preserved_names = {port.name for port in preserved}
+    filtered_current = tuple(
+        port for port in current if port.name not in preserved_names
+    )
+    return (*filtered_current, *preserved)
+
+
 def extract_supply_ports(
     markers: tuple[RecognizedMarker, ...],
 ) -> tuple[SupplyPort, ...]:

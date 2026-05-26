@@ -272,11 +272,6 @@ pip install -e ".[dev]"
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 ```
 
-## Status
-
-Early development (`1.0.0`), but already useful for controlled codegen
-pipelines.
-
 Start with:
 
 - `docs/` for the user-facing surface

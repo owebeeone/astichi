@@ -41,7 +41,9 @@ bytes after verifying both expected and actual trailers round-trip.
 
 Structural snapshots are canonical JSON fixtures for intermediate lower-engine
 state. During migration they are managed by dedicated structural golden tests
-instead of the source fixture regeneration command.
+instead of the source fixture regeneration command. Those tests run only on the
+canonical regeneration runtime (Python 3.14); other matrix runtimes skip them
+because ``ast.dump``-derived template keys vary by interpreter version.
 
 ## Commands
 

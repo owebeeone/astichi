@@ -623,7 +623,13 @@ def _native_reproject_specialized(
         mode="permissive",
         preserved_names=keep_names,
     )
-    demand_ports = extract_demand_ports(markers, classification)
+    from astichi.model.ports import merge_reprojected_demand_ports
+
+    demand_ports = merge_reprojected_demand_ports(
+        piece.demand_ports,
+        extract_demand_ports(markers, classification),
+        bound_externals=bound_externals,
+    )
     supply_ports = extract_supply_ports(markers)
     return BasicComposable(
         tree=tree,

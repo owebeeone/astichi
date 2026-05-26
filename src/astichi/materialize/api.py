@@ -259,6 +259,10 @@ def _refresh_composable(
     inventory: Inventory | None = None,
 ) -> BasicComposable:
     """Re-extract markers/classification/ports against an unrolled tree."""
+    from astichi.lowering import desugar_external_ref_kwargs
+    from astichi.model.ports import merge_reprojected_demand_ports
+
+    desugar_external_ref_kwargs(tree)
     markers = recognize_markers(tree)
     provisional = BasicComposable(
         tree=tree,
@@ -273,7 +277,11 @@ def _refresh_composable(
         mode="permissive",
         preserved_names=original.keep_names if keep_names is None else keep_names,
     )
-    demand_ports = extract_demand_ports(markers, classification)
+    demand_ports = merge_reprojected_demand_ports(
+        original.demand_ports,
+        extract_demand_ports(markers, classification),
+        bound_externals=original.bound_externals,
+    )
     if filter_satisfied_holes:
         demand_ports = _filter_satisfied_demands(tree, demand_ports)
     supply_ports = extract_supply_ports(markers)

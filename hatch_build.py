@@ -48,16 +48,6 @@ class NativeExtensionBuildHook(BuildHookInterface):
             return
         self._build_and_include_native_extension(build_data)
 
-    def finalize(self, version: str, build_data: dict[str, Any], artifact_path: str) -> None:
-        if version != "standard":
-            return
-        force_include = build_data.get("force_include") or {}
-        if not any(
-            str(dest).startswith("_astichi_native_engine") for dest in force_include.values()
-        ):
-            return
-        self._retag_platform_wheel(artifact_path)
-
     def _build_and_include_native_extension(self, build_data: dict[str, Any]) -> None:
         try:
             subprocess.run(
@@ -90,30 +80,28 @@ class NativeExtensionBuildHook(BuildHookInterface):
         force_include = build_data.setdefault("force_include", {})
         for artifact in artifacts:
             force_include[str(artifact)] = artifact.name
+        build_data["pure_python"] = False
+        build_data["tag"] = self._native_wheel_tag(artifacts)
 
-    def _retag_platform_wheel(self, wheel_path: str) -> None:
+    def _native_wheel_tag(self, artifacts: list[Path]) -> str:
         python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-        artifacts = _native_artifacts()
         if artifacts and "abi3" in artifacts[0].name:
-            abi_tag = f"cp{sys.version_info.major}{sys.version_info.minor}-abi3"
+            abi_tag = "abi3"
         else:
-            soabi = sysconfig.get_config_var("SOABI") or python_tag
-            abi_tag = soabi.split("-", 1)[0] if soabi.startswith("cp") else python_tag
-        platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_")
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "wheel",
-                "tags",
-                wheel_path,
-                "--remove",
-                "--python-tag",
-                python_tag,
-                "--abi-tag",
-                abi_tag,
-                "--platform-tag",
-                platform_tag,
-            ],
-            check=True,
+            abi_tag = self._default_abi_tag()
+        platform_tag = self._platform_tag()
+        return f"{python_tag}-{abi_tag}-{platform_tag}"
+
+    @staticmethod
+    def _default_abi_tag() -> str:
+        from packaging.tags import sys_tags
+
+        tag = next(
+            item
+            for item in sys_tags()
+            if "manylinux" not in item.platform and "musllinux" not in item.platform
         )
+        return tag.abi
+
+    def _platform_tag(self) -> str:
+        return sysconfig.get_platform().replace("-", "_").replace(".", "_")

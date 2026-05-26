@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from tests.lower_engine_matrix import (
@@ -12,6 +14,18 @@ from tests.lower_engine_matrix import (
     matrix_variant_suffix,
     node_uses_matrix_variant,
 )
+
+# Canonical structural snapshots are regenerated with Python 3.14 (see tests/README.md).
+_CANONICAL_STRUCTURAL_RUNTIME = (3, 14)
+
+
+def _is_structural_golden_test(item: pytest.Item) -> bool:
+    name = item.name
+    return (
+        "structural_golden" in name
+        or "structural_snapshot" in name
+        or "shared_lower_engine" in name
+    )
 
 
 @pytest.fixture(autouse=True, params=available_matrix_engines(), ids=str)
@@ -58,3 +72,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if deselected:
         config.hook.pytest_deselected(items=deselected)
     items[:] = kept
+
+    runtime = sys.version_info[:2]
+    if runtime != _CANONICAL_STRUCTURAL_RUNTIME:
+        skip_structural = pytest.mark.skip(
+            reason=(
+                "structural goldens are canonical on Python "
+                f"{_CANONICAL_STRUCTURAL_RUNTIME[0]}.{_CANONICAL_STRUCTURAL_RUNTIME[1]}; "
+                f"running on Python {runtime[0]}.{runtime[1]}"
+            ),
+        )
+        for item in items:
+            if _is_structural_golden_test(item):
+                item.add_marker(skip_structural)
