@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "astichi"
-version = "1.0.2"
+version = "1.0.3"
 description = "AST composition helpers: markers, hygiene, lifting, and lowering for composable Python code generation"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -71,9 +71,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --defaul
 /root/.cargo/bin/cargo --version
 """
 archs = ["x86_64", "aarch64"]
+# Prepend cargo without replacing PATH: manylinux Python lives under /opt/python/...
+before-build = "export PATH=\"/root/.cargo/bin:${PATH}\""
 
 [tool.cibuildwheel.linux.environment]
-PATH = "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 CARGO_HOME = "/root/.cargo"
 RUSTUP_HOME = "/root/.rustup"
 ASTICHI_REQUIRE_NATIVE_BUILD = "1"

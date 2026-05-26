@@ -64,7 +64,7 @@ jobs:
           import astichi
           from astichi.lower_engine.native import load_native_extension
 
-          assert astichi.__version__ == "1.0.2"
+          assert astichi.__version__ == "1.0.3"
           assert load_native_extension(required=False) is not None
           PY
 
