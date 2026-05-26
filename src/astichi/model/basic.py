@@ -87,6 +87,13 @@ class BasicComposable(Composable):
         return emit_commented_composable(self)
 
     def to_executable_ast(self) -> ast.Module:
+        if self._already_materialized:
+            counters = active_perf_counters()
+            if counters is None:
+                return clone_ast(self.tree)
+            with counters.measure("copy_python_ast"):
+                return clone_ast(self.tree)
+
         from astichi.materialize import to_executable_ast
 
         return to_executable_ast(self)

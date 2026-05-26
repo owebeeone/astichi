@@ -479,6 +479,17 @@ Stop if:
 Goal: keep materialization, hygiene, and final AST construction in the lower
 layer until the explicit artifact boundary.
 
+Status note:
+
+- `perf-native/p6a-artifact-boundary` is the safe artifact-boundary
+  sub-checkpoint: already-materialized lower artifacts copy directly to
+  CPython AST through an explicit `copy_python_ast` counter, so the lifecycle
+  workload no longer reports `to_executable_ast` on that path.
+- The full `perf-native/p6-materialization` checkpoint remains open until the
+  native workspace can recursively materialize the current supported operation
+  stream and run the corresponding hygiene/managed-import decisions without
+  relying on the Python lower materializer.
+
 Work:
 
 - Materialize from native occurrence/edge/overlay state into a native
