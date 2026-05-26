@@ -5,6 +5,7 @@ import pytest
 import astichi
 from astichi.assembler import (
     AssemblyScope,
+    BindingRequest,
     as_composable,
     as_external_value,
     as_identifier,
@@ -589,6 +590,75 @@ def test_native_scope_external_and_identifier_lookup_use_native_query(
     assert apply_counts["native_scope_append_overlay"] == 1
     assert apply_counts["native_scope_mark_satisfied"] == 1
     assert external_counts.get("debug_inventory_projection", 0) == 0
+
+
+def test_native_scope_apply_batch_covers_composable_external_and_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    scope = AssemblyScope(astichi.build())
+    root = astichi.compile(
+        "class class_name__astichi_arg__:\n"
+        "    default = astichi_bind_external(default_value)\n"
+        "\n"
+        "    def run(self):\n"
+        "        astichi_hole(body)\n"
+    )
+    body = astichi.compile("return astichi_bind_external(result)\n")
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        candidates = scope.apply_batch(
+            (
+                BindingRequest(
+                    as_identifier("GeneratedClass"),
+                    name="class_name",
+                    build_match=("Root",),
+                ),
+                BindingRequest(
+                    as_external_value(42),
+                    name="default_value",
+                    build_match=("Root",),
+                    owner_match=("GeneratedClass",),
+                ),
+                BindingRequest(
+                    as_composable(body, build_name="Body"),
+                    name="body",
+                    build_match=("Root",),
+                    owner_match=("GeneratedClass", "run"),
+                ),
+                BindingRequest(
+                    as_external_value("ok"),
+                    name="result",
+                    build_match=("Root", "Body"),
+                ),
+            )
+        )
+
+    counts = counters.snapshot()["counts"]
+    snapshot = scope.native_lower_structural_snapshot()
+    source = scope.build().materialize().emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+
+    assert len(candidates) == 4
+    assert len(snapshot["edges"]) == 1
+    assert len(snapshot["overlays"]) == 3
+    assert namespace["GeneratedClass"].default == 42  # type: ignore[attr-defined]
+    assert namespace["GeneratedClass"]().run() == "ok"  # type: ignore[operator]
+    assert counts["native_scope_batch"] == 1
+    assert counts["native_scope_batch_size"] == 4
+    assert counts["native_scope_batch_apply_count"] == 4
+    assert counts["native_scope_batch_candidate_count"] == 4
+    assert counts["native_candidate_query_identifier"] == 1
+    assert counts["native_candidate_query_external"] == 2
+    assert counts["native_candidate_query_composable"] == 1
+    assert counts.get("candidate_lookup_lower", 0) == 0
+    assert counts.get("assembly_scope_apply", 0) == 0
+    assert counts.get("debug_inventory_projection", 0) == 0
 
 
 def test_native_scope_apply_appends_child_occurrence_when_available(

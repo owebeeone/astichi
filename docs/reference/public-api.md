@@ -109,10 +109,12 @@ Experimental inventory-driven helpers for generated composition planners:
 | Name | Role |
 |------|------|
 | `AssemblyScope` | Wrapper around a builder that refreshes an inventory view after candidate application. |
+| `BindingRequest` | Ordered resource-resolution request for `AssemblyScope.apply_batch(...)`. |
 | `as_composable` | Wrap a composable resource with a builder name, optional build index, and insertion order. |
 | `as_external_value` | Wrap a value for `astichi_bind_external(...)` demands. |
 | `as_identifier` | Wrap a Python identifier spelling for identifier demands. |
 | `find_candidates` | Locate compatible inventory records using optional name, build-path, and code-owner selectors. |
+| `apply_batch` | Resolve and apply an ordered request stream without using the single-call compatibility counters. |
 | `require_one` | Accept exactly one candidate or raise a detailed ambiguity/missing diagnostic. |
 
 Build and materialize remain authoritative. The assembler helpers are a thin

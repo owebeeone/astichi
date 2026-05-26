@@ -5,6 +5,7 @@ import pytest
 import astichi
 from astichi.assembler import (
     AssemblyScope,
+    BindingRequest,
     as_composable,
     as_external_value,
     as_identifier,
@@ -12,6 +13,7 @@ from astichi.assembler import (
 )
 from astichi.assembler.scope import BindingCandidate, find_candidates_in_inventory
 from astichi.model import empty_inventory
+from astichi.perf_counters import collect_perf_counters
 
 
 class UnsupportedCandidate(BindingCandidate):
@@ -166,6 +168,68 @@ astichi_pass(service).append(astichi_bind_external(delta))
     generated = namespace["GeneratedClass"]()
     assert namespace["GeneratedClass"].default == 42
     assert generated.run("ignored") == [1]
+
+
+def test_scope_apply_batch_resolves_sequential_requests_without_hot_api_counters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "python")
+    root = astichi.compile(
+        """
+class class_name__astichi_arg__:
+    default = astichi_bind_external(default_value)
+
+    def run(self):
+        astichi_hole(body)
+"""
+    )
+    body = astichi.compile("return astichi_bind_external(result)\n")
+
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    with collect_perf_counters() as counters:
+        candidates = scope.apply_batch(
+            (
+                BindingRequest(
+                    as_identifier("GeneratedClass"),
+                    name="class_name",
+                    build_match=("Root",),
+                ),
+                BindingRequest(
+                    as_external_value(42),
+                    name="default_value",
+                    build_match=("Root",),
+                    owner_match=("GeneratedClass",),
+                ),
+                BindingRequest(
+                    as_composable(body, build_name="Body"),
+                    name="body",
+                    build_match=("Root",),
+                    owner_match=("GeneratedClass", "run"),
+                ),
+                BindingRequest(
+                    as_external_value("ok"),
+                    name="result",
+                    build_match=("Root", "Body"),
+                ),
+            )
+        )
+
+    source = scope.build().materialize().emit(provenance=False)
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    counts = counters.snapshot()["counts"]
+
+    assert len(candidates) == 4
+    assert namespace["GeneratedClass"].default == 42  # type: ignore[attr-defined]
+    assert namespace["GeneratedClass"]().run() == "ok"  # type: ignore[operator]
+    assert counts["scope_batch"] == 1
+    assert counts["scope_batch_size"] == 4
+    assert counts["scope_batch_apply_count"] == 4
+    assert counts["scope_batch_candidate_count"] == 4
+    assert counts.get("candidate_lookup_lower", 0) == 0
+    assert counts.get("assembly_scope_apply", 0) == 0
 
 
 def test_scope_applies_elif_clause_resource_candidates() -> None:

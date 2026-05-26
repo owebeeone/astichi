@@ -91,6 +91,25 @@ scope.apply(candidate)
 result = scope.build()
 ```
 
+Batch-capable callers can pass an ordered request stream and let the scope
+resolve and apply each request through the lower layer:
+
+```python
+from astichi.assembler import BindingRequest
+
+scope.apply_batch(
+    (
+        BindingRequest(as_identifier("GeneratedGetter"), name="class_name"),
+        BindingRequest(as_external_value(9), name="delta"),
+    )
+)
+```
+
+`BindingRequest(..., allow_equivalent_demand_sites=True)` accepts repeated
+same-name demand sites only when every candidate has the same build path, code
+owner, name, and inventory kind. This is intended for generated planners that
+coalesce equivalent binding markers.
+
 `scope.apply(...)` currently supports:
 
 - composable candidates: register the resource with its build name/index and

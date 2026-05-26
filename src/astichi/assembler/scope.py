@@ -133,6 +133,17 @@ class BindingCandidate(ABC):
 
 
 @dataclass(frozen=True)
+class BindingRequest:
+    """One resource-resolution request for batched scope application."""
+
+    resource: BindingResource
+    name: str | None = None
+    build_match: tuple[str, ...] | None = None
+    owner_match: tuple[str, ...] | None = None
+    allow_equivalent_demand_sites: bool = False
+
+
+@dataclass(frozen=True)
 class ComposableResource(BindingResource):
     """Composable resource that can satisfy compatible additive holes."""
 
@@ -449,6 +460,65 @@ class AssemblyScope:
             build_match=build_match,
             owner_match=owner_match,
         )
+        return self._find_candidates(resource, selector)
+
+    def apply_batch(
+        self,
+        requests: Iterable[BindingRequest],
+    ) -> tuple[BindingCandidate, ...]:
+        """Resolve and apply a sequence of binding requests through the lower layer."""
+        request_tuple = tuple(requests)
+        counters = active_perf_counters()
+        counter_prefix = (
+            "native_scope_batch"
+            if self._native_module is not None
+            else "scope_batch"
+        )
+        if counters is None:
+            return self._apply_batch_uncounted(request_tuple)
+        with counters.measure(counter_prefix):
+            counters.increment(f"{counter_prefix}_size", len(request_tuple))
+            candidates = self._apply_batch_uncounted(request_tuple)
+            counters.increment(f"{counter_prefix}_apply_count", len(candidates))
+            return candidates
+
+    def _apply_batch_uncounted(
+        self,
+        requests: tuple[BindingRequest, ...],
+    ) -> tuple[BindingCandidate, ...]:
+        applied: list[BindingCandidate] = []
+        candidate_count = 0
+        for request in requests:
+            candidates = self._find_candidates(
+                request.resource,
+                DemandSelector(
+                    name=request.name,
+                    build_match=request.build_match,
+                    owner_match=request.owner_match,
+                ),
+            )
+            candidate_count += len(candidates)
+            candidate = _select_batch_candidate(
+                candidates,
+                allow_equivalent_demand_sites=request.allow_equivalent_demand_sites,
+            )
+            self._apply_candidate(candidate, count_compatibility_kind=False)
+            applied.append(candidate)
+        counters = active_perf_counters()
+        if counters is not None:
+            counter_prefix = (
+                "native_scope_batch"
+                if self._native_module is not None
+                else "scope_batch"
+            )
+            counters.increment(f"{counter_prefix}_candidate_count", candidate_count)
+        return tuple(applied)
+
+    def _find_candidates(
+        self,
+        resource: BindingResource,
+        selector: DemandSelector,
+    ) -> tuple[BindingCandidate, ...]:
         if isinstance(resource, ComposableResource):
             return self._find_lower_composable_candidates(resource, selector)
         if isinstance(resource, ExternalValueResource):
@@ -460,19 +530,27 @@ class AssemblyScope:
     @counted_perf_call("assembly_scope_apply")
     def apply(self, candidate: BindingCandidate) -> None:
         """Apply one candidate to the underlying builder graph."""
+        self._apply_candidate(candidate, count_compatibility_kind=True)
+
+    def _apply_candidate(
+        self,
+        candidate: BindingCandidate,
+        *,
+        count_compatibility_kind: bool,
+    ) -> None:
         counters = active_perf_counters()
         if isinstance(candidate, ComposableCandidate):
-            if counters is not None:
+            if counters is not None and count_compatibility_kind:
                 counters.increment("assembly_scope_apply_composable")
             self._apply_composable(candidate)
             return
         if isinstance(candidate, ExternalValueCandidate):
-            if counters is not None:
+            if counters is not None and count_compatibility_kind:
                 counters.increment("assembly_scope_apply_external_value")
             self._apply_external_value(candidate)
             return
         if isinstance(candidate, IdentifierNameCandidate):
-            if counters is not None:
+            if counters is not None and count_compatibility_kind:
                 counters.increment("assembly_scope_apply_identifier_name")
             self._apply_identifier_name(candidate)
             return
@@ -3274,6 +3352,40 @@ def require_one(candidates: tuple[BindingCandidate, ...]) -> BindingCandidate:
         lines.append(f"candidate {index}:")
         lines.extend(f"  {line}" for line in candidate.diagnostic_lines())
     raise ValueError("\n".join(lines))
+
+
+def _select_batch_candidate(
+    candidates: tuple[BindingCandidate, ...],
+    *,
+    allow_equivalent_demand_sites: bool,
+) -> BindingCandidate:
+    if not allow_equivalent_demand_sites or len(candidates) <= 1:
+        return require_one(candidates)
+    first = candidates[0]
+    first_record = _candidate_demand_record(first)
+    if first_record is None:
+        return require_one(candidates)
+    for candidate in candidates[1:]:
+        record = _candidate_demand_record(candidate)
+        if (
+            record is None
+            or record.build_path != first_record.build_path
+            or record.code_owner != first_record.code_owner
+            or record.name != first_record.name
+            or record.kind != first_record.kind
+        ):
+            return require_one(candidates)
+    return first
+
+
+def _candidate_demand_record(
+    candidate: BindingCandidate,
+) -> InventoryRecord | None:
+    if isinstance(candidate, ComposableCandidate):
+        return candidate.target_record
+    if isinstance(candidate, ExternalValueCandidate | IdentifierNameCandidate):
+        return candidate.demand_record
+    return None
 
 
 def code_owner_parts(code_owner: CodePath) -> tuple[str, ...]:

@@ -2,6 +2,7 @@
 
 from astichi.assembler.scope import (
     AssemblyScope,
+    BindingRequest,
     as_composable,
     as_external_value,
     as_identifier,
@@ -10,6 +11,7 @@ from astichi.assembler.scope import (
 
 __all__ = [
     "AssemblyScope",
+    "BindingRequest",
     "as_composable",
     "as_external_value",
     "as_identifier",
