@@ -12,7 +12,7 @@ from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
-from astichi.model.external_values import validate_external_value
+from astichi.model.external_values import validate_external_value, value_to_ast
 from astichi.model.inventory import (
     Inventory,
     build_inventory,
@@ -27,6 +27,7 @@ from astichi.model.ports import (
     extract_supply_ports,
 )
 from astichi.perf_counters import counted_perf_call
+from astichi.perf_counters import active_perf_counters
 
 if TYPE_CHECKING:
     from astichi.hygiene import NameClassification
@@ -145,6 +146,10 @@ class BasicComposable(Composable):
         for value in resolved.values():
             validate_external_value(value)
 
+        native = _try_native_bind(self, resolved)
+        if native is not None:
+            return native
+
         rebound_tree = clone_ast(self.tree)
         apply_external_bindings(rebound_tree, resolved)
         return _rebuild_composable(
@@ -183,6 +188,9 @@ class BasicComposable(Composable):
         new_keep_names = frozenset(merged)
         if new_keep_names == self.keep_names:
             return self
+        native = _try_native_keep_names(self, new_keep_names)
+        if native is not None:
+            return native
         return _rebuild_composable(
             tree=clone_ast(self.tree),
             origin=self.origin,
@@ -259,6 +267,10 @@ class BasicComposable(Composable):
             existing[key] = value
 
         merged = tuple(sorted(existing.items()))
+        native = _try_native_bind_identifier(self, resolved, merged)
+        if native is not None:
+            return native
+
         rebound_tree = clone_ast(self.tree)
         from astichi.materialize.api import (
             _resolve_arg_identifiers,
@@ -360,6 +372,271 @@ def apply_source_overlay(
     if arg_names is not None:
         specialized = specialized.bind_identifier(arg_names)
     return specialized
+
+
+def _try_native_bind(
+    piece: BasicComposable,
+    resolved: Mapping[str, object],
+) -> BasicComposable | None:
+    if not resolved:
+        return None
+    session = _native_specialization_session(piece)
+    if session is None:
+        return None
+    module, engine, template, workspace = session
+    try:
+        state, root = _native_overlay_state(module, engine, template)
+        for name, value in resolved.items():
+            record_index = _native_record_index(piece, "external.bind", name)
+            if record_index is None:
+                return None
+            target = module.assembly_state_record_handle(
+                engine,
+                state,
+                root,
+                record_index,
+            )
+            overlay = module.assembly_state_append_overlay(
+                engine,
+                state,
+                target,
+                "external",
+                name,
+            )
+            module.materialization_workspace_apply_external_overlay_literal(
+                engine,
+                workspace,
+                state,
+                overlay,
+                ast.unparse(value_to_ast(value)),
+            )
+        _increment_counter("native_specialize_bind")
+        return _native_reproject_specialized(
+            piece,
+            module=module,
+            engine=engine,
+            workspace=workspace,
+            bound_externals=frozenset(set(piece.bound_externals) | set(resolved)),
+            arg_bindings=piece.arg_bindings,
+            keep_names=piece.keep_names,
+        )
+    finally:
+        module.engine_close(engine)
+
+
+def _try_native_bind_identifier(
+    piece: BasicComposable,
+    resolved: Mapping[str, str],
+    merged: tuple[tuple[str, str], ...],
+) -> BasicComposable | None:
+    if not resolved:
+        return None
+    session = _native_specialization_session(piece)
+    if session is None:
+        return None
+    module, engine, template, workspace = session
+    try:
+        state, root = _native_overlay_state(module, engine, template)
+        for name, target_name in resolved.items():
+            record_index = _native_record_index(piece, "identifier.demand", name)
+            if record_index is None:
+                return None
+            target = module.assembly_state_record_handle(
+                engine,
+                state,
+                root,
+                record_index,
+            )
+            overlay = module.assembly_state_append_overlay(
+                engine,
+                state,
+                target,
+                _native_identifier_overlay_kind(piece, name),
+                target_name,
+            )
+            module.materialization_workspace_apply_identifier_overlay(
+                engine,
+                workspace,
+                state,
+                overlay,
+            )
+        _increment_counter("native_specialize_identifier")
+        return _native_reproject_specialized(
+            piece,
+            module=module,
+            engine=engine,
+            workspace=workspace,
+            bound_externals=piece.bound_externals,
+            arg_bindings=merged,
+            keep_names=piece.keep_names,
+        )
+    finally:
+        module.engine_close(engine)
+
+
+def _try_native_keep_names(
+    piece: BasicComposable,
+    keep_names: frozenset[str],
+) -> BasicComposable | None:
+    if not _can_native_specialize(piece):
+        return None
+    _increment_counter("native_specialize_keep")
+    return BasicComposable(
+        tree=piece.tree,
+        origin=piece.origin,
+        markers=piece.markers,
+        classification=piece.classification,
+        demand_ports=piece.demand_ports,
+        supply_ports=piece.supply_ports,
+        inventory=piece.inventory,
+        bound_externals=piece.bound_externals,
+        arg_bindings=piece.arg_bindings,
+        keep_names=keep_names,
+        _lower_template=piece._lower_template,
+        _already_materialized=piece._already_materialized,
+    )
+
+
+def _native_specialization_session(
+    piece: BasicComposable,
+) -> tuple[object, object, object, object] | None:
+    binding = piece._lower_template
+    if not _can_native_specialize(piece):
+        return None
+    assert binding is not None
+    assert binding.native_source is not None
+    assert binding.native_origin is not None
+    from astichi.lower_engine import ensure_current_native_surface_bundle
+    from astichi.lower_engine.native import load_native_extension
+
+    module = load_native_extension(required=False)
+    if module is None:
+        return None
+    engine = module.engine_create()
+    try:
+        ensure_current_native_surface_bundle(
+            module=module,
+            engine_handle=engine,
+        )
+        template = module.register_template_package_v2_source(
+            engine,
+            binding.native_source,
+            binding.native_origin.file_name,
+            binding.native_origin.line_number,
+        )
+        workspace = module.materialization_workspace_create(engine, template)
+    except Exception:
+        module.engine_close(engine)
+        raise
+    return module, engine, template, workspace
+
+
+def _can_native_specialize(piece: BasicComposable) -> bool:
+    binding = piece._lower_template
+    if binding is None:
+        return False
+    if not getattr(binding, "backend", "").startswith("native-"):
+        return False
+    if binding.native_source is None or binding.native_origin is None:
+        return False
+    from astichi.lower_engine.native import select_lower_engine
+
+    return select_lower_engine().selected_engine in {"native-rust", "native-cpp"}
+
+
+def _native_overlay_state(
+    module: object,
+    engine: object,
+    template: object,
+) -> tuple[object, object]:
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(
+        engine,
+        state,
+        template,
+        ("Root",),
+    )
+    return state, root
+
+
+def _native_record_index(
+    piece: BasicComposable,
+    inventory_kind: str,
+    name: str,
+) -> int | None:
+    binding = piece._lower_template
+    if binding is None:
+        return None
+    for index, record in enumerate(binding.record_specs):
+        if record.inventory_kind == inventory_kind and record.resource_name == name:
+            return index
+    return None
+
+
+def _native_identifier_overlay_kind(piece: BasicComposable, name: str) -> str:
+    for port in piece.demand_ports:
+        if port.name == name and port.is_identifier_demand():
+            if port.sources == frozenset({"arg"}):
+                return "identifier_suffix"
+            return "identifier"
+    return "identifier"
+
+
+def _native_reproject_specialized(
+    piece: BasicComposable,
+    *,
+    module: object,
+    engine: object,
+    workspace: object,
+    bound_externals: frozenset[str],
+    arg_bindings: tuple[tuple[str, str], ...],
+    keep_names: frozenset[str],
+) -> BasicComposable:
+    from astichi.hygiene import analyze_names
+    from astichi.lower_engine import register_native_template_source_direct
+
+    tree = module.materialization_workspace_copy_to_python_ast(engine, workspace)
+    source = f"{module.materialization_workspace_to_source(engine, workspace)}\n"
+    lower_template, inventory = register_native_template_source_direct(
+        source=source,
+        origin=piece.origin,
+        tree=tree,
+    )
+    markers = recognize_markers(tree)
+    provisional = BasicComposable(
+        tree=tree,
+        origin=piece.origin,
+        markers=markers,
+        bound_externals=bound_externals,
+        arg_bindings=arg_bindings,
+        keep_names=keep_names,
+    )
+    classification = analyze_names(
+        provisional,
+        mode="permissive",
+        preserved_names=keep_names,
+    )
+    demand_ports = extract_demand_ports(markers, classification)
+    supply_ports = extract_supply_ports(markers)
+    return BasicComposable(
+        tree=tree,
+        origin=piece.origin,
+        markers=markers,
+        classification=classification,
+        demand_ports=demand_ports,
+        supply_ports=supply_ports,
+        inventory=inventory,
+        bound_externals=bound_externals,
+        arg_bindings=arg_bindings,
+        keep_names=keep_names,
+        _lower_template=lower_template,
+    )
+
+
+def _increment_counter(key: str) -> None:
+    counters = active_perf_counters()
+    if counters is not None:
+        counters.increment(key)
 
 
 @counted_perf_call("rebuild_composable")
