@@ -176,7 +176,7 @@ Tag: `rust-fsn/f0a-guards`
 
 ### F0b — Leak inventory (classify: delete vs test-only) + baseline table
 
-Appendix: `FullSelfNativeRustAstPlan-F0b-inventory.md` (create in F0b).
+Appendix: `FullSelfNativeRustAstPlan-F0b-inventory.md`.
 
 Tag: `rust-fsn/f0b-baseline`
 
