@@ -59,5 +59,5 @@ location strict / message loose (plan §F3c).
 
 - [ ] Native validators cover all authored-surface rows above
 - [ ] F3c differential green on `tests/data/gold_src/`
-- [ ] `python_compile_ast_parse` counter zero on lifecycle import
-- [ ] Advertise `no_python_parse_compile.v1`
+- [x] `python_compile_ast_parse` counter zero on lifecycle import (F3d)
+- [x] Advertise `no_python_parse_compile.v1` (F3d)
