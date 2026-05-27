@@ -123,8 +123,6 @@ def test_self_native_production_guard_requires_caps_and_counters() -> None:
     summary = _run_lifecycle_baseline_subprocess()
     counts = summary["astichi_counters"]["counts"]  # type: ignore[index]
     assert_production_forbidden_zero(counts, context="hybrid import (pre self-native)")
-    with pytest.raises(AssertionError, match="missing required counters"):
-        assert_production_requirements(
-            counts,
-            context="self-native production (not enabled yet)",
-        )
+    assert missing_production_requirements(counts) == ()
+    capabilities = load_native_extension().capabilities()
+    assert not has_self_native_production(capabilities)

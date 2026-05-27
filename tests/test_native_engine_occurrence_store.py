@@ -13,6 +13,7 @@ from astichi.assembler import (
 )
 from astichi.lower_engine import LowerEngine, current_surface_bundle_spec
 from astichi.lower_engine.native import load_native_extension, native_capabilities
+from astichi.lower_engine.self_native import SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE
 from astichi.perf_counters import collect_perf_counters
 from astichi.structural_snapshot import write_structural_snapshot
 
@@ -674,6 +675,17 @@ def test_native_scope_mirror_replay_is_opt_in_compatibility_path(
 ) -> None:
     if load_native_extension(required=False) is None:
         pytest.skip("native engine extension is not built")
+
+    capabilities = native_capabilities()
+    if (
+        capabilities is not None
+        and SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE
+        in capabilities.get("engine_features", ())
+    ):
+        pytest.skip(
+            "mirror replay is disabled when native.self_native.scope_no_mirror_replay.v1 "
+            "is advertised"
+        )
 
     monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
     monkeypatch.setenv("ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY", "1")
