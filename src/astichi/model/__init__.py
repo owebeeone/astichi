@@ -21,6 +21,7 @@ from astichi.model.descriptors import (
 from astichi.model.external_values import (
     MAX_EXTERNAL_VALUE_DEPTH,
     validate_external_value,
+    external_value_to_source,
     value_to_ast,
 )
 from astichi.model.inventory import (
@@ -157,5 +158,6 @@ __all__ = [
     "extract_supply_ports",
     "validate_external_value",
     "validate_port_pair",
+    "external_value_to_source",
     "value_to_ast",
 ]

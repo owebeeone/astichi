@@ -19,6 +19,27 @@ def value_to_ast(value: object) -> ast.expr:
     return _convert_external_value(value, depth=0, path="value", active_ids=frozenset())
 
 
+def external_value_to_source(value: object) -> str:
+    """Serialize a supported external bind value to expression source text.
+
+    Output must match ``ast.unparse(value_to_ast(value))`` for all supported
+    values. Used for native ``external_literals`` without ``ast.unparse``.
+    """
+
+    validate_external_value(value)
+    return _external_value_to_source(
+        value,
+        depth=0,
+        path="value",
+        active_ids=frozenset(),
+    )
+
+
+def reference_external_value_source(value: object) -> str:
+    """Oracle encoding for tests (F1a parity)."""
+    return ast.unparse(value_to_ast(value))
+
+
 def _validate_external_value(
     value: object,
     *,
@@ -222,3 +243,67 @@ def _descend_container(
     if object_id in active_ids:
         raise ValueError(f"recursive external binding value is not supported at {path}")
     return active_ids | {object_id}
+
+
+def _external_value_to_source(
+    value: object,
+    *,
+    depth: int,
+    path: str,
+    active_ids: frozenset[int],
+) -> str:
+    _check_external_value_depth(depth=depth, path=path)
+
+    if value is None or isinstance(value, bool | int | float | str):
+        return repr(value)
+    if isinstance(value, tuple):
+        next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+        parts = [
+            _external_value_to_source(
+                item,
+                depth=depth + 1,
+                path=f"{path}[{index}]",
+                active_ids=next_active_ids,
+            )
+            for index, item in enumerate(value)
+        ]
+        if len(parts) == 1:
+            return f"({parts[0]},)"
+        if not parts:
+            return "()"
+        return f"({', '.join(parts)})"
+    if isinstance(value, list):
+        next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+        parts = [
+            _external_value_to_source(
+                item,
+                depth=depth + 1,
+                path=f"{path}[{index}]",
+                active_ids=next_active_ids,
+            )
+            for index, item in enumerate(value)
+        ]
+        return f"[{', '.join(parts)}]"
+    if isinstance(value, dict):
+        next_active_ids = _descend_container(value, path=path, active_ids=active_ids)
+        items = [
+            (
+                _external_value_to_source(
+                    key,
+                    depth=depth + 1,
+                    path=f"{path}.keys[{index}]",
+                    active_ids=next_active_ids,
+                ),
+                _external_value_to_source(
+                    item,
+                    depth=depth + 1,
+                    path=f"{path}.values[{index}]",
+                    active_ids=next_active_ids,
+                ),
+            )
+            for index, (key, item) in enumerate(value.items())
+        ]
+        rendered = ", ".join(f"{key}: {item}" for key, item in items)
+        return f"{{{rendered}}}"
+
+    raise ValueError(f"unsupported external binding value type at {path}: {type(value).__name__}")
