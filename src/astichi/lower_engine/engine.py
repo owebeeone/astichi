@@ -151,6 +151,7 @@ class LowerEngine:
                 local_bindings=spec.local_bindings,
                 arguments=spec.arguments,
                 parent_scope_id=spec.parent_scope_id,
+                start_line=spec.start_line,
             )
         for spec in markers:
             package.add_marker(

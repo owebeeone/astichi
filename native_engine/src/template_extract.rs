@@ -3067,6 +3067,15 @@ pub(crate) fn native_template_key(
     template_key(py, &ast_dump, source_summary)
 }
 
+/// Package-v2 registration key without building a CPython ``ast`` tree.
+pub(crate) fn native_template_key_from_source(
+    py: Python<'_>,
+    source: &str,
+    source_summary: &str,
+) -> PyResult<String> {
+    template_key(py, source, source_summary)
+}
+
 fn template_key(py: Python<'_>, ast_dump: &str, source_summary: &str) -> PyResult<String> {
     let payload = ast_dump.to_string() + "\n" + source_summary;
     let digest: String = py

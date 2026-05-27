@@ -5,15 +5,15 @@
   "source_summary": "comment marker source",
   "string_table": [
     "",
-    "comment_marker_template",
-    "comment marker source",
-    "module",
     "Box",
-    "class",
-    "comment",
     "astichi_comment",
-    "module note",
-    "class note"
+    "class",
+    "class note",
+    "comment",
+    "comment marker source",
+    "comment_marker_template",
+    "module",
+    "module note"
   ],
   "path_table": [
     [],
@@ -64,7 +64,8 @@
       ],
       "parent_scope_id": 0,
       "scope_id": 1,
-      "scope_kind": "class"
+      "scope_kind": "class",
+      "start_line": 4
     }
   ],
   "markers": [

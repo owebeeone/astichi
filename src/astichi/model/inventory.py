@@ -78,6 +78,17 @@ class StaticCodePathNode(CodePathNode):
         return self.name
 
 
+@dataclass(frozen=True, eq=False)
+class LocatedStaticCodePathNode(CodePathNode):
+    """Logical owner with a known source location from native package metadata."""
+
+    name: str
+    source_location: SourceLocation | None = None
+
+    def logical_name(self) -> str:
+        return self.name
+
+
 class ResourceName(ABC):
     """Name of an inventory resource."""
 

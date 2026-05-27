@@ -4,13 +4,12 @@ Status: index only.
 
 ## Active plan (implement here)
 
-**[`FullSelfNativeRustAstPlan.md`](FullSelfNativeRustAstPlan.md)** — canonical
-roll-build for full self-native: Rust through materialize, one `copy_python_ast`
-handoff, hybrid Python AST work removed from the production path. Tags:
-`rust-fsn/*`. F0 sign-off: 2026-05-27.
+**[`HotPathNoPythonPlan.md`](HotPathNoPythonPlan.md)** — fool-proof gate:
+`tests/test_lifecycle_hot_path_python_gate.py` + counter table (`native_compile_parse`
+must be 0 on lifecycle import; `copy_python_ast` == class count). Tags: `rust-hot/*`.
 
-Roll-build **F0c–F6** complete (`rust-fsn/*` tags). Do not open new work from the
-historical files below.
+**[`FullSelfNativeRustAstPlan.md`](FullSelfNativeRustAstPlan.md)** — historical
+`rust-fsn/*` slice work (routing/oracles); did not clear the hot-path gate.
 
 ## Historical context (do not execute)
 

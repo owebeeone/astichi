@@ -539,6 +539,12 @@ def _format_target_address(target: TargetRef) -> str:
     return f"{target.root_instance}{ref_prefix}.{target.target_name}{suffix}"
 
 
+def _inventory_hole_target_names(composable: Composable) -> frozenset[str]:
+    if not isinstance(composable, BasicComposable):
+        return frozenset()
+    return frozenset(composable.inventory.hole_map.keys())
+
+
 def _validate_registered_target_site(
     graph: BuilderGraph,
     target: TargetRef,
@@ -550,10 +556,17 @@ def _validate_registered_target_site(
         instance_name=target.root_instance,
         role="target path",
     )
+    record = graph._instances.get(target.root_instance)
+    inventory_holes = (
+        _inventory_hole_target_names(record.composable)
+        if record is not None
+        else frozenset()
+    )
     if target.target_name in (
         collect_hole_names_in_body(shell.body)
         | collect_elif_target_names_in_body(shell.body)
         | collect_param_hole_names_in_body(shell.body)
+        | inventory_holes
     ):
         return
     raise ValueError(

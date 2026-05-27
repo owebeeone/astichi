@@ -5,21 +5,21 @@
   "source_summary": "marker order source",
   "string_table": [
     "",
-    "marker_order_template",
-    "marker order source",
-    "module",
     "Box",
-    "class",
-    "make",
-    "function",
-    "self",
-    "keep",
     "astichi_keep",
-    "top",
+    "astichi_ref",
     "box",
+    "class",
+    "function",
+    "keep",
+    "make",
+    "marker order source",
+    "marker_order_template",
     "method",
+    "module",
     "ref",
-    "astichi_ref"
+    "self",
+    "top"
   ],
   "path_table": [
     [],
@@ -93,7 +93,8 @@
       ],
       "parent_scope_id": 0,
       "scope_id": 1,
-      "scope_kind": "class"
+      "scope_kind": "class",
+      "start_line": 4
     },
     {
       "arguments": [
@@ -109,7 +110,8 @@
       ],
       "parent_scope_id": 1,
       "scope_id": 2,
-      "scope_kind": "function"
+      "scope_kind": "function",
+      "start_line": 7
     }
   ],
   "markers": [

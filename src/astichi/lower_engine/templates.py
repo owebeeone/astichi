@@ -37,6 +37,7 @@ class TemplateScopeSpec:
     local_bindings: tuple[str, ...] = ()
     arguments: tuple[str, ...] = ()
     parent_scope_id: int | None = None
+    start_line: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,10 @@ _EXEMPT_MODULE_PREFIXES = (
     "test_native_materialize_no_python_fallback_f4d",
     "test_native_handoff_f4e",
     "test_native_handoff_transfer_f6",
+    "test_lifecycle_hot_path_python_gate",
+    "test_hot_path_h4_production_green",
+    "test_native_hot_path_no_pydict_h2",
+    "test_o3_production_compile",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )

@@ -80,11 +80,49 @@ class BasicComposable(Composable):
         """Return the identifier-arg resolutions as a plain dict."""
         return dict(self.arg_bindings)
 
+    def __deepcopy__(self, memo):
+        """Deep-copy composable state while sharing unpicklable native handles."""
+        from copy import deepcopy
+
+        return BasicComposable(
+            tree=deepcopy(self.tree, memo),
+            origin=self.origin,
+            markers=deepcopy(self.markers, memo),
+            classification=deepcopy(self.classification, memo),
+            demand_ports=deepcopy(self.demand_ports, memo),
+            supply_ports=deepcopy(self.supply_ports, memo),
+            inventory=deepcopy(self.inventory, memo),
+            bound_externals=deepcopy(self.bound_externals, memo),
+            arg_bindings=deepcopy(self.arg_bindings, memo),
+            keep_names=deepcopy(self.keep_names, memo),
+            _lower_template=self._lower_template,
+            _already_materialized=self._already_materialized,
+            _executable_handoff_pending=self._executable_handoff_pending,
+        )
+
+    def _tree_for_emit_or_materialize(self) -> ast.Module:
+        """Return the AST used for emit/materialize, resolving hot-path placeholders."""
+        tree = self.tree
+        binding = self._lower_template
+        if binding is not None:
+            from astichi.lower_engine.native_hot_path_compile import (
+                resolve_hot_path_materialization_tree,
+            )
+
+            resolved = resolve_hot_path_materialization_tree(
+                tree=tree,
+                native_source=getattr(binding, "native_source", None),
+                file_name=self.origin.file_name,
+            )
+            if resolved is not None:
+                return resolved
+        return tree
+
     def emit(self, *, provenance: bool = True) -> str:
         from astichi.emit import emit_source
         from astichi.materialize.api import _reify_scope_keep_metadata_for_emit
 
-        tree = clone_ast(self.tree)
+        tree = clone_ast(self._tree_for_emit_or_materialize())
         _reify_scope_keep_metadata_for_emit(tree)
         if self.arg_bindings:
             _apply_emitted_arg_bindings(tree, dict(self.arg_bindings))

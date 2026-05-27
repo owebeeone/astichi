@@ -5,12 +5,12 @@
   "source_summary": "result = astichi_hole(value)",
   "string_table": [
     "",
-    "lower_engine_root",
-    "result = astichi_hole(value)",
-    "expression.hole",
     "astichi_hole(value)",
+    "expression hole value",
+    "expression.hole",
+    "lower_engine_root",
     "replace-expression",
-    "expression hole value"
+    "result = astichi_hole(value)"
   ],
   "path_table": [
     []

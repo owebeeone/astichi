@@ -5,19 +5,19 @@
   "source_summary": "boundary marker source",
   "string_table": [
     "",
-    "boundary_marker_template",
-    "boundary marker source",
-    "module",
-    "value",
-    "import",
-    "astichi_import",
-    "inbound",
-    "export",
     "astichi_export",
+    "astichi_import",
+    "astichi_pass",
+    "boundary marker source",
+    "boundary_marker_template",
+    "export",
+    "import",
+    "inbound",
+    "module",
     "outbound",
     "pass",
-    "astichi_pass",
-    "shared"
+    "shared",
+    "value"
   ],
   "path_table": [
     []

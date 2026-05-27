@@ -15,7 +15,10 @@ from astichi.lower_engine import (
     ensure_current_native_surface_bundle,
     render_composable_source,
 )
+from astichi.assembler.scope import AssemblyScope
 from astichi.lower_engine.native import load_native_extension
+from astichi.lower_engine.native_hot_path_compile import native_hot_path_compile_enabled
+from astichi.lower_engine.self_native_gates import native_no_pydict_snapshots_enabled
 from astichi.structural_snapshot import write_structural_snapshot
 from tests.versioned_test_harness import actual_results_dir, data_golden_dir
 
@@ -92,14 +95,23 @@ def test_compile_explicit_native_attaches_native_template_snapshot(
     assert isinstance(lower_template, LowerTemplateBinding)
     assert lower_template.backend == "native-rust"
     assert lower_template.has_native_lower_package()
-    assert lower_template.native_snapshot is not None
-    assert lower_template.native_package_snapshot is not None
-    assert lower_template.package_v2.snapshot() == lower_template.native_package_snapshot
-    assert [
-        spec.surface_key for spec in lower_template.record_specs
-    ] == [
-        record["surface_key"]
-        for record in lower_template.native_package_snapshot["records"]
+    if native_hot_path_compile_enabled():
+        assert lower_template.native_snapshot is None
+    else:
+        assert lower_template.native_snapshot is not None
+    if native_no_pydict_snapshots_enabled():
+        assert lower_template.native_package_snapshot is None
+        assert lower_template.native_compile_template_handle is not None
+        assert lower_template.package_v2.records
+    else:
+        assert lower_template.native_package_snapshot is not None
+        assert (
+            lower_template.package_v2.snapshot()
+            == lower_template.native_package_snapshot
+        )
+    assert [spec.surface_key for spec in lower_template.record_specs] == [
+        lower_template.package_v2._string(row.surface_key_id)
+        for row in lower_template.package_v2.records
     ]
     assert lower_template.record_specs[0].projection_record is not None
     assert lower_template.native_source == source
@@ -346,7 +358,18 @@ def test_template_binding_rebinds_into_shared_lower_engine() -> None:
 
 
 def test_explicit_facade_artifact_copy_apis_return_caller_owned_artifacts() -> None:
+    import os
+
+    from tests.lower_engine_matrix import ENGINE_SELECTION_ENV
+
     composable = astichi.compile("result = 1\n")
+    if (
+        os.environ.get(ENGINE_SELECTION_ENV) == "native"
+        and native_hot_path_compile_enabled()
+    ):
+        scope = AssemblyScope(astichi.build())
+        scope.add("Root", composable)
+        composable = scope.build()
 
     template_ast = copy_composable_template_ast(composable)
     executable_ast = copy_composable_executable_ast(composable)

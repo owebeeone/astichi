@@ -255,9 +255,10 @@ replay is off by default (set `ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` only for
 compatibility/oracle work). Without the extension, the same API falls back to
 Python. See `docs/reference/assembler-scope.md`.
 
-**Self-native production boundary** (roll-build `rust-fsn/*`, plan
-`dev-docs/perf-refactor/FullSelfNativeRustAstPlan.md`): when the extension
-advertises `native.self_native.current_surfaces.v1`, the lifecycle production
+**Self-native production boundary** (plan
+`dev-docs/perf-refactor/HotPathNoPythonPlan.md`): when the extension advertises
+the full self-native slice stack including `native.self_native.current_surfaces.v1`,
+the lifecycle production
 path uses native compile parse, native compile validation, native scope
 materialize, one `copy_python_ast` at native materialize, and transfer handoff in
 `to_executable_ast` (no second `clone_ast` when `handoff_transfer.v1` is on).

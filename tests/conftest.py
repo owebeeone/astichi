@@ -8,6 +8,7 @@ import pytest
 
 from tests.lower_engine_matrix import (
     ENGINE_SELECTION_ENV,
+    MATRIX_ENV,
     available_matrix_engines,
     matrix_enabled,
     matrix_exempt_module,
@@ -32,6 +33,7 @@ def _is_structural_golden_test(item: pytest.Item) -> bool:
 def _astichi_lower_engine_matrix(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Run each test once per requested lower engine unless the module is exempt."""
     monkeypatch.setenv(ENGINE_SELECTION_ENV, request.param)
+    monkeypatch.setenv(MATRIX_ENV, "1")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

@@ -129,9 +129,9 @@ def lower_engine_tier(capabilities: dict[str, Any]) -> Literal["hybrid", "self_n
 def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
     """Select the hybrid/native lower engine at a coarse boundary.
 
-    This remains the lifecycle default until ``native.self_native.current_surfaces.v1``
-    is advertised. Use :func:`select_self_native_production_engine` for the
-    full self-native production gate.
+    Matrix tests and differential oracles may use this selector. The YIDL
+    lifecycle production path must call :func:`select_self_native_production_engine`
+    instead so ``native.self_native.current_surfaces.v1`` implies the full hot path.
     """
     return _select_native_tier_engine(
         value,
@@ -153,6 +153,22 @@ def select_self_native_production_engine(
         required_features=REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
         unavailable_reason_key="self_native_production_unavailable",
     )
+
+
+def select_effective_lower_engine(value: str | None = None) -> EngineSelectionEvent:
+    """Select the lower engine for compile, scope, and lifecycle production.
+
+    Uses the self-native production gate (full slice features + capstone
+    ``current_surfaces``). Hybrid-only extensions fall back to Python on ``auto``;
+    explicit ``native`` fails closed when production features are missing.
+    """
+    requested = requested_lower_engine(value)
+    if requested == "python":
+        return EngineSelectionEvent(
+            requested_engine=requested,
+            selected_engine="python",
+        )
+    return select_self_native_production_engine(requested)
 
 
 def _select_native_tier_engine(

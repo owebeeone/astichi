@@ -5,30 +5,30 @@
   "source_summary": "binding scope source",
   "string_table": [
     "",
-    "binding_scope_template",
-    "binding scope source",
-    "module",
     "Box",
+    "Inner",
     "alias",
-    "item",
-    "loop_value",
-    "os",
-    "stale",
-    "value",
+    "args",
+    "binding scope source",
+    "binding_scope_template",
+    "child",
     "class",
     "field",
-    "m",
-    "make",
     "function",
-    "Inner",
-    "args",
-    "child",
     "helper",
+    "item",
     "js",
     "kw",
     "local",
+    "loop_value",
+    "m",
+    "make",
+    "module",
     "old",
+    "os",
     "self",
+    "stale",
+    "value",
     "x",
     "y"
   ],
@@ -144,7 +144,8 @@
       ],
       "parent_scope_id": 0,
       "scope_id": 1,
-      "scope_kind": "class"
+      "scope_kind": "class",
+      "start_line": 9
     },
     {
       "arguments": [
@@ -174,7 +175,8 @@
       ],
       "parent_scope_id": 1,
       "scope_id": 2,
-      "scope_kind": "function"
+      "scope_kind": "function",
+      "start_line": 13
     },
     {
       "arguments": [],
@@ -187,7 +189,8 @@
       ],
       "parent_scope_id": 2,
       "scope_id": 3,
-      "scope_kind": "function"
+      "scope_kind": "function",
+      "start_line": 20
     },
     {
       "arguments": [],
@@ -200,7 +203,8 @@
       ],
       "parent_scope_id": 2,
       "scope_id": 4,
-      "scope_kind": "class"
+      "scope_kind": "class",
+      "start_line": 23
     }
   ],
   "markers": [],

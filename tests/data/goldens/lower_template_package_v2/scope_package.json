@@ -5,17 +5,17 @@
   "source_summary": "nested scope source",
   "string_table": [
     "",
-    "scope_template",
-    "nested scope source",
-    "module",
     "Box",
-    "outer",
+    "async_function",
     "class",
-    "make",
     "function",
     "load",
-    "self",
-    "async_function"
+    "make",
+    "module",
+    "nested scope source",
+    "outer",
+    "scope_template",
+    "self"
   ],
   "path_table": [
     [],
@@ -100,7 +100,8 @@
       ],
       "parent_scope_id": 0,
       "scope_id": 1,
-      "scope_kind": "class"
+      "scope_kind": "class",
+      "start_line": 2
     },
     {
       "arguments": [
@@ -117,7 +118,8 @@
       ],
       "parent_scope_id": 1,
       "scope_id": 2,
-      "scope_kind": "function"
+      "scope_kind": "function",
+      "start_line": 3
     },
     {
       "arguments": [],
@@ -130,7 +132,8 @@
       ],
       "parent_scope_id": 2,
       "scope_id": 3,
-      "scope_kind": "async_function"
+      "scope_kind": "async_function",
+      "start_line": 4
     },
     {
       "arguments": [],
@@ -141,7 +144,8 @@
       ],
       "parent_scope_id": 0,
       "scope_id": 4,
-      "scope_kind": "async_function"
+      "scope_kind": "async_function",
+      "start_line": 8
     }
   ],
   "markers": [],

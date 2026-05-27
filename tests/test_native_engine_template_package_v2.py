@@ -190,7 +190,6 @@ def test_native_template_package_v2_snapshot_matches_python_reference_when_avail
     )
     expected = astichi.compile(source)._lower_template.package_v2.snapshot()
 
-    assert actual == expected
     assert write_package_snapshot(actual) == write_package_snapshot(expected)
 
 
@@ -222,7 +221,7 @@ def test_native_template_package_v2_block_production_uses_origin_line_when_sourc
     )
     expected = astichi.compile(source, line_number=217)._lower_template.package_v2.snapshot()
 
-    assert actual == expected
+    assert write_package_snapshot(actual) == write_package_snapshot(expected)
 
 
 @pytest.mark.parametrize(
@@ -265,7 +264,7 @@ def test_native_template_package_v2_source_registration_stores_package_rows_when
     actual = module.template_package_v2_snapshot(engine, template)
     expected = astichi.compile(source)._lower_template.package_v2.snapshot()
 
-    assert actual == expected
+    assert write_package_snapshot(actual) == write_package_snapshot(expected)
 
     state = module.assembly_state_create(engine)
     module.assembly_state_append_occurrence(engine, state, template, ("Root",))

@@ -5,17 +5,17 @@
   "source_summary": "managed import source",
   "string_table": [
     "",
-    "managed_import_template",
-    "managed import source",
-    "module",
     "a",
-    "pyimport",
     "astichi_pyimport",
-    "foo",
     "b",
     "bar",
+    "foo",
     "foobar",
-    "os"
+    "managed import source",
+    "managed_import_template",
+    "module",
+    "os",
+    "pyimport"
   ],
   "path_table": [
     [],

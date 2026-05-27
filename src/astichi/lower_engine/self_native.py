@@ -27,6 +27,7 @@ SELF_NATIVE_KEEP_NAMES_FEATURE = "native.self_native.keep_names.v1"
 SELF_NATIVE_REPROJECT_FEATURE = "native.self_native.reproject.v1"
 SELF_NATIVE_FACADE_BUILDER_TREE_FEATURE = "native.self_native.facade_builder_tree_projection.v1"
 SELF_NATIVE_HANDOFF_TRANSFER_FEATURE = "native.self_native.handoff_transfer.v1"
+SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE = "native.self_native.no_pydict_snapshots.v1"
 
 SELF_NATIVE_SLICE_FEATURES: tuple[str, ...] = (
     SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE,
@@ -40,12 +41,13 @@ SELF_NATIVE_SLICE_FEATURES: tuple[str, ...] = (
     SELF_NATIVE_REPROJECT_FEATURE,
     SELF_NATIVE_FACADE_BUILDER_TREE_FEATURE,
     SELF_NATIVE_HANDOFF_TRANSFER_FEATURE,
+    SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE,
     SELF_NATIVE_CURRENT_SURFACES_FEATURE,
 )
 
-REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES: tuple[str, ...] = (
-    SELF_NATIVE_CURRENT_SURFACES_FEATURE,
-)
+# ``current_surfaces`` is the capstone flag only; production requires every
+# self-native slice feature (H4 — not hybrid ``full_lower_engine`` alone).
+REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES: tuple[str, ...] = SELF_NATIVE_SLICE_FEATURES
 
 
 def native_engine_features(capabilities: dict[str, Any]) -> frozenset[str]:

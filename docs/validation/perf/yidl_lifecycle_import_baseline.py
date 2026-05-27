@@ -48,12 +48,23 @@ def main(argv: list[str] | None = None) -> int:
     _configure_import_paths()
     _install_black_stub_if_needed()
 
-    from astichi.lower_engine.native import select_lower_engine
+    from astichi.lower_engine.native import (
+        select_effective_lower_engine,
+        select_self_native_production_engine,
+    )
     from astichi.perf_counters import collect_perf_counters
     import yidl.generation.assembly_runtime as assembly_runtime
     import yidl_lifecycle.lifecycle as lifecycle_module
 
-    lower_engine = select_lower_engine(args.engine)
+    if args.engine == "native":
+        lower_engine = select_self_native_production_engine("native")
+        if lower_engine.selected_engine == "python":
+            raise SystemExit(
+                "requested native production engine but self-native production "
+                f"features are unavailable: {lower_engine.reason_detail}"
+            )
+    else:
+        lower_engine = select_effective_lower_engine(args.engine)
     rows: list[dict[str, float | str]] = []
     totals: defaultdict[str, float] = defaultdict(float)
     yidl_counts: Counter[str] = Counter()

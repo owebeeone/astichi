@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use pyo3::types::{PyAny, PyDict, PyList, PyModule, PyTuple};
 use rustpython_parser::ast;
 
 use crate::handles::EngineHandle;
@@ -21,6 +21,7 @@ struct ScopeSpec {
     owner_path: Vec<String>,
     local_bindings: Vec<String>,
     arguments: Vec<String>,
+    start_line: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -91,6 +92,7 @@ struct ScopeRow {
     owner_path_id: usize,
     local_binding_set_id: usize,
     argument_set_id: usize,
+    start_line: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -242,7 +244,8 @@ fn build_package(
             &record.semantic_summary,
         );
     }
-    let scopes = extract_scopes(&module);
+    let source_map = crate::template_extract::SourceMap::new(&source);
+    let scopes = extract_scopes(&module, &source_map, line_number);
     for scope in &scopes {
         package.add_scope(scope);
     }
@@ -274,6 +277,240 @@ fn build_package(
         extract_typed_marker_rows_stmt(stmt, &format!("body[{index}]"), &mut package)?;
     }
     Ok(BuiltPackage { package, module })
+}
+
+fn py_optional_string(py: Python<'_>, value: Option<&str>) -> PyResult<Py<PyAny>> {
+    match value {
+        Some(text) => Ok(text.into_pyobject(py)?.into_any().unbind()),
+        None => Ok(py.None()),
+    }
+}
+
+fn py_path_tuple(py: Python<'_>, parts: &[String]) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, parts.iter().map(|part| part.as_str()))?
+        .into_any()
+        .unbind())
+}
+
+fn py_string_tuple(py: Python<'_>, values: Vec<&str>) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, values)?.into_any().unbind())
+}
+
+impl PackageBuilder {
+    pub(crate) fn hydrate_python_package<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let module = PyModule::import(py, "astichi.lower_engine.package_v2")?;
+        let cls = module.getattr("LowerTemplatePackageV2")?;
+        let template_key = self
+            .strings
+            .get(1)
+            .ok_or_else(|| crate::errors::schema_error("package is missing template_key"))?;
+        let source_summary = self
+            .strings
+            .get(2)
+            .ok_or_else(|| crate::errors::schema_error("package is missing source_summary"))?;
+        let surface_bundle_signature = self.strings.first().ok_or_else(|| {
+            crate::errors::schema_error("package is missing surface_bundle_signature")
+        })?;
+        let ctor_kwargs = PyDict::new(py);
+        ctor_kwargs.set_item("template_key", template_key)?;
+        ctor_kwargs.set_item("source_summary", source_summary)?;
+        ctor_kwargs.set_item("surface_bundle_signature", surface_bundle_signature)?;
+        let instance = cls.call((), Some(&ctor_kwargs))?;
+
+        for row in &self.locators {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("ast_path", self.ast_paths[row.ast_path_id].as_str())?;
+            kwargs.set_item("role_key", self.strings[row.role_key_id].as_str())?;
+            kwargs.set_item(
+                "authored_summary",
+                self.strings[row.authored_summary_id].as_str(),
+            )?;
+            kwargs.set_item(
+                "materialization_anchor",
+                self.strings[row.materialization_anchor_id].as_str(),
+            )?;
+            kwargs.set_item("parent_locator_id", row.parent_locator_id)?;
+            kwargs.set_item("locator_id", row.locator_id)?;
+            instance.call_method("add_locator", (), Some(&kwargs))?;
+        }
+
+        for row in &self.records {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("surface_key", self.strings[row.surface_key_id].as_str())?;
+            kwargs.set_item("locator_id", row.locator_id)?;
+            kwargs.set_item("inventory_kind", self.strings[row.inventory_kind_id].as_str())?;
+            kwargs.set_item(
+                "owner_path",
+                py_path_tuple(py, &self.paths[row.owner_path_id])?,
+            )?;
+            kwargs.set_item(
+                "semantic_summary",
+                self.strings[row.semantic_summary_id].as_str(),
+            )?;
+            kwargs.set_item(
+                "resource_name",
+                row.resource_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            kwargs.set_item("template_record_id", row.template_record_id)?;
+            instance.call_method("add_record", (), Some(&kwargs))?;
+        }
+
+        for row in &self.scopes {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("scope_kind", self.strings[row.scope_kind_id].as_str())?;
+            kwargs.set_item("ast_path", self.ast_paths[row.ast_path_id].as_str())?;
+            kwargs.set_item(
+                "owner_path",
+                py_path_tuple(py, &self.paths[row.owner_path_id])?,
+            )?;
+            kwargs.set_item(
+                "local_bindings",
+                py_string_tuple(py, self.binding_set_names(row.local_binding_set_id))?,
+            )?;
+            kwargs.set_item(
+                "arguments",
+                py_string_tuple(py, self.binding_set_names(row.argument_set_id))?,
+            )?;
+            kwargs.set_item("parent_scope_id", row.parent_scope_id)?;
+            kwargs.set_item("start_line", row.start_line)?;
+            instance.call_method("add_scope", (), Some(&kwargs))?;
+        }
+
+        for row in &self.markers {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("marker_kind", self.strings[row.marker_kind_id].as_str())?;
+            kwargs.set_item("source_name", self.strings[row.source_name_id].as_str())?;
+            kwargs.set_item("ast_path", self.ast_paths[row.ast_path_id].as_str())?;
+            match row.statement_path_id {
+                Some(id) => kwargs.set_item("statement_path", self.ast_paths[id].as_str())?,
+                None => kwargs.set_item("statement_path", py.None())?,
+            };
+            kwargs.set_item(
+                "owner_path",
+                py_path_tuple(py, &self.paths[row.owner_path_id])?,
+            )?;
+            kwargs.set_item("scope_id", row.scope_id)?;
+            kwargs.set_item("source_order", row.source_order)?;
+            kwargs.set_item(
+                "resource_name",
+                row.resource_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            kwargs.set_item("operation_key", self.strings[row.operation_key_id].as_str())?;
+            kwargs.set_item(
+                "flags",
+                py_string_tuple(
+                    py,
+                    row.flags.iter().map(|flag| flag.as_str()).collect(),
+                )?,
+            )?;
+            instance.call_method("add_marker", (), Some(&kwargs))?;
+        }
+
+        for row in &self.pyimport_markers {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("marker_id", row.marker_id)?;
+            match row.module_path_id {
+                Some(id) => {
+                    kwargs.set_item("module_path", py_path_tuple(py, &self.paths[id])?)?
+                }
+                None => kwargs.set_item("module_path", py.None())?,
+            };
+            kwargs.set_item(
+                "names",
+                py_string_tuple(py, self.strings_for_ids(&row.name_ids))?,
+            )?;
+            kwargs.set_item(
+                "as_name",
+                row.as_name_id
+                    .map(|id| self.strings[id].as_str())
+                    .unwrap_or(""),
+            )?;
+            kwargs.set_item(
+                "flags",
+                py_string_tuple(
+                    py,
+                    row.flags.iter().map(|flag| flag.as_str()).collect(),
+                )?,
+            )?;
+            instance.call_method("add_pyimport_marker", (), Some(&kwargs))?;
+        }
+
+        for row in &self.comment_markers {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("marker_id", row.marker_id)?;
+            kwargs.set_item("payload", self.strings[row.payload_id].as_str())?;
+            kwargs.set_item(
+                "flags",
+                py_string_tuple(
+                    py,
+                    row.flags.iter().map(|flag| flag.as_str()).collect(),
+                )?,
+            )?;
+            instance.call_method("add_comment_marker", (), Some(&kwargs))?;
+        }
+
+        for row in &self.ref_markers {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("marker_id", row.marker_id)?;
+            kwargs.set_item("ref_kind", self.strings[row.ref_kind_id].as_str())?;
+            kwargs.set_item("context", self.strings[row.context_id].as_str())?;
+            kwargs.set_item(
+                "sentinel_attr",
+                py_optional_string(
+                    py,
+                    row.sentinel_attr_id
+                        .map(|id| self.strings[id].as_str()),
+                )?,
+            )?;
+            match row.literal_path_id {
+                Some(id) => {
+                    kwargs.set_item("literal_path", py_path_tuple(py, &self.paths[id])?)?
+                }
+                None => kwargs.set_item("literal_path", py.None())?,
+            };
+            kwargs.set_item(
+                "flags",
+                py_string_tuple(
+                    py,
+                    row.flags.iter().map(|flag| flag.as_str()).collect(),
+                )?,
+            )?;
+            instance.call_method("add_ref_marker", (), Some(&kwargs))?;
+        }
+
+        for row in &self.unroll_markers {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("marker_id", row.marker_id)?;
+            kwargs.set_item("statement_path", self.ast_paths[row.statement_path_id].as_str())?;
+            kwargs.set_item("target_ast_path", self.ast_paths[row.target_ast_path_id].as_str())?;
+            kwargs.set_item("iter_ast_path", self.ast_paths[row.iter_ast_path_id].as_str())?;
+            kwargs.set_item("domain_ast_path", self.ast_paths[row.domain_ast_path_id].as_str())?;
+            kwargs.set_item("body_path", self.ast_paths[row.body_path_id].as_str())?;
+            match row.orelse_path_id {
+                Some(id) => kwargs.set_item("orelse_path", self.ast_paths[id].as_str())?,
+                None => kwargs.set_item("orelse_path", py.None())?,
+            };
+            kwargs.set_item(
+                "target_bindings",
+                py_string_tuple(py, self.binding_set_names(row.target_binding_set_id))?,
+            )?;
+            kwargs.set_item("domain_shape", self.strings[row.domain_shape_id].as_str())?;
+            kwargs.set_item(
+                "flags",
+                py_string_tuple(
+                    py,
+                    row.flags.iter().map(|flag| flag.as_str()).collect(),
+                )?,
+            )?;
+            instance.call_method("add_unroll_marker", (), Some(&kwargs))?;
+        }
+
+        Ok(instance)
+    }
 }
 
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -426,6 +663,7 @@ impl PackageBuilder {
             owner_path_id,
             local_binding_set_id,
             argument_set_id,
+            start_line: scope.start_line,
         });
     }
 
@@ -747,6 +985,7 @@ impl PackageBuilder {
             item.set_item("parent_scope_id", row.parent_scope_id)?;
             item.set_item("scope_id", row.scope_id)?;
             item.set_item("scope_kind", &self.strings[row.scope_kind_id])?;
+            item.set_item("start_line", row.start_line)?;
             list.append(item)?;
         }
         Ok(list.into_any().unbind())
@@ -1020,7 +1259,11 @@ fn is_unresolved_capable_inventory_kind(inventory_kind: &str) -> bool {
         || inventory_kind == "external.bind"
 }
 
-fn extract_scopes(module: &ast::ModModule) -> Vec<ScopeSpec> {
+fn extract_scopes(
+    module: &ast::ModModule,
+    source_map: &crate::template_extract::SourceMap,
+    module_start_line: u32,
+) -> Vec<ScopeSpec> {
     let mut scopes = Vec::new();
     let module_scope = ScopeSpec {
         scope_id: 0,
@@ -1030,10 +1273,18 @@ fn extract_scopes(module: &ast::ModModule) -> Vec<ScopeSpec> {
         owner_path: Vec::new(),
         local_bindings: scope_body_bindings(&module.body, Vec::new()),
         arguments: Vec::new(),
+        start_line: Some(module_start_line),
     };
     scopes.push(module_scope);
     for (index, stmt) in module.body.iter().enumerate() {
-        visit_stmt_scopes(stmt, &format!("body[{index}]"), 0, &[], &mut scopes);
+        visit_stmt_scopes(
+            stmt,
+            &format!("body[{index}]"),
+            0,
+            &[],
+            source_map,
+            &mut scopes,
+        );
     }
     scopes
 }
@@ -1043,6 +1294,7 @@ fn visit_stmt_scopes(
     path: &str,
     parent_scope_id: usize,
     owner_path: &[String],
+    source_map: &crate::template_extract::SourceMap,
     scopes: &mut Vec<ScopeSpec>,
 ) {
     match stmt {
@@ -1059,12 +1311,14 @@ fn visit_stmt_scopes(
                 owner_path: child_owner.clone(),
                 local_bindings: scope_body_bindings(&node.body, arguments.clone()),
                 arguments,
+                start_line: Some(source_map.line(node.range) as u32),
             });
             visit_body_scopes(
                 &node.body,
                 &format!("{path}/body"),
                 scope_id,
                 &child_owner,
+                source_map,
                 scopes,
             );
         }
@@ -1081,12 +1335,14 @@ fn visit_stmt_scopes(
                 owner_path: child_owner.clone(),
                 local_bindings: scope_body_bindings(&node.body, arguments.clone()),
                 arguments,
+                start_line: Some(source_map.line(node.range) as u32),
             });
             visit_body_scopes(
                 &node.body,
                 &format!("{path}/body"),
                 scope_id,
                 &child_owner,
+                source_map,
                 scopes,
             );
         }
@@ -1102,12 +1358,14 @@ fn visit_stmt_scopes(
                 owner_path: child_owner.clone(),
                 local_bindings: scope_body_bindings(&node.body, Vec::new()),
                 arguments: Vec::new(),
+                start_line: Some(source_map.line(node.range) as u32),
             });
             visit_body_scopes(
                 &node.body,
                 &format!("{path}/body"),
                 scope_id,
                 &child_owner,
+                source_map,
                 scopes,
             );
         }
@@ -1117,6 +1375,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/body"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
             visit_body_scopes(
@@ -1124,6 +1383,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/orelse"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
         }
@@ -1133,6 +1393,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/body"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
             visit_body_scopes(
@@ -1140,6 +1401,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/orelse"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
         }
@@ -1149,6 +1411,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/body"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
             visit_body_scopes(
@@ -1156,6 +1419,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/orelse"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
         }
@@ -1165,6 +1429,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/body"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
         }
@@ -1174,6 +1439,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/body"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
             for (index, handler) in node.handlers.iter().enumerate() {
@@ -1183,6 +1449,7 @@ fn visit_stmt_scopes(
                     &format!("{path}/handlers[{index}]/body"),
                     parent_scope_id,
                     owner_path,
+                    source_map,
                     scopes,
                 );
             }
@@ -1191,6 +1458,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/orelse"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
             visit_body_scopes(
@@ -1198,6 +1466,7 @@ fn visit_stmt_scopes(
                 &format!("{path}/finalbody"),
                 parent_scope_id,
                 owner_path,
+                source_map,
                 scopes,
             );
         }
@@ -1210,6 +1479,7 @@ fn visit_body_scopes(
     parent_path: &str,
     parent_scope_id: usize,
     owner_path: &[String],
+    source_map: &crate::template_extract::SourceMap,
     scopes: &mut Vec<ScopeSpec>,
 ) {
     for (index, stmt) in body.iter().enumerate() {
@@ -1218,6 +1488,7 @@ fn visit_body_scopes(
             &format!("{parent_path}[{index}]"),
             parent_scope_id,
             owner_path,
+            source_map,
             scopes,
         );
     }

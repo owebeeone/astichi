@@ -111,6 +111,7 @@ class ScopeRow:
     owner_path_id: int
     local_binding_set_id: int
     argument_set_id: int
+    start_line: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +358,7 @@ class LowerTemplatePackageV2:
         local_bindings: tuple[str, ...] = (),
         arguments: tuple[str, ...] = (),
         parent_scope_id: int | None = None,
+        start_line: int | None = None,
     ) -> int:
         """Append a scope row and return its id."""
         scope_id = len(self.scopes)
@@ -369,6 +371,7 @@ class LowerTemplatePackageV2:
                 owner_path_id=self.intern_path(owner_path),
                 local_binding_set_id=self.intern_binding_set(local_bindings),
                 argument_set_id=self.intern_binding_set(arguments),
+                start_line=start_line,
             )
         )
         self._binding_index = None
@@ -891,7 +894,7 @@ class LowerTemplatePackageV2:
         }
 
     def _scope_snapshot(self, row: ScopeRow) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "arguments": self._binding_set_names(row.argument_set_id),
             "ast_path": self._ast_path_text(row.ast_path_id),
             "local_bindings": self._binding_set_names(row.local_binding_set_id),
@@ -900,6 +903,9 @@ class LowerTemplatePackageV2:
             "scope_id": row.scope_id,
             "scope_kind": self._string(row.scope_kind_id),
         }
+        if row.start_line is not None:
+            payload["start_line"] = row.start_line
+        return payload
 
     def _marker_snapshot(self, row: MarkerRow) -> dict[str, object]:
         return {
@@ -1027,6 +1033,14 @@ class LowerTemplatePackageV2:
     def _ast_path_text(self, ast_path_id: int) -> str:
         return self._ast_path_texts[ast_path_id]
 
+    @property
+    def template_key(self) -> str:
+        return self._string(self.template_key_id)
+
+    @property
+    def source_summary(self) -> str:
+        return self._string(self.source_summary_id)
+
 
 def write_package_snapshot(snapshot: Mapping[str, Any]) -> str:
     """Write lower-template package snapshot data as deterministic JSON text."""
@@ -1134,6 +1148,11 @@ def package_from_snapshot(snapshot: Mapping[str, Any]) -> LowerTemplatePackageV2
             owner_path_id=path_index[_row_path(row["owner_path"], path=("scopes", index, "owner_path"))],
             local_binding_set_id=_binding_set_id_for_names(package, row["local_bindings"], path=("scopes", index, "local_bindings")),
             argument_set_id=_binding_set_id_for_names(package, row["arguments"], path=("scopes", index, "arguments")),
+            start_line=(
+                None
+                if row.get("start_line") is None
+                else _require_int(row["start_line"], path=("scopes", index, "start_line"))
+            ),
         )
         for index, row in enumerate(canonical["scopes"])
     ]
@@ -1333,10 +1352,22 @@ def normalize_package_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(snapshot[section], list):
             raise PackageSnapshotFormatError(f"{section} section must be a list")
 
-    return {
+    canonical = {
         section: _canonical_json_value(snapshot[section], path=(section,))
         for section in SECTION_KEYS
     }
+    canonical["string_table"] = sorted(
+        value
+        for value in canonical["string_table"]
+        if value is not None
+    )
+    for index, row in enumerate(canonical["ref_markers"]):
+        if row.get("sentinel_attr") is None:
+            canonical["ref_markers"][index] = {
+                **row,
+                "sentinel_attr": "",
+            }
+    return canonical
 
 
 def _canonical_json_value(value: Any, *, path: tuple[str, ...]) -> Any:

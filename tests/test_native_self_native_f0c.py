@@ -17,6 +17,7 @@ from astichi.lower_engine.native import (
 from astichi.lower_engine.self_native import (
     REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
     SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+    SELF_NATIVE_SLICE_FEATURES,
     has_self_native_production,
     missing_self_native_production_features,
 )
@@ -31,8 +32,12 @@ def test_built_extension_self_native_tier_matches_current_surfaces_cap() -> None
     if SELF_NATIVE_CURRENT_SURFACES_FEATURE not in features:
         assert lower_engine_tier(capabilities) == "hybrid"
         assert has_self_native_production(capabilities) is False
-        assert missing_self_native_production_features(capabilities) == (
-            SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+        missing = missing_self_native_production_features(capabilities)
+        assert SELF_NATIVE_CURRENT_SURFACES_FEATURE in missing
+        assert missing == tuple(
+            feature
+            for feature in SELF_NATIVE_SLICE_FEATURES
+            if feature not in features
         )
         return
 
@@ -63,16 +68,14 @@ def test_hybrid_caps_satisfy_select_lower_engine_not_production(
     assert select_lower_engine("auto").selected_engine == "native-rust"
 
     production = select_self_native_production_engine("auto")
-    assert production.snapshot() == {
-        "fallback_scope": "engine",
-        "reason_detail": (
-            "native extension is available but does not advertise required "
-            f"features: {SELF_NATIVE_CURRENT_SURFACES_FEATURE}"
-        ),
-        "reason_key": "self_native_production_unavailable",
-        "requested_engine": "auto",
-        "selected_engine": "python",
-    }
+    snapshot = production.snapshot()
+    assert snapshot["fallback_scope"] == "engine"
+    assert snapshot["reason_key"] == "self_native_production_unavailable"
+    assert snapshot["requested_engine"] == "auto"
+    assert snapshot["selected_engine"] == "python"
+    assert "does not advertise required features:" in snapshot["reason_detail"]
+    for feature in SELF_NATIVE_SLICE_FEATURES:
+        assert feature in snapshot["reason_detail"]
 
 
 def test_explicit_native_production_fails_for_hybrid_only(
@@ -114,10 +117,10 @@ def test_self_native_production_selects_when_cap_advertised(
         lambda *, required=False: SimpleNamespace(
             capabilities=lambda: {
                 "backend_label": "rust-pyo3-lower-engine",
-                "engine_features": [
+                "engine_features": list(SELF_NATIVE_SLICE_FEATURES)
+                + [
                     FULL_LOWER_ENGINE_FEATURE,
                     NATIVE_PACKAGE_V2_FEATURE,
-                    SELF_NATIVE_CURRENT_SURFACES_FEATURE,
                 ],
             },
         ),
@@ -135,9 +138,7 @@ def test_self_native_production_selects_when_cap_advertised(
 
 
 def test_required_self_native_production_features_tuple() -> None:
-    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == (
-        SELF_NATIVE_CURRENT_SURFACES_FEATURE,
-    )
+    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == SELF_NATIVE_SLICE_FEATURES
 
 
 def test_built_extension_hybrid_auto_still_selects_native_rust() -> None:

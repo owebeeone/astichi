@@ -1131,6 +1131,19 @@ def build_merge(
             )
         source_composable = record.composable
         tree = clone_ast(source_composable.tree)
+        binding = source_composable._lower_template
+        if binding is not None:
+            from astichi.lower_engine.native_hot_path_compile import (
+                resolve_hot_path_materialization_tree,
+            )
+
+            resolved = resolve_hot_path_materialization_tree(
+                tree=tree,
+                native_source=getattr(binding, "native_source", None),
+                file_name=source_composable.origin.file_name,
+            )
+            if resolved is not None:
+                tree = resolved
         if do_unroll:
             tree = unroll_tree(tree)
         # Re-derive ports from the current tree so anchor-preserved
@@ -3330,7 +3343,7 @@ def materialize_composable(
         return composable
 
     arg_bindings = dict(composable.arg_bindings)
-    tree = clone_ast(composable.tree)
+    tree = clone_ast(composable._tree_for_emit_or_materialize())
     _normalize_defaulted_block_holes(tree)
     gate_markers = recognize_markers(tree)
     gate_provisional = BasicComposable(
@@ -3635,6 +3648,25 @@ def emit_commented_composable(composable: BasicComposable) -> str:
 @counted_perf_call("to_executable_ast")
 def to_executable_ast(composable: BasicComposable) -> ast.Module:
     """Return a fresh executable AST owned by the caller."""
+    if composable._already_materialized:
+        return composable.to_executable_ast()
+
+    from astichi.lower_engine.native_hot_path_compile import (
+        is_hot_path_placeholder_tree,
+        native_hot_path_compile_enabled,
+    )
+
+    binding = composable._lower_template
+    if (
+        binding is not None
+        and native_hot_path_compile_enabled()
+        and is_hot_path_placeholder_tree(composable.tree)
+        and getattr(binding, "native_source", None) is not None
+    ):
+        raise RuntimeError(
+            "hot-path composables must materialize via scope.build() native handoff "
+            "before to_executable_ast(); Python materialize fallback is disabled"
+        )
     materialized = materialize_composable(composable)
     tree = clone_ast(materialized.tree)
     ast.fix_missing_locations(tree)

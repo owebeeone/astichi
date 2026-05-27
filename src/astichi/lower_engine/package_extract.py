@@ -24,7 +24,11 @@ from astichi.lower_engine.templates import (
 )
 
 
-def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
+def extract_scope_specs(
+    tree: ast.Module,
+    *,
+    module_start_line: int | None = None,
+) -> tuple[TemplateScopeSpec, ...]:
     """Extract deterministic lexical scope specs from a Python module AST."""
     scopes: list[TemplateScopeSpec] = []
 
@@ -38,6 +42,10 @@ def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
     ) -> int:
         arguments = _argument_names(node)
         scope_id = len(scopes)
+        if isinstance(node, ast.Module) and module_start_line is not None:
+            start_line = module_start_line
+        else:
+            start_line = getattr(node, "lineno", None)
         scopes.append(
             TemplateScopeSpec(
                 scope_kind=scope_kind,
@@ -46,6 +54,7 @@ def extract_scope_specs(tree: ast.Module) -> tuple[TemplateScopeSpec, ...]:
                 local_bindings=tuple(sorted(_scope_binding_names(node))),
                 arguments=tuple(sorted(arguments)),
                 parent_scope_id=parent_scope_id,
+                start_line=start_line if isinstance(start_line, int) else None,
             )
         )
         return scope_id

@@ -25,6 +25,7 @@ from astichi.lower_engine import (
     NativeTemplateCache,
     TemplateRecordSpec,
     load_native_extension,
+    select_effective_lower_engine,
     select_lower_engine,
 )
 from astichi.lower_engine.handles import (
@@ -63,6 +64,7 @@ from astichi.model import (
     Inventory,
     InventoryRecord,
     InventoryRecordId,
+    LocatedStaticCodePathNode,
     MutableInventory,
     PortDescriptor,
     PortInventoryPayload,
@@ -572,6 +574,8 @@ class AssemblyScope:
                 int(candidate_count),
             )
             counters.increment("native_scope_batch_candidate_count", int(candidate_count))
+        if len(raw_events) != len(requests):
+            return None
         if _native_scope_mirror_replay_enabled():
             candidates = self._replay_native_batch_events(requests, raw_events)
             if counters is not None:
@@ -642,7 +646,9 @@ class AssemblyScope:
         binding = resource.composable._lower_template
         if not isinstance(binding, LowerTemplateBinding):
             return None
-        if binding.native_snapshot is None:
+        if binding.native_snapshot is None and (
+            binding.native_source is None or binding.native_origin is None
+        ):
             return None
         template_handle = self._native_template_cache.template_handle_for(binding)
         return {
@@ -951,7 +957,7 @@ class AssemblyScope:
 
         if not native_materialize_no_python_fallback_enabled():
             return
-        if select_lower_engine().selected_engine == "python":
+        if select_effective_lower_engine().selected_engine == "python":
             return
         if (
             self._native_module is None
@@ -1146,7 +1152,7 @@ class AssemblyScope:
                 self._append_lower_occurrence(prefix, composable)
 
     def _initialize_native_scope_backend(self) -> None:
-        selected = select_lower_engine().selected_engine
+        selected = select_effective_lower_engine().selected_engine
         if selected not in {"native-rust", "native-cpp"}:
             return
         module = load_native_extension(required=True)
@@ -1271,7 +1277,9 @@ class AssemblyScope:
             or self._native_state_handle is None
         ):
             return None
-        if binding.native_snapshot is None:
+        if binding.native_snapshot is None and (
+            binding.native_source is None or binding.native_origin is None
+        ):
             raise TypeError(
                 "explicit native scope add requires native template metadata"
             )
@@ -2621,6 +2629,8 @@ class AssemblyScope:
                     compatible_productions=tuple(compatible_productions),
                 )
             )
+        if not candidates:
+            return None
         return tuple(candidates)
 
     def _native_record_id(self, value: object) -> RecordId:
@@ -2686,6 +2696,8 @@ class AssemblyScope:
             )
             if record is not None:
                 records.append(record)
+        if not records:
+            return None
         return tuple(records)
 
     def _native_identifier_bindings_payload(self) -> list[list[object]]:
@@ -4099,6 +4111,8 @@ def _format_code_owner_node(node: CodePathNode) -> str:
 
 def _code_owner_location(node: CodePathNode) -> SourceLocation | None:
     if isinstance(node, _ResolvedCodePathNode):
+        return node.source_location
+    if isinstance(node, LocatedStaticCodePathNode):
         return node.source_location
     if isinstance(node, ClassCodePathNode):
         return _source_location_for_ast_node(node.class_ast_node)

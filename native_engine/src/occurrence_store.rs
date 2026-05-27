@@ -623,6 +623,24 @@ pub(crate) fn template_package_v2_snapshot(
     package.snapshot(py)
 }
 
+#[pyfunction(name = "lower_template_package_v2_from_registered_template")]
+fn lower_template_package_v2_from_registered_template(
+    py: Python<'_>,
+    engine: PyRef<'_, EngineHandle>,
+    template: PyRef<'_, NativeTemplateHandle>,
+) -> PyResult<Py<PyAny>> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), template.owner_id)?;
+    let native_template = engine.template(template.index)?;
+    let package = native_template.package_v2().ok_or_else(|| {
+        crate::errors::schema_error("native template does not carry package-v2 rows")
+    })?;
+    Ok(package
+        .hydrate_python_package(py)?
+        .into_any()
+        .unbind())
+}
+
 #[pyfunction(name = "assembly_state_create")]
 fn assembly_state_create(
     mut engine: PyRefMut<'_, EngineHandle>,
@@ -1107,6 +1125,10 @@ pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeEdgeHandle>()?;
     m.add_class::<NativeOverlayHandle>()?;
     m.add_function(wrap_pyfunction!(register_template_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        lower_template_package_v2_from_registered_template,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(assembly_state_create, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_append_occurrence, m)?)?;
     m.add_function(wrap_pyfunction!(assembly_state_record_handle, m)?)?;

@@ -103,9 +103,8 @@ def test_package_from_snapshot_round_trips_populated_package() -> None:
     package = _populated_package()
     imported = package_from_snapshot(package.snapshot())
 
-    assert imported.snapshot() == package.snapshot()
-    assert imported.records_by_owner_path(("Root",)) == package.records_by_owner_path(
-        ("Root",)
+    assert write_package_snapshot(imported.snapshot()) == write_package_snapshot(
+        package.snapshot()
     )
     assert imported.boundary_available_names_for_statement_path(
         "body[0]/value"

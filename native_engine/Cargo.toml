@@ -16,3 +16,11 @@ rustpython-parser = "0.4.0"
 lto = true
 codegen-units = 1
 strip = "symbols"
+
+# Local Rust profiling: `cargo build --profile profiling` (see scratch profiles).
+[profile.profiling]
+inherits = "release"
+lto = true
+codegen-units = 1
+strip = false
+debug = 2

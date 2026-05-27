@@ -95,67 +95,136 @@ def compile(
         apply_offset=apply_offset,
     )
     selected_native = _selected_native_lower_engine()
-    tree, parse_source = _parse_compile_tree(
-        source=source,
-        parse_source=parse_source,
-        origin=origin,
-        line_number=line_number,
-        offset=offset,
-        apply_offset=apply_offset,
-        selected_native=selected_native,
-    )
-    attach_astichi_source_file(tree, origin.file_name)
-    if (
-        selected_native is not None
-        and not normalized_source_kind.allows_internal_insert_metadata()
-    ):
-        _maybe_native_compile_validate(source, origin.file_name)
-    _validate_authored_marker_surface(tree, source_kind=normalized_source_kind)
-    # Issue 006 6a: enforce statement-prefix placement for boundary markers
-    # before any downstream pipeline step observes them.
-    validate_boundary_marker_placement(tree)
-    if normalized_source_kind.validates_authored_payload_surfaces():
-        validate_call_argument_payload_surface(tree)
-        validate_parameter_payload_surface(tree)
-    desugar_external_ref_kwargs(tree)
-    validate_external_ref_surface(tree)
-    markers = recognize_markers(tree)
-    _validate_comment_markers(markers)
-    validate_pyimport_declarations(tree, markers)
-    validate_parameter_hole_surface(tree, markers)
-    # Issue 006 6b: reject forbidden per-scope marker combinations
-    # (e.g. `import + pass` on the same name) before continuing.
-    validate_boundary_interaction_matrix(tree, markers)
     validated_keep_names = _validate_keep_names(keep_names)
-    provisional = BasicComposable(
-        tree=tree,
-        origin=origin,
-        markers=markers,
-        keep_names=validated_keep_names,
+    use_native_hot_path = _native_hot_path_compile_selected(
+        selected_native,
+        parse_source=parse_source,
     )
-    classification = analyze_names(
-        provisional, mode="permissive", preserved_names=validated_keep_names
-    )
-    demand_ports = extract_demand_ports(markers, classification)
-    supply_ports = extract_supply_ports(markers)
-    if selected_native is None:
-        inventory = build_inventory(tree, markers, demand_ports, supply_ports)
-        from astichi.lower_engine import register_inventory_template
-
-        lower_template = register_inventory_template(
-            tree=tree,
-            origin=origin,
-            inventory=inventory,
+    if use_native_hot_path:
+        from astichi.lower_engine import register_native_template_source_hot_path
+        from astichi.lower_engine.facade import _ports_from_native_projection_inventory
+        from astichi.lower_engine.native_hot_path_compile import (
+            o3_production_hot_path_compile_active,
         )
-    else:
-        from astichi.lower_engine import register_native_template_source_direct
 
-        lower_template, inventory = register_native_template_source_direct(
+        o3_compile = o3_production_hot_path_compile_active()
+        tree = _hot_path_compile_placeholder_tree()
+        if not o3_compile:
+            tree, parse_source = _parse_compile_tree(
+                source=source,
+                parse_source=parse_source,
+                origin=origin,
+                line_number=line_number,
+                offset=offset,
+                apply_offset=apply_offset,
+                selected_native=selected_native,
+            )
+            attach_astichi_source_file(tree, origin.file_name)
+            if not normalized_source_kind.allows_internal_insert_metadata():
+                _maybe_native_compile_validate(source, origin.file_name)
+            markers, classification, demand_ports, supply_ports = (
+                _recognize_compile_markers(
+                    tree=tree,
+                    origin=origin,
+                    source_kind=normalized_source_kind,
+                    validated_keep_names=validated_keep_names,
+                )
+            )
+        elif not normalized_source_kind.allows_internal_insert_metadata():
+            _maybe_native_compile_validate(source, origin.file_name)
+
+        lower_template, inventory = register_native_template_source_hot_path(
             source=parse_source,
             origin=origin,
-            tree=tree,
         )
         _assert_selected_native_backend(selected_native, lower_template)
+
+        if o3_compile:
+            demand_ports, supply_ports = _ports_from_native_projection_inventory(
+                inventory
+            )
+            markers = ()
+            classification = analyze_names(
+                BasicComposable(
+                    tree=tree,
+                    origin=origin,
+                    markers=markers,
+                    keep_names=validated_keep_names,
+                ),
+                mode="permissive",
+                preserved_names=validated_keep_names,
+            )
+        else:
+            from dataclasses import replace
+
+            from astichi.lower_engine.facade import (
+                _native_specs_from_package,
+                _projection_inventory_from_package,
+            )
+
+            inventory, projection_records = _projection_inventory_from_package(
+                tree=tree,
+                origin=origin,
+                package=lower_template.package_v2,
+            )
+            native_specs = _native_specs_from_package(
+                engine=lower_template.engine,
+                package=lower_template.package_v2,
+                fallback_binding=lower_template,
+                projection_records=projection_records,
+            )
+            lower_template = replace(
+                lower_template,
+                record_specs=native_specs.record_specs,
+                scope_specs=native_specs.scope_specs,
+                marker_specs=native_specs.marker_specs,
+                pyimport_marker_specs=native_specs.pyimport_marker_specs,
+                comment_marker_specs=native_specs.comment_marker_specs,
+                ref_marker_specs=native_specs.ref_marker_specs,
+                unroll_marker_specs=native_specs.unroll_marker_specs,
+            )
+    else:
+        tree, parse_source = _parse_compile_tree(
+            source=source,
+            parse_source=parse_source,
+            origin=origin,
+            line_number=line_number,
+            offset=offset,
+            apply_offset=apply_offset,
+            selected_native=selected_native,
+        )
+        attach_astichi_source_file(tree, origin.file_name)
+        if (
+            selected_native is not None
+            and not normalized_source_kind.allows_internal_insert_metadata()
+        ):
+            _maybe_native_compile_validate(source, origin.file_name)
+        markers, classification, demand_ports, supply_ports = (
+            _recognize_compile_markers(
+                tree=tree,
+                origin=origin,
+                source_kind=normalized_source_kind,
+                validated_keep_names=validated_keep_names,
+            )
+        )
+        if selected_native is None:
+            inventory = build_inventory(tree, markers, demand_ports, supply_ports)
+            from astichi.lower_engine import register_inventory_template
+
+            lower_template = register_inventory_template(
+                tree=tree,
+                origin=origin,
+                inventory=inventory,
+            )
+        else:
+            from astichi.lower_engine import register_native_template_source_direct
+
+            lower_template, inventory = register_native_template_source_direct(
+                source=parse_source,
+                origin=origin,
+                tree=tree,
+            )
+            _assert_selected_native_backend(selected_native, lower_template)
     validated_arg_bindings = _validate_arg_names(arg_names, demand_ports)
     compiled = FrontendComposable(
         tree=tree,
@@ -183,6 +252,64 @@ def _maybe_native_compile_validate(source: str, file_name: str) -> None:
     if not native_compile_validation_enabled():
         return
     native_compile_validate_source(source, file_name=file_name)
+
+
+def _recognize_compile_markers(
+    *,
+    tree: ast.Module,
+    origin: CompileOrigin,
+    source_kind: SourceKind,
+    validated_keep_names: frozenset[str],
+) -> tuple[tuple[object, ...], object, tuple[object, ...], tuple[object, ...]]:
+    """Validate authored surfaces and derive marker/port projections from ``tree``."""
+    _validate_authored_marker_surface(tree, source_kind=source_kind)
+    validate_boundary_marker_placement(tree)
+    if source_kind.validates_authored_payload_surfaces():
+        validate_call_argument_payload_surface(tree)
+        validate_parameter_payload_surface(tree)
+    desugar_external_ref_kwargs(tree)
+    validate_external_ref_surface(tree)
+    markers = recognize_markers(tree)
+    _validate_comment_markers(markers)
+    validate_pyimport_declarations(tree, markers)
+    validate_parameter_hole_surface(tree, markers)
+    validate_boundary_interaction_matrix(tree, markers)
+    provisional = BasicComposable(
+        tree=tree,
+        origin=origin,
+        markers=markers,
+        keep_names=validated_keep_names,
+    )
+    classification = analyze_names(
+        provisional,
+        mode="permissive",
+        preserved_names=validated_keep_names,
+    )
+    demand_ports = extract_demand_ports(markers, classification)
+    supply_ports = extract_supply_ports(markers)
+    return markers, classification, demand_ports, supply_ports
+
+
+def _native_hot_path_compile_selected(
+    selected_native: str | None,
+    *,
+    parse_source: str,
+) -> bool:
+    if selected_native is None:
+        return False
+    from astichi.lower_engine.native_hot_path_compile import (
+        native_hot_path_compile_enabled,
+    )
+
+    return native_hot_path_compile_enabled()
+
+
+def _hot_path_compile_placeholder_tree() -> ast.Module:
+    from astichi.lower_engine.native_hot_path_compile import (
+        hot_path_compile_placeholder_tree,
+    )
+
+    return hot_path_compile_placeholder_tree()
 
 
 def _parse_compile_tree(
@@ -222,9 +349,10 @@ def _parse_compile_tree(
                 ),
                 parse_source,
             )
-        except SyntaxError:
+        except SyntaxError as native_error:
             # Fall back to CPython parse so padded compile input reports lineno/offset.
-            pass
+            if native_error.filename is not None:
+                raise
 
     try:
         return _parse_with_python(parse_source), parse_source
@@ -241,9 +369,9 @@ def _parse_compile_tree(
 
 
 def _selected_native_lower_engine() -> str | None:
-    from astichi.lower_engine.native import select_lower_engine
+    from astichi.lower_engine.native import select_effective_lower_engine
 
-    selected = select_lower_engine().selected_engine
+    selected = select_effective_lower_engine().selected_engine
     if selected == "python":
         return None
     if selected in {"native-rust", "native-cpp"}:

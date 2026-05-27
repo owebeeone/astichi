@@ -34,6 +34,8 @@ from astichi.lower_engine.package_extract import (
 )
 from astichi.lower_engine.package_v2 import (
     LowerTemplatePackageV2,
+    MarkerRow,
+    RecordRow,
     package_from_snapshot,
 )
 from astichi.lower_engine.registry import RegisteredSurfaceBundle
@@ -46,7 +48,10 @@ from astichi.lower_engine.templates import (
     TemplateScopeSpec,
     TemplateUnrollMarkerSpec,
 )
-from astichi.lowering.call_argument_payloads import extract_funcargs_payload
+from astichi.lowering.call_argument_payloads import (
+    FuncArgPayload,
+    extract_funcargs_payload,
+)
 from astichi.lowering.markers import strip_identifier_suffix
 from astichi.model.composable import Composable
 from astichi.model.inventory import (
@@ -68,6 +73,7 @@ from astichi.model.inventory import (
     PortInventoryPayload,
     ResourcePath,
     SourceLocation,
+    LocatedStaticCodePathNode,
     StaticCodePathNode,
     StaticResourceName,
 )
@@ -118,14 +124,19 @@ class LowerTemplateBinding:
         repr=False,
         compare=False,
     )
+    native_compile_template_handle: object | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     native_source: str | None = field(default=None, repr=False, compare=False)
     native_origin: CompileOrigin | None = field(default=None, repr=False, compare=False)
 
     def has_native_lower_package(self) -> bool:
         """Return whether a native-owned lower package is attached."""
-        return (
-            self.backend.startswith("native-")
-            and self.native_package_snapshot is not None
+        return self.backend.startswith("native-") and (
+            self.native_package_snapshot is not None
+            or self.native_source is not None
         )
 
     def structural_snapshot(self) -> dict[str, object]:
@@ -154,7 +165,7 @@ def register_inventory_template(
         _template_record_spec(engine=engine, record=record)
         for record in _sorted_inventory_records(inventory)
     )
-    scope_specs = extract_scope_specs(tree)
+    scope_specs = extract_scope_specs(tree, module_start_line=origin.line_number)
     marker_specs = extract_marker_specs(tree, scope_specs)
     pyimport_marker_specs = extract_pyimport_marker_specs(tree)
     comment_marker_specs = extract_comment_marker_specs(tree)
@@ -238,6 +249,96 @@ def register_native_template_source(
         native_package_snapshot=native_package_snapshot,
         native_source=source,
         native_origin=origin,
+    )
+
+
+def register_native_template_source_hot_path(
+    *,
+    source: str,
+    origin: CompileOrigin,
+) -> tuple[LowerTemplateBinding, Inventory]:
+    """Register native package metadata without a compile-time CPython AST."""
+    from astichi.lower_engine.native import load_native_extension
+    from astichi.lower_engine.native_hot_path_registry import (
+        register_hot_path_template_source,
+    )
+    from astichi.lower_engine.self_native_gates import native_no_pydict_snapshots_enabled
+
+    module = load_native_extension(required=True)
+    assert module is not None
+    template_handle = register_hot_path_template_source(
+        module,
+        source=source,
+        origin=origin,
+    )
+    if native_no_pydict_snapshots_enabled():
+        native_package = _package_from_registered_native_template(
+            module=module,
+            template_handle=template_handle,
+        )
+        native_package_snapshot = None
+    else:
+        from astichi.lower_engine.native_hot_path_registry import (
+            shared_hot_path_native_engine,
+        )
+
+        native_package_snapshot = module.template_package_v2_snapshot(
+            shared_hot_path_native_engine(module),
+            template_handle,
+        )
+        if not isinstance(native_package_snapshot, dict):
+            raise TypeError("native package snapshot must be a dict")
+        native_package = package_from_snapshot(native_package_snapshot)
+    (
+        projection_inventory,
+        projection_records,
+    ) = _projection_inventory_from_package(
+        tree=None,
+        origin=origin,
+        package=native_package,
+    )
+    engine = LowerEngine()
+    bundle = ensure_current_surface_bundle(engine)
+    native_specs = _native_specs_from_package(
+        engine=engine,
+        package=native_package,
+        fallback_binding=None,
+        projection_records=projection_records,
+    )
+    template_id = engine.register_template(
+        template_key=native_package.template_key,
+        source_summary=native_package.source_summary,
+        records=native_specs.record_specs,
+        scopes=native_specs.scope_specs,
+        markers=native_specs.marker_specs,
+        pyimport_markers=native_specs.pyimport_marker_specs,
+        comment_markers=native_specs.comment_marker_specs,
+        ref_markers=native_specs.ref_marker_specs,
+        unroll_markers=native_specs.unroll_marker_specs,
+    )
+    return (
+        LowerTemplateBinding(
+            engine=engine,
+            template_id=template_id,
+            template_key=native_package.template_key,
+            source_summary=native_package.source_summary,
+            record_specs=native_specs.record_specs,
+            scope_specs=native_specs.scope_specs,
+            marker_specs=native_specs.marker_specs,
+            pyimport_marker_specs=native_specs.pyimport_marker_specs,
+            comment_marker_specs=native_specs.comment_marker_specs,
+            ref_marker_specs=native_specs.ref_marker_specs,
+            unroll_marker_specs=native_specs.unroll_marker_specs,
+            surface_bundle_signature=bundle.bundle_signature,
+            package_v2=native_package,
+            backend=_native_backend_name(module),
+            native_snapshot=None,
+            native_package_snapshot=native_package_snapshot,
+            native_compile_template_handle=template_handle,
+            native_source=source,
+            native_origin=origin,
+        ),
+        projection_inventory,
     )
 
 
@@ -455,6 +556,11 @@ def _native_specs_from_package_snapshot(
                     if row["parent_scope_id"] is None
                     else int(row["parent_scope_id"])
                 ),
+                start_line=(
+                    None
+                    if row.get("start_line") is None
+                    else int(row["start_line"])
+                ),
             )
             for row in _snapshot_rows(snapshot, "scopes")
         ),
@@ -564,9 +670,331 @@ def _row_string_tuple(row: dict[str, object], key: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _ports_from_native_projection_inventory(
+    inventory: Inventory,
+) -> tuple[tuple[DemandPort, ...], tuple[SupplyPort, ...]]:
+    from astichi.model.inventory import (
+        ClauseHoleInventoryPayload,
+        HoleInventoryPayload,
+        PortInventoryPayload,
+    )
+    from astichi.model.ports import DemandPort, SupplyPort
+
+    demands: list[DemandPort] = []
+    supplies: list[SupplyPort] = []
+    for record in inventory.records.values():
+        payload = record.payload
+        if isinstance(payload, (HoleInventoryPayload, ClauseHoleInventoryPayload)):
+            demands.append(payload.port)
+            continue
+        if isinstance(payload, PortInventoryPayload):
+            port = payload.port
+            if isinstance(port, DemandPort):
+                demands.append(port)
+            elif isinstance(port, SupplyPort):
+                supplies.append(port)
+    return tuple(demands), tuple(supplies)
+
+
+def _package_from_registered_native_template(
+    *,
+    module: ModuleType,
+    template_handle: object,
+) -> LowerTemplatePackageV2:
+    from astichi.lower_engine.native_hot_path_registry import (
+        shared_hot_path_native_engine,
+    )
+
+    engine = shared_hot_path_native_engine(module)
+    package = module.lower_template_package_v2_from_registered_template(
+        engine,
+        template_handle,
+    )
+    if not isinstance(package, LowerTemplatePackageV2):
+        raise TypeError(
+            "native package hydration must return LowerTemplatePackageV2"
+        )
+    return package
+
+
+def _projection_inventory_from_package(
+    *,
+    tree: ast.Module | None,
+    origin: CompileOrigin,
+    package: LowerTemplatePackageV2,
+) -> tuple[Inventory, tuple[InventoryRecord, ...]]:
+    locator_rows = {row.locator_id: row for row in package.locators}
+    marker_rows, marker_rows_by_path = _marker_indexes_from_package(package)
+    mutable = MutableInventory()
+    records: list[InventoryRecord] = []
+    for row in package.records:
+        locator = locator_rows[row.locator_id]
+        ast_path = package._ast_path_text(locator.ast_path_id)
+        node = None if tree is None else _ast_node_at_path(tree, ast_path)
+        record = InventoryRecord(
+            record_id=f"#{row.template_record_id + 1}",
+            build_path=ResourcePath(),
+            code_owner=_code_path_for_owner_path(
+                tree,
+                package._path(row.owner_path_id),
+                snapshot=None,
+                origin=origin,
+                owner_path_locations=_owner_path_locations_from_package(
+                    package,
+                    origin=origin,
+                ),
+            ),
+            name=_projection_resource_name_from_package(
+                package,
+                row,
+                node,
+            ),
+            kind=package._string(row.inventory_kind_id),
+            locator=_node_locator_from_ast_path(ast_path),
+            payload=_projection_payload_for_native_record(
+                _record_projection_row(package, row),
+                node,
+                marker=_marker_for_projection_from_package(
+                    package,
+                    marker_rows,
+                    marker_rows_by_path,
+                    ast_path=ast_path,
+                    resource_name=package._optional_string(
+                        row.resource_name_id
+                    ),
+                ),
+            ),
+            source_location=_source_location_for_projection(
+                node,
+                origin=origin,
+                authored_summary=package._string(locator.authored_summary_id),
+            ),
+        )
+        mutable.add_existing_record(record)
+        records.append(record)
+    return mutable.freeze(), tuple(records)
+
+
+def _native_specs_from_package(
+    *,
+    engine: LowerEngine,
+    package: LowerTemplatePackageV2,
+    fallback_binding: LowerTemplateBinding | None,
+    projection_records: tuple[InventoryRecord, ...] | None,
+) -> _NativePackageSpecs:
+    ensure_current_surface_bundle(engine)
+    locator_rows = {row.locator_id: row for row in package.locators}
+    fallback_records = (
+        () if fallback_binding is None else fallback_binding.record_specs
+    )
+    record_specs: list[TemplateRecordSpec] = []
+    for index, row in enumerate(package.records):
+        locator = locator_rows[row.locator_id]
+        fallback = fallback_records[index] if index < len(fallback_records) else None
+        projection_record = (
+            None
+            if projection_records is None or index >= len(projection_records)
+            else projection_records[index]
+        )
+        legacy_record_id = "" if fallback is None else fallback.legacy_record_id
+        template_projection = (
+            None if fallback is None else fallback.projection_record
+        )
+        if projection_record is not None:
+            legacy_record_id = projection_record.record_id
+            template_projection = projection_record
+        surface_key = package._string(row.surface_key_id)
+        record_specs.append(
+            TemplateRecordSpec(
+                surface_key=surface_key,
+                semantic_summary=package._string(row.semantic_summary_id),
+                ast_path=package._ast_path_text(locator.ast_path_id),
+                role_key=package._string(locator.role_key_id),
+                materialization_anchor=package._string(
+                    locator.materialization_anchor_id
+                ),
+                authored_summary=package._string(locator.authored_summary_id),
+                surface_id=engine.surface_registry.surface_handle(surface_key),
+                resource_name=package._optional_string(row.resource_name_id),
+                inventory_kind=package._string(row.inventory_kind_id),
+                code_owner_parts=package._path(row.owner_path_id),
+                legacy_record_id=legacy_record_id,
+                projection_record=template_projection,
+            )
+        )
+    return _NativePackageSpecs(
+        record_specs=tuple(record_specs),
+        scope_specs=tuple(
+            TemplateScopeSpec(
+                scope_kind=package._string(row.scope_kind_id),
+                ast_path=package._ast_path_text(row.ast_path_id),
+                owner_path=package._path(row.owner_path_id),
+                local_bindings=package._binding_set_names(row.local_binding_set_id),
+                arguments=package._binding_set_names(row.argument_set_id),
+                parent_scope_id=row.parent_scope_id,
+                start_line=row.start_line,
+            )
+            for row in package.scopes
+        ),
+        marker_specs=tuple(
+            TemplateMarkerSpec(
+                marker_kind=package._string(row.marker_kind_id),
+                source_name=package._string(row.source_name_id),
+                ast_path=package._ast_path_text(row.ast_path_id),
+                statement_path=(
+                    None
+                    if row.statement_path_id is None
+                    else package._ast_path_text(row.statement_path_id)
+                ),
+                owner_path=package._path(row.owner_path_id),
+                scope_id=row.scope_id,
+                source_order=row.source_order,
+                resource_name=package._optional_string(row.resource_name_id),
+                operation_key=package._string(row.operation_key_id),
+                flags=tuple(row.flags),
+            )
+            for row in package.markers
+        ),
+        pyimport_marker_specs=tuple(
+            TemplatePyImportMarkerSpec(
+                marker_id=row.marker_id,
+                module_path=(
+                    None
+                    if row.module_path_id is None
+                    else package._path(row.module_path_id)
+                ),
+                names=tuple(
+                    package._string(name_id) for name_id in row.name_ids
+                ),
+                as_name=package._optional_string(row.as_name_id),
+                flags=tuple(row.flags),
+            )
+            for row in package.pyimport_markers
+        ),
+        comment_marker_specs=tuple(
+            TemplateCommentMarkerSpec(
+                marker_id=row.marker_id,
+                payload=package._string(row.payload_id),
+                flags=tuple(row.flags),
+            )
+            for row in package.comment_markers
+        ),
+        ref_marker_specs=tuple(
+            TemplateRefMarkerSpec(
+                marker_id=row.marker_id,
+                ref_kind=package._string(row.ref_kind_id),
+                context=package._string(row.context_id),
+                sentinel_attr=package._optional_string(row.sentinel_attr_id),
+                literal_path=(
+                    None
+                    if row.literal_path_id is None
+                    else package._path(row.literal_path_id)
+                ),
+                flags=tuple(row.flags),
+            )
+            for row in package.ref_markers
+        ),
+        unroll_marker_specs=tuple(
+            TemplateUnrollMarkerSpec(
+                marker_id=row.marker_id,
+                statement_path=package._ast_path_text(row.statement_path_id),
+                target_ast_path=package._ast_path_text(row.target_ast_path_id),
+                iter_ast_path=package._ast_path_text(row.iter_ast_path_id),
+                domain_ast_path=package._ast_path_text(row.domain_ast_path_id),
+                body_path=package._ast_path_text(row.body_path_id),
+                orelse_path=(
+                    None
+                    if row.orelse_path_id is None
+                    else package._ast_path_text(row.orelse_path_id)
+                ),
+                target_bindings=package._binding_set_names(
+                    row.target_binding_set_id
+                ),
+                domain_shape=package._string(row.domain_shape_id),
+                flags=tuple(row.flags),
+            )
+            for row in package.unroll_markers
+        ),
+    )
+
+
+def _marker_indexes_from_package(
+    package: LowerTemplatePackageV2,
+) -> tuple[dict[tuple[str, str], MarkerRow], dict[str, MarkerRow]]:
+    marker_rows: dict[tuple[str, str], MarkerRow] = {}
+    marker_rows_by_path: dict[str, MarkerRow] = {}
+    for marker in package.markers:
+        ast_path = package._ast_path_text(marker.ast_path_id)
+        resource_name = package._optional_string(marker.resource_name_id)
+        marker_rows[(ast_path, resource_name)] = marker
+        marker_rows_by_path[ast_path] = marker
+    return marker_rows, marker_rows_by_path
+
+
+def _record_projection_row(
+    package: LowerTemplatePackageV2,
+    row: RecordRow,
+) -> dict[str, object]:
+    resource_name = package._optional_string(row.resource_name_id)
+    return {
+        "surface_key": package._string(row.surface_key_id),
+        "resource_name": resource_name if resource_name is not None else "",
+        "inventory_kind": package._string(row.inventory_kind_id),
+    }
+
+
+def _projection_resource_name_from_package(
+    package: LowerTemplatePackageV2,
+    row: RecordRow,
+    node: ast.AST | None,
+):
+    if isinstance(node, ast.ClassDef):
+        return CodeNodeResourceName(ClassCodePathNode(node))
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return CodeNodeResourceName(FunctionCodePathNode(node))
+    return StaticResourceName(package._optional_string(row.resource_name_id))
+
+
+def _marker_for_projection_from_package(
+    package: LowerTemplatePackageV2,
+    marker_rows: dict[tuple[str, str], MarkerRow],
+    marker_rows_by_path: dict[str, MarkerRow],
+    *,
+    ast_path: str,
+    resource_name: str,
+) -> dict[str, object] | None:
+    marker = marker_rows.get((ast_path, resource_name)) or marker_rows_by_path.get(
+        ast_path
+    )
+    if marker is None:
+        return None
+    return {
+        "source_name": package._string(marker.source_name_id),
+        "ast_path": package._ast_path_text(marker.ast_path_id),
+        "resource_name": package._optional_string(marker.resource_name_id),
+    }
+
+
+def _owner_path_locations_from_package(
+    package: LowerTemplatePackageV2,
+    *,
+    origin: CompileOrigin,
+) -> dict[tuple[str, ...], SourceLocation]:
+    locations: dict[tuple[str, ...], SourceLocation] = {}
+    for row in package.scopes:
+        owner_path = package._path(row.owner_path_id)
+        if row.start_line is None:
+            continue
+        locations[owner_path] = SourceLocation(
+            file_name=origin.file_name,
+            line_number=row.start_line,
+        )
+    return locations
+
+
 def _projection_inventory_from_package_snapshot(
     *,
-    tree: ast.Module,
+    tree: ast.Module | None,
     origin: CompileOrigin,
     snapshot: dict[str, object],
 ) -> tuple[Inventory, tuple[InventoryRecord, ...]]:
@@ -588,13 +1016,15 @@ def _projection_inventory_from_package_snapshot(
         template_record_id = int(row["template_record_id"])
         locator = locator_rows[int(row["locator_id"])]
         ast_path = _row_string(locator, "ast_path")
-        node = _ast_node_at_path(tree, ast_path)
+        node = None if tree is None else _ast_node_at_path(tree, ast_path)
         record = InventoryRecord(
             record_id=f"#{template_record_id + 1}",
             build_path=ResourcePath(),
             code_owner=_code_path_for_owner_path(
                 tree,
                 _row_string_tuple(row, "owner_path"),
+                snapshot=snapshot,
+                origin=origin,
             ),
             name=_projection_resource_name(row, node),
             kind=_row_string(row, "inventory_kind"),
@@ -643,10 +1073,54 @@ def _projection_resource_name(
     return StaticResourceName(_row_string(row, "resource_name"))
 
 
+def _owner_path_locations_from_snapshot(
+    snapshot: dict[str, object],
+    *,
+    origin: CompileOrigin,
+) -> dict[tuple[str, ...], SourceLocation]:
+    locations: dict[tuple[str, ...], SourceLocation] = {}
+    for row in _snapshot_rows(snapshot, "scopes"):
+        owner_path = tuple(_row_string_tuple(row, "owner_path"))
+        start_line = row.get("start_line")
+        if not isinstance(start_line, int):
+            continue
+        locations[owner_path] = SourceLocation(
+            file_name=origin.file_name,
+            line_number=start_line,
+        )
+    return locations
+
+
 def _code_path_for_owner_path(
-    tree: ast.Module,
+    tree: ast.Module | None,
     owner_path: tuple[str, ...],
+    *,
+    snapshot: dict[str, object] | None = None,
+    origin: CompileOrigin | None = None,
+    owner_path_locations: dict[tuple[str, ...], SourceLocation] | None = None,
 ) -> CodePath:
+    if tree is None:
+        if owner_path_locations is not None:
+            locations = owner_path_locations
+        elif snapshot is not None and origin is not None:
+            locations = _owner_path_locations_from_snapshot(snapshot, origin=origin)
+        else:
+            return CodePath(tuple(StaticCodePathNode(part) for part in owner_path))
+        nodes: list[CodePathNode] = []
+        for index in range(len(owner_path)):
+            prefix = owner_path[: index + 1]
+            location = locations.get(prefix)
+            part = owner_path[index]
+            if location is None:
+                nodes.append(StaticCodePathNode(part))
+            else:
+                nodes.append(
+                    LocatedStaticCodePathNode(
+                        name=part,
+                        source_location=location,
+                    )
+                )
+        return CodePath(tuple(nodes))
     body: list[ast.stmt] = list(tree.body)
     nodes: list[CodePathNode] = []
     for part in owner_path:
@@ -678,6 +1152,11 @@ def _find_owner_node(
         if stripped == logical_name:
             return statement
     return None
+
+
+def _native_hot_path_funcargs_payload_stub() -> FuncArgPayload:
+    """Inventory placeholder; native materialize copies real funcargs from Rust."""
+    return FuncArgPayload(items=())
 
 
 def _projection_payload_for_native_record(
@@ -720,12 +1199,20 @@ def _projection_payload_for_native_record(
     if kind == "production.block":
         return BlockProductionInventoryPayload()
     if kind == "production.expression":
+        if node is None:
+            node = ast.Constant(value=None)
         if not isinstance(node, ast.expr):
             raise TypeError(
                 "native expression production locator must resolve to ast.expr"
             )
         return ExpressionProductionInventoryPayload(node)
     if kind == "production.funcargs":
+        if node is None:
+            # Hot-path compile has no CPython tree; native materialize clones
+            # funcargs from the Rust-owned template source at apply time.
+            return FuncargsProductionInventoryPayload(
+                _native_hot_path_funcargs_payload_stub()
+            )
         if not isinstance(node, ast.Call):
             raise TypeError(
                 "native funcargs production locator must resolve to ast.Call"
@@ -929,16 +1416,28 @@ def _extract_native_package_snapshot(
     source: str,
     origin: CompileOrigin,
 ) -> dict[str, object]:
+    from astichi.perf_counters import active_perf_counters
+
     bundle_snapshot = _current_surface_bundle_snapshot()
     handle = module.engine_create()
+    counters = active_perf_counters()
     try:
         module.register_surface_bundle(handle, deepcopy(bundle_snapshot))
-        snapshot = module.extract_template_package_v2_snapshot(
-            handle,
-            source,
-            origin.file_name,
-            origin.line_number,
-        )
+        if counters is None:
+            snapshot = module.extract_template_package_v2_snapshot(
+                handle,
+                source,
+                origin.file_name,
+                origin.line_number,
+            )
+        else:
+            with counters.measure("native_package_snapshot_extract"):
+                snapshot = module.extract_template_package_v2_snapshot(
+                    handle,
+                    source,
+                    origin.file_name,
+                    origin.line_number,
+                )
     finally:
         module.engine_close(handle)
     if not isinstance(snapshot, dict):
@@ -1072,7 +1571,7 @@ def copy_composable_executable_ast(composable: Composable) -> ast.Module:
     executable = composable.to_executable_ast()
     if not isinstance(executable, ast.Module):
         raise TypeError("composable executable artifact is not an ast.Module")
-    return executable
+    return clone_ast(executable)
 
 
 def _template_record_spec(
