@@ -243,10 +243,12 @@ Tag: `rust-fsn/f4e-handoff-swap`
 
 Tag: `rust-fsn/f5-closeout`
 
-### F6 — Optional: cheaper `copy_python_ast` if F0b shows dominance
+### F6 — Handoff transfer (no redundant `clone_ast`)
 
-Emergency boundary `ast.parse` is a **different policy** — only with explicit
-sign-off. Tag: `rust-fsn/f6-handoff-perf`
+Capability: `native.self_native.handoff_transfer.v1`. Appendix:
+`FullSelfNativeRustAstPlan-F6-handoff-perf.md`.
+
+Tag: `rust-fsn/f6-handoff-perf`
 
 ## What stays Python (minimal)
 

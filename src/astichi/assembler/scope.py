@@ -1674,7 +1674,10 @@ class AssemblyScope:
         root = self._lower_composable_by_occurrence.get(root_occurrence_id)
         if root is None:
             return None
+        from astichi.lower_engine.self_native_gates import native_handoff_transfer_enabled
+
         counters = active_perf_counters()
+        handoff_transfer = native_handoff_transfer_enabled()
         try:
             external_literals = {
                 overlay_id.index: external_value_to_source(value)
@@ -1682,20 +1685,25 @@ class AssemblyScope:
             }
             if counters is not None and external_literals:
                 counters.increment("external_literal_payload", len(external_literals))
+            materialize_args = (
+                self._native_engine_handle,
+                self._native_state_handle,
+                external_literals,
+                root_occurrence_id.index,
+            )
             if counters is None:
                 tree = self._native_module.assembly_state_materialize_to_python_ast(
-                    self._native_engine_handle,
-                    self._native_state_handle,
-                    external_literals,
-                    root_occurrence_id.index,
+                    *materialize_args
                 )
+            elif handoff_transfer:
+                with counters.measure("copy_python_ast"):
+                    tree = self._native_module.assembly_state_materialize_to_python_ast(
+                        *materialize_args
+                    )
             else:
                 with counters.measure("native_materialize_operation_stream"):
                     tree = self._native_module.assembly_state_materialize_to_python_ast(
-                        self._native_engine_handle,
-                        self._native_state_handle,
-                        external_literals,
-                        root_occurrence_id.index,
+                        *materialize_args
                     )
         except (TypeError, ValueError, RuntimeError):
             if counters is not None:
@@ -1703,7 +1711,7 @@ class AssemblyScope:
             return None
         if not isinstance(tree, ast.Module):
             raise TypeError("native materializer must return ast.Module")
-        if counters is not None:
+        if counters is not None and not handoff_transfer:
             counters.increment("native_materialize_workspace_copy")
         if _tree_has_unresolved_lower_astichi_demands(tree):
             if counters is not None:
@@ -1714,6 +1722,7 @@ class AssemblyScope:
             origin=root.origin,
             bound_externals=frozenset(),
             _already_materialized=True,
+            _executable_handoff_pending=handoff_transfer,
         )
 
     def _native_materialization_root(self) -> OccurrenceId | None:

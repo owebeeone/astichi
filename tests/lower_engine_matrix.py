@@ -21,6 +21,7 @@ _EXEMPT_MODULE_PREFIXES = (
     "test_native_materialize_oracle_f4c",
     "test_native_materialize_no_python_fallback_f4d",
     "test_native_handoff_f4e",
+    "test_native_handoff_transfer_f6",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )

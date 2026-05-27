@@ -284,6 +284,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.self_native.no_python_parse_compile.v1",
         "native.self_native.materialize_no_python_fallback.v1",
         "native.self_native.current_surfaces.v1",
+        "native.self_native.handoff_transfer.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]

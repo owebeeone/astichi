@@ -259,7 +259,8 @@ Python. See `docs/reference/assembler-scope.md`.
 `dev-docs/perf-refactor/FullSelfNativeRustAstPlan.md`): when the extension
 advertises `native.self_native.current_surfaces.v1`, the lifecycle production
 path uses native compile parse, native compile validation, native scope
-materialize, and a single `copy_python_ast` handoff in `to_executable_ast`.
+materialize, one `copy_python_ast` at native materialize, and transfer handoff in
+`to_executable_ast` (no second `clone_ast` when `handoff_transfer.v1` is on).
 `engine=python` remains the differential oracle for tests. Explicit `native`
 without self-native caps fails with a diagnostic instead of silently using the
 hybrid path.

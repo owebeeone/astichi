@@ -70,6 +70,11 @@ class BasicComposable(Composable):
         repr=False,
         compare=False,
     )
+    _executable_handoff_pending: bool = field(
+        default=False,
+        repr=False,
+        compare=False,
+    )
 
     def arg_bindings_map(self) -> dict[str, str]:
         """Return the identifier-arg resolutions as a plain dict."""
@@ -92,6 +97,19 @@ class BasicComposable(Composable):
 
     def to_executable_ast(self) -> ast.Module:
         if self._already_materialized:
+            from astichi.lower_engine.self_native_gates import (
+                native_handoff_transfer_enabled,
+            )
+
+            if (
+                self._executable_handoff_pending
+                and native_handoff_transfer_enabled()
+            ):
+                tree = self.tree
+                ast.fix_missing_locations(tree)
+                object.__setattr__(self, "_executable_handoff_pending", False)
+                return tree
+
             counters = active_perf_counters()
             if counters is None:
                 tree = clone_ast(self.tree)
