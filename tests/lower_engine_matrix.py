@@ -12,6 +12,9 @@ DEFAULT_MATRIX_ENGINES = ("python", "native")
 
 _EXEMPT_MODULE_PREFIXES = (
     "test_native_engine_",
+    "test_native_success_path_guards",
+    "test_native_self_native_f0c",
+    "test_native_literal_payload_abi",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )
@@ -25,7 +28,8 @@ def matrix_enabled() -> bool:
 
 def matrix_exempt_module(module_name: str) -> bool:
     """Return whether a test module opts out of dual-engine collection."""
-    return module_name.startswith(_EXEMPT_MODULE_PREFIXES)
+    short_name = module_name.rsplit(".", 1)[-1]
+    return short_name.startswith(_EXEMPT_MODULE_PREFIXES)
 
 
 def available_matrix_engines() -> tuple[str, ...]:
