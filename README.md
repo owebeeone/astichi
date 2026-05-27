@@ -255,6 +255,15 @@ replay is off by default (set `ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` only for
 compatibility/oracle work). Without the extension, the same API falls back to
 Python. See `docs/reference/assembler-scope.md`.
 
+**Self-native production boundary** (roll-build `rust-fsn/*`, plan
+`dev-docs/perf-refactor/FullSelfNativeRustAstPlan.md`): when the extension
+advertises `native.self_native.current_surfaces.v1`, the lifecycle production
+path uses native compile parse, native compile validation, native scope
+materialize, and a single `copy_python_ast` handoff in `to_executable_ast`.
+`engine=python` remains the differential oracle for tests. Explicit `native`
+without self-native caps fails with a diagnostic instead of silently using the
+hybrid path.
+
 ## Layout
 
 | Path | Role |

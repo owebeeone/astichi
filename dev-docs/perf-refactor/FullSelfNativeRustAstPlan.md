@@ -207,10 +207,6 @@ Ledger: `FullSelfNativeRustAstPlan-F3a-compile-ledger.md`.
 
 Tag: `rust-fsn/f3b-compile-validators`
 
-### F3b — Native validators + native name/ports
-
-Tag: `rust-fsn/f3b-compile-validators`
-
 ### F3c — Differential oracle vs python engine
 
 Tag: `rust-fsn/f3c-compile-oracle`

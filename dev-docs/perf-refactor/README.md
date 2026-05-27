@@ -9,8 +9,8 @@ roll-build for full self-native: Rust through materialize, one `copy_python_ast`
 handoff, hybrid Python AST work removed from the production path. Tags:
 `rust-fsn/*`. F0 sign-off: 2026-05-27.
 
-Start implementation at **F0c**. Do not open new work from the historical files
-below.
+Roll-build **F0c–F5** complete (`rust-fsn/*` tags). **F6** (handoff perf) is
+optional. Do not open new work from the historical files below.
 
 ## Historical context (do not execute)
 

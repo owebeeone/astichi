@@ -944,6 +944,26 @@ class AssemblyScope:
             return
         raise TypeError(f"unsupported binding candidate: {type(candidate).__name__}")
 
+    def _reject_python_materialize_fallback(self, operation: str) -> None:
+        from astichi.lower_engine.self_native_gates import (
+            native_materialize_no_python_fallback_enabled,
+        )
+
+        if not native_materialize_no_python_fallback_enabled():
+            return
+        if select_lower_engine().selected_engine == "python":
+            return
+        if (
+            self._native_module is None
+            or self._native_engine_handle is None
+            or self._native_state_handle is None
+        ):
+            return
+        raise RuntimeError(
+            f"{operation} requires native materialization but the native "
+            "materializer did not produce a composable"
+        )
+
     def build(self, *, unroll: bool | str = "auto") -> BasicComposable:
         """Build the current scope graph."""
         materialized = None
@@ -955,6 +975,8 @@ class AssemblyScope:
                 counters.increment("lower_build_selection")
                 counters.increment("lower_materialization_artifact")
             return materialized
+        if unroll in ("auto", False):
+            self._reject_python_materialize_fallback("scope.build")
         if counters is not None:
             counters.increment("lower_materialization_adapter_fallback")
         return self._build_with_adapter(unroll=unroll)
@@ -971,6 +993,7 @@ class AssemblyScope:
         materialized = self._lower_materialize_if_supported()
         counters = active_perf_counters()
         if materialized is None:
+            self._reject_python_materialize_fallback("scope.lower_materialize")
             if counters is not None:
                 counters.increment("lower_materialization_adapter_fallback")
             return self._build_with_adapter().materialize()

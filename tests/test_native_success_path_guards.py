@@ -16,7 +16,10 @@ from astichi.lower_engine.native import (
     select_lower_engine,
     select_self_native_production_engine,
 )
-from astichi.lower_engine.self_native import has_self_native_production
+from astichi.lower_engine.self_native import (
+    SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+    has_self_native_production,
+)
 from astichi.validation.production_guards import (
     PRODUCTION_FORBIDDEN_COUNTERS,
     assert_production_forbidden_zero,
@@ -104,7 +107,11 @@ def test_hybrid_lifecycle_import_forbidden_counters_are_zero() -> None:
 
     assert select_lower_engine("native").selected_engine == "native-rust"
     capabilities = load_native_extension().capabilities()
-    assert not has_self_native_production(capabilities)
+    features = capabilities.get("engine_features", ())
+    if SELF_NATIVE_CURRENT_SURFACES_FEATURE in features:
+        assert has_self_native_production(capabilities)
+    else:
+        assert not has_self_native_production(capabilities)
 
 
 def test_self_native_production_guard_requires_caps_and_counters() -> None:
@@ -112,6 +119,21 @@ def test_self_native_production_guard_requires_caps_and_counters() -> None:
         pytest.skip("native engine extension is not built")
 
     reset_native_extension_cache()
+    capabilities = load_native_extension().capabilities()
+    features = capabilities.get("engine_features", ())
+    summary = _run_lifecycle_baseline_subprocess()
+    counts = summary["astichi_counters"]["counts"]  # type: ignore[index]
+
+    if SELF_NATIVE_CURRENT_SURFACES_FEATURE in features:
+        assert select_self_native_production_engine("native").selected_engine == (
+            "native-rust"
+        )
+        production_auto = select_self_native_production_engine("auto")
+        assert production_auto.selected_engine == "native-rust"
+        assert has_self_native_production(capabilities)
+        assert_production_forbidden_zero(counts, context="self-native lifecycle import")
+        assert_production_requirements(counts, context="self-native lifecycle import")
+        return
 
     with pytest.raises(NativeExtensionUnavailableError):
         select_self_native_production_engine("native")
@@ -120,9 +142,6 @@ def test_self_native_production_guard_requires_caps_and_counters() -> None:
     assert production_auto.selected_engine == "python"
     assert production_auto.reason_key == "self_native_production_unavailable"
 
-    summary = _run_lifecycle_baseline_subprocess()
-    counts = summary["astichi_counters"]["counts"]  # type: ignore[index]
     assert_production_forbidden_zero(counts, context="hybrid import (pre self-native)")
     assert missing_production_requirements(counts) == ()
-    capabilities = load_native_extension().capabilities()
     assert not has_self_native_production(capabilities)

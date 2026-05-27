@@ -22,16 +22,23 @@ from astichi.lower_engine.self_native import (
 )
 
 
-def test_built_extension_is_hybrid_not_self_native_production() -> None:
+def test_built_extension_self_native_tier_matches_current_surfaces_cap() -> None:
     capabilities = native_capabilities()
     if capabilities is None:
         pytest.skip("native engine extension is not built")
 
-    assert lower_engine_tier(capabilities) == "hybrid"
-    assert has_self_native_production(capabilities) is False
-    assert missing_self_native_production_features(capabilities) == (
-        SELF_NATIVE_CURRENT_SURFACES_FEATURE,
-    )
+    features = capabilities.get("engine_features", ())
+    if SELF_NATIVE_CURRENT_SURFACES_FEATURE not in features:
+        assert lower_engine_tier(capabilities) == "hybrid"
+        assert has_self_native_production(capabilities) is False
+        assert missing_self_native_production_features(capabilities) == (
+            SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+        )
+        return
+
+    assert lower_engine_tier(capabilities) == "self_native"
+    assert has_self_native_production(capabilities) is True
+    assert missing_self_native_production_features(capabilities) == ()
 
 
 def test_hybrid_caps_satisfy_select_lower_engine_not_production(

@@ -16,6 +16,11 @@ _EXEMPT_MODULE_PREFIXES = (
     "test_native_self_native_f0c",
     "test_native_literal_payload_abi",
     "test_native_compile_validation_f3b",
+    "test_native_compile_oracle_f3c",
+    "test_native_compile_no_python_parse_f3d",
+    "test_native_materialize_oracle_f4c",
+    "test_native_materialize_no_python_fallback_f4d",
+    "test_native_handoff_f4e",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )

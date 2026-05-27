@@ -94,9 +94,12 @@ class BasicComposable(Composable):
         if self._already_materialized:
             counters = active_perf_counters()
             if counters is None:
-                return clone_ast(self.tree)
-            with counters.measure("copy_python_ast"):
-                return clone_ast(self.tree)
+                tree = clone_ast(self.tree)
+            else:
+                with counters.measure("copy_python_ast"):
+                    tree = clone_ast(self.tree)
+            ast.fix_missing_locations(tree)
+            return tree
 
         from astichi.materialize import to_executable_ast
 

@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-pub const VERSION: &str = "1.0.5";
+pub const VERSION: &str = "1.0.6";
 pub const ABI_SCHEMA_VERSION: u32 = 1;
 pub const BACKEND_LABEL: &str = "rust-pyo3-core";
 
@@ -51,6 +51,9 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.self_native.reproject.v1",
             "native.self_native.facade_builder_tree_projection.v1",
             "native.self_native.compile_validation.v1",
+            "native.self_native.no_python_parse_compile.v1",
+            "native.self_native.materialize_no_python_fallback.v1",
+            "native.self_native.current_surfaces.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

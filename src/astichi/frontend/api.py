@@ -95,24 +95,15 @@ def compile(
         apply_offset=apply_offset,
     )
     selected_native = _selected_native_lower_engine()
-    try:
-        tree = ast.parse(
-            parse_source,
-            filename=origin.file_name,
-        )
-    except IndentationError:
-        if not apply_offset or offset <= 0:
-            raise
-        parse_source = _padded_source(
-            source,
-            line_number=line_number,
-            offset=offset,
-            apply_offset=False,
-        )
-        tree = ast.parse(
-            parse_source,
-            filename=origin.file_name,
-        )
+    tree, parse_source = _parse_compile_tree(
+        source=source,
+        parse_source=parse_source,
+        origin=origin,
+        line_number=line_number,
+        offset=offset,
+        apply_offset=apply_offset,
+        selected_native=selected_native,
+    )
     attach_astichi_source_file(tree, origin.file_name)
     if (
         selected_native is not None
@@ -192,6 +183,61 @@ def _maybe_native_compile_validate(source: str, file_name: str) -> None:
     if not native_compile_validation_enabled():
         return
     native_compile_validate_source(source, file_name=file_name)
+
+
+def _parse_compile_tree(
+    *,
+    source: str,
+    parse_source: str,
+    origin: CompileOrigin,
+    line_number: int,
+    offset: int,
+    apply_offset: bool,
+    selected_native: str | None,
+) -> tuple[ast.Module, str]:
+    """Parse compile input with native or CPython parser."""
+    from astichi.lower_engine.native_compile_parse import (
+        native_compile_tree_from_parse_source,
+        native_no_python_parse_compile_enabled,
+    )
+    from astichi.perf_counters import active_perf_counters
+
+    use_native_parse = (
+        selected_native is not None and native_no_python_parse_compile_enabled()
+    )
+
+    def _parse_with_python(text: str) -> ast.Module:
+        counters = active_perf_counters()
+        if counters is None:
+            return ast.parse(text, filename=origin.file_name)
+        with counters.measure("python_compile_ast_parse"):
+            return ast.parse(text, filename=origin.file_name)
+
+    if use_native_parse:
+        try:
+            return (
+                native_compile_tree_from_parse_source(
+                    parse_source,
+                    file_name=origin.file_name,
+                ),
+                parse_source,
+            )
+        except SyntaxError:
+            # Fall back to CPython parse so padded compile input reports lineno/offset.
+            pass
+
+    try:
+        return _parse_with_python(parse_source), parse_source
+    except IndentationError:
+        if not apply_offset or offset <= 0:
+            raise
+        parse_source = _padded_source(
+            source,
+            line_number=line_number,
+            offset=offset,
+            apply_offset=False,
+        )
+        return _parse_with_python(parse_source), parse_source
 
 
 def _selected_native_lower_engine() -> str | None:
