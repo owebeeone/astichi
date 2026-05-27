@@ -35,6 +35,19 @@ Before `native` can be selected, the native engine must accept:
 - the external-slot ownership contract.
 - the `native.full_lower_engine.current_surfaces.v1` capability.
 
+### Self-native production tier (F0c+)
+
+Hybrid native is not the YIDL lifecycle production target. Per-slice
+`native.self_native.*` features are advertised as slices land; production guards
+require `native.self_native.current_surfaces.v1`.
+
+| API | Required capabilities | Behavior |
+|-----|----------------------|----------|
+| `select_lower_engine` | hybrid (`full_lower_engine` + package v2) | Current default; unchanged until F4c enables self-native caps |
+| `select_self_native_production_engine` | `native.self_native.current_surfaces.v1` | Lifecycle production path; explicit `native` fails if only hybrid caps exist |
+
+Threading and handle ownership: `FullSelfNativeRustAstPlan-F0c-threading.md`.
+
 If any engine-level gate fails, `auto` falls back before work starts. Explicit
 `native` should fail with a diagnostic rather than silently crossing back into
 Python per record.

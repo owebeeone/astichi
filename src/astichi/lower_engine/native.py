@@ -14,7 +14,12 @@ import os
 from pathlib import Path
 import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal
+
+from astichi.lower_engine.self_native import (
+    REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
+    has_self_native_production,
+)
 
 
 EXTENSION_NAME = "_astichi_native_engine"
@@ -107,8 +112,48 @@ def native_self_test() -> bool | None:
     return bool(module.self_test())
 
 
+def lower_engine_tier(capabilities: dict[str, Any]) -> Literal["hybrid", "self_native"]:
+    """Classify native extension tier for diagnostics and production guards."""
+    if has_self_native_production(capabilities):
+        return "self_native"
+    return "hybrid"
+
+
 def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
-    """Select the lower engine at a coarse boundary without routing behavior."""
+    """Select the hybrid/native lower engine at a coarse boundary.
+
+    This remains the lifecycle default until ``native.self_native.current_surfaces.v1``
+    is advertised. Use :func:`select_self_native_production_engine` for the
+    full self-native production gate.
+    """
+    return _select_native_tier_engine(
+        value,
+        required_features=REQUIRED_NATIVE_LOWER_ENGINE_FEATURES,
+        unavailable_reason_key="native_required_features_unavailable",
+    )
+
+
+def select_self_native_production_engine(
+    value: str | None = None,
+) -> EngineSelectionEvent:
+    """Select the engine for the YIDL lifecycle production path.
+
+    Explicit ``native`` without self-native capabilities fails with a diagnostic
+    instead of silently using the hybrid native path.
+    """
+    return _select_native_tier_engine(
+        value,
+        required_features=REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
+        unavailable_reason_key="self_native_production_unavailable",
+    )
+
+
+def _select_native_tier_engine(
+    value: str | None,
+    *,
+    required_features: tuple[str, ...],
+    unavailable_reason_key: str,
+) -> EngineSelectionEvent:
     requested = requested_lower_engine(value)
     if requested == "python":
         return EngineSelectionEvent(
@@ -125,7 +170,7 @@ def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
                 f"requested {requested!r}, but the available native backend "
                 f"is {selected!r}"
             )
-        missing_features = _missing_required_native_features(capabilities)
+        missing_features = _missing_features(capabilities, required_features)
         if not missing_features:
             return EngineSelectionEvent(
                 requested_engine=requested,
@@ -140,7 +185,7 @@ def select_lower_engine(value: str | None = None) -> EngineSelectionEvent:
                 requested_engine=requested,
                 selected_engine="python",
                 fallback_scope="engine",
-                reason_key="native_required_features_unavailable",
+                reason_key=unavailable_reason_key,
                 reason_detail=reason,
             )
         raise NativeExtensionUnavailableError(
@@ -202,13 +247,16 @@ def _native_capability_snapshot(module: ModuleType) -> dict[str, Any]:
 def _missing_required_native_features(
     capabilities: dict[str, Any],
 ) -> tuple[str, ...]:
+    return _missing_features(capabilities, REQUIRED_NATIVE_LOWER_ENGINE_FEATURES)
+
+
+def _missing_features(
+    capabilities: dict[str, Any],
+    required: tuple[str, ...],
+) -> tuple[str, ...]:
     features = capabilities.get("engine_features", ())
     available = set(features)
-    return tuple(
-        feature
-        for feature in REQUIRED_NATIVE_LOWER_ENGINE_FEATURES
-        if feature not in available
-    )
+    return tuple(feature for feature in required if feature not in available)
 
 
 def _native_backend_selection(capabilities: dict[str, Any]) -> str:
