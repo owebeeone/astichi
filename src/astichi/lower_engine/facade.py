@@ -1006,6 +1006,58 @@ def copy_composable_template_ast(composable: Composable) -> ast.Module:
     return copy_template_ast(tree)
 
 
+def composable_template_tree_for_builder(composable: Composable) -> ast.Module:
+    """Return template AST for builder shell indexing (native projection when available)."""
+    from astichi.model.basic import BasicComposable
+    from astichi.perf_counters import active_perf_counters
+
+    if not isinstance(composable, BasicComposable):
+        return copy_composable_template_ast(composable)
+
+    binding = composable._lower_template
+    if (
+        binding is None
+        or binding.native_source is None
+        or binding.native_origin is None
+    ):
+        return clone_ast(composable.tree)
+
+    from astichi.lower_engine.native import load_native_extension, select_lower_engine
+
+    if select_lower_engine().selected_engine not in {"native-rust", "native-cpp"}:
+        return clone_ast(composable.tree)
+
+    module = load_native_extension(required=False)
+    if module is None:
+        return clone_ast(composable.tree)
+
+    engine = module.engine_create()
+    try:
+        ensure_current_native_surface_bundle(
+            module=module,
+            engine_handle=engine,
+        )
+        template = module.register_template_package_v2_source(
+            engine,
+            binding.native_source,
+            binding.native_origin.file_name,
+            binding.native_origin.line_number,
+        )
+        workspace = module.materialization_workspace_create(engine, template)
+        tree = module.materialization_workspace_copy_to_python_ast(engine, workspace)
+    except Exception:
+        return clone_ast(composable.tree)
+    finally:
+        module.engine_close(engine)
+
+    if not isinstance(tree, ast.Module):
+        return clone_ast(composable.tree)
+    counters = active_perf_counters()
+    if counters is not None:
+        counters.increment("native_facade_builder_tree_projection")
+    return clone_ast(tree)
+
+
 def render_composable_source(
     composable: Composable,
     *,

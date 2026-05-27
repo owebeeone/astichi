@@ -726,8 +726,13 @@ def _register_lower_template(
         return lower_template
     if selected not in {"native-rust", "native-cpp"}:
         return lower_template
+    native_source = lower_template.native_source
+    if native_source is None:
+        native_source = f"{ast.unparse(tree)}\n"
+    elif not native_source.endswith("\n"):
+        native_source = f"{native_source}\n"
     return register_native_template_source(
-        source=f"{ast.unparse(tree)}\n",
+        source=native_source,
         origin=origin,
         fallback_binding=lower_template,
     )

@@ -46,6 +46,10 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.self_native.literal_payload_abi.v1",
             "native.self_native.scope_no_mirror_replay.v1",
             "native.self_native.bind_external.v1",
+            "native.self_native.bind_identifier.v1",
+            "native.self_native.keep_names.v1",
+            "native.self_native.reproject.v1",
+            "native.self_native.facade_builder_tree_projection.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

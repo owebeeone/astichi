@@ -27,7 +27,11 @@ from astichi.lower_engine.native import (
 )
 from astichi.lower_engine.self_native import (
     SELF_NATIVE_BIND_EXTERNAL_FEATURE,
+    SELF_NATIVE_BIND_IDENTIFIER_FEATURE,
+    SELF_NATIVE_FACADE_BUILDER_TREE_FEATURE,
+    SELF_NATIVE_KEEP_NAMES_FEATURE,
     SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE,
+    SELF_NATIVE_REPROJECT_FEATURE,
     SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE,
 )
 
@@ -232,6 +236,10 @@ def test_native_engine_capabilities_when_extension_available() -> None:
             "(uv run python native_engine/build.py)"
         )
     assert SELF_NATIVE_BIND_EXTERNAL_FEATURE in features
+    assert SELF_NATIVE_BIND_IDENTIFIER_FEATURE in features
+    assert SELF_NATIVE_KEEP_NAMES_FEATURE in features
+    assert SELF_NATIVE_REPROJECT_FEATURE in features
+    assert SELF_NATIVE_FACADE_BUILDER_TREE_FEATURE in features
     assert SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE in features
     assert capabilities["engine_features"] == [
         "native.extension.v1",
@@ -266,6 +274,10 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.self_native.literal_payload_abi.v1",
         "native.self_native.scope_no_mirror_replay.v1",
         "native.self_native.bind_external.v1",
+        "native.self_native.bind_identifier.v1",
+        "native.self_native.keep_names.v1",
+        "native.self_native.reproject.v1",
+        "native.self_native.facade_builder_tree_projection.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]
