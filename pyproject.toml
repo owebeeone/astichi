@@ -43,7 +43,6 @@ include = [
   "src/astichi",
   "tests",
   "dev-docs",
-  "native_probe",
   "native_engine",
   "hatch_build.py",
   "scratch",

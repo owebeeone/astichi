@@ -11,10 +11,6 @@ dist/
 tests/.uv-venvs/
 tests/actual_test_results/
 scratch/
-native_probe/target/
-native_probe/_native_ast_probe_ext*.so
-native_probe/_native_ast_probe_ext*.pyd
-native_probe/_native_ast_probe_ext*.dll
 native_engine/target/
 native_engine/_astichi_native_engine*.so
 native_engine/_astichi_native_engine*.pyd

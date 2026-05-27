@@ -1,7 +1,7 @@
 # Astichi Native Engine Skeleton
 
 This directory contains the production native-extension skeleton for the
-perf-refactor lower engine. It is intentionally separate from `native_probe/`.
+perf-refactor lower engine.
 
 The extension currently exposes version, capability, self-test, and native
 engine-handle lifecycle functions only. It does not route
