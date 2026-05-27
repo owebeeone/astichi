@@ -42,6 +42,9 @@ design artifacts for implementation planning:
 - `NativePerformancePlan.md`: roll-build plan for turning the now-selectable
   native lower-engine path from a correct hybrid path into a faster
   native-authoritative path.
+- `FullSelfNativeRustAstPlan.md`: self-native boundary (Rust until single
+  `copy_python_ast` handoff); `native.self_native.*` capabilities; tags
+  `perf-native-full/*`; supersedes hybrid P7 closeout for this track.
 - `SlicedBuildPlan.md`: commit-sized implementation slices, including API
   pruning before lower-engine changes.
 
