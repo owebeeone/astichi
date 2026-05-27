@@ -133,8 +133,15 @@ def compile(
         elif not normalized_source_kind.allows_internal_insert_metadata():
             _maybe_native_compile_validate(source, origin.file_name)
 
+        native_source = _native_registration_source(
+            source=source,
+            parse_source=parse_source,
+            line_number=line_number,
+            offset=offset,
+            apply_offset=apply_offset,
+        )
         lower_template, inventory = register_native_template_source_hot_path(
-            source=parse_source,
+            source=native_source,
             origin=origin,
         )
         _assert_selected_native_backend(selected_native, lower_template)
@@ -370,14 +377,33 @@ def _parse_compile_tree(
 
 
 def _selected_native_lower_engine() -> str | None:
-    from astichi.lower_engine.native import select_effective_lower_engine
+    from astichi.lower_engine.native import select_lower_engine
 
-    selected = select_effective_lower_engine().selected_engine
+    selected = select_lower_engine().selected_engine
     if selected == "python":
         return None
     if selected in {"native-rust", "native-cpp"}:
         return selected
     return None
+
+
+def _native_registration_source(
+    *,
+    source: str,
+    parse_source: str,
+    line_number: int,
+    offset: int,
+    apply_offset: bool,
+) -> str:
+    """Return native registration source using the compile parser's offset fallback."""
+    if apply_offset and offset > 0:
+        return _padded_source(
+            source,
+            line_number=line_number,
+            offset=offset,
+            apply_offset=False,
+        )
+    return parse_source
 
 
 def _assert_selected_native_backend(selected: str, lower_template: object) -> None:

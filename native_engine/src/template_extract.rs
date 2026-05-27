@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyModule};
+use pyo3::types::{PyDict, PyList, PyModule};
 use rustpython_parser::ast;
+use rustpython_parser::ast::{Ranged, Visitor};
 use rustpython_parser::text_size::TextRange;
 
 use crate::handles::EngineHandle;
@@ -104,7 +105,9 @@ pub(crate) fn validate_compile_module(
 fn compile_validate_source_py(source: String, filename: Option<String>) -> PyResult<()> {
     let filename = filename.unwrap_or_else(|| "<astichi>".to_string());
     let module = validate_compile_module(&source, &filename)?;
-    validate_authored_no_astichi_insert(&module, &SourceMap::new(&source))?;
+    if source.contains("astichi_insert") {
+        validate_authored_no_astichi_insert(&module, &SourceMap::new(&source))?;
+    }
     Ok(())
 }
 
@@ -514,140 +517,99 @@ fn validate_authored_no_astichi_insert(
     module: &ast::ModModule,
     source_map: &SourceMap,
 ) -> PyResult<()> {
-    for stmt in &module.body {
-        validate_stmt_no_authored_insert(stmt, source_map)?;
+    let mut validator = AuthoredInsertValidator { found: None };
+    for stmt in module.body.iter().cloned() {
+        validator.visit_stmt(stmt);
+        if validator.found.is_some() {
+            break;
+        }
+    }
+    if let Some(range) = validator.found {
+        let line = source_map.line(range);
+        return Err(crate::errors::schema_error(&format!(
+            "astichi_insert(...) is internal emitted-source metadata and cannot be authored directly at line {line}"
+        )));
     }
     Ok(())
 }
 
-fn validate_stmt_no_authored_insert(stmt: &ast::Stmt, source_map: &SourceMap) -> PyResult<()> {
-    if let ast::Stmt::Expr(expr_stmt) = stmt {
-        if expr_tree_contains_insert(&expr_stmt.value) {
-            let line = source_map.line(expr_stmt.range);
-            return Err(crate::errors::schema_error(&format!(
-                "astichi_insert(...) is internal emitted-source metadata and cannot be authored directly at line {line}"
-            )));
-        }
-    }
-    match stmt {
-        ast::Stmt::FunctionDef(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-        }
-        ast::Stmt::AsyncFunctionDef(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-        }
-        ast::Stmt::ClassDef(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-        }
-        ast::Stmt::With(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-        }
-        ast::Stmt::If(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-            for child in &node.orelse {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-        }
-        ast::Stmt::Try(node) => {
-            for child in &node.body {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-            for child in &node.orelse {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-            for child in &node.finalbody {
-                validate_stmt_no_authored_insert(child, source_map)?;
-            }
-            for handler in &node.handlers {
-                if let ast::ExceptHandler::ExceptHandler(inner) = handler {
-                    for child in &inner.body {
-                        validate_stmt_no_authored_insert(child, source_map)?;
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(())
+struct AuthoredInsertValidator {
+    found: Option<TextRange>,
 }
 
-fn expr_tree_contains_insert(expr: &ast::Expr) -> bool {
-    if is_call_named(expr, "astichi_insert") {
-        return true;
+impl Visitor for AuthoredInsertValidator {
+    fn visit_expr(&mut self, node: ast::Expr) {
+        if self.found.is_some() {
+            return;
+        }
+        if is_call_named(&node, "astichi_insert") {
+            self.found = Some(node.range());
+            return;
+        }
+        self.generic_visit_expr(node);
     }
-    match expr {
-        ast::Expr::Call(node) => {
-            expr_tree_contains_insert(&node.func)
-                || node.args.iter().any(expr_tree_contains_insert)
-                || node
-                    .keywords
-                    .iter()
-                    .any(|keyword| expr_tree_contains_insert(&keyword.value))
+
+    fn visit_arguments(&mut self, node: ast::Arguments) {
+        for arg in node.posonlyargs {
+            self.visit_arg_with_default(arg);
         }
-        ast::Expr::BinOp(node) => {
-            expr_tree_contains_insert(&node.left) || expr_tree_contains_insert(&node.right)
+        for arg in node.args {
+            self.visit_arg_with_default(arg);
         }
-        ast::Expr::UnaryOp(node) => expr_tree_contains_insert(&node.operand),
-        ast::Expr::BoolOp(node) => node.values.iter().any(expr_tree_contains_insert),
-        ast::Expr::IfExp(node) => {
-            expr_tree_contains_insert(&node.test)
-                || expr_tree_contains_insert(&node.body)
-                || expr_tree_contains_insert(&node.orelse)
+        if let Some(arg) = node.vararg {
+            self.visit_arg(*arg);
         }
-        ast::Expr::Dict(node) => {
-            node.keys
-                .iter()
-                .filter_map(|key| key.as_ref())
-                .any(expr_tree_contains_insert)
-                || node.values.iter().any(expr_tree_contains_insert)
+        for arg in node.kwonlyargs {
+            self.visit_arg_with_default(arg);
         }
-        ast::Expr::List(node) => node.elts.iter().any(expr_tree_contains_insert),
-        ast::Expr::Tuple(node) => node.elts.iter().any(expr_tree_contains_insert),
-        ast::Expr::Set(node) => node.elts.iter().any(expr_tree_contains_insert),
-        ast::Expr::ListComp(node) => {
-            expr_tree_contains_insert(&node.elt)
-                || node.generators.iter().any(comprehension_contains_insert)
+        if let Some(arg) = node.kwarg {
+            self.visit_arg(*arg);
         }
-        ast::Expr::SetComp(node) => {
-            expr_tree_contains_insert(&node.elt)
-                || node.generators.iter().any(comprehension_contains_insert)
+    }
+
+    fn visit_arg(&mut self, node: ast::Arg) {
+        if let Some(annotation) = node.annotation {
+            self.visit_expr(*annotation);
         }
-        ast::Expr::DictComp(node) => {
-            expr_tree_contains_insert(&node.key)
-                || expr_tree_contains_insert(&node.value)
-                || node.generators.iter().any(comprehension_contains_insert)
+    }
+
+    fn visit_keyword(&mut self, node: ast::Keyword) {
+        self.visit_expr(node.value);
+    }
+
+    fn visit_withitem(&mut self, node: ast::WithItem) {
+        self.visit_expr(node.context_expr);
+        if let Some(optional_vars) = node.optional_vars {
+            self.visit_expr(*optional_vars);
         }
-        ast::Expr::GeneratorExp(node) => {
-            expr_tree_contains_insert(&node.elt)
-                || node.generators.iter().any(comprehension_contains_insert)
+    }
+
+    fn visit_match_case(&mut self, node: ast::MatchCase) {
+        self.visit_pattern(node.pattern);
+        if let Some(guard) = node.guard {
+            self.visit_expr(*guard);
         }
-        ast::Expr::Attribute(node) => expr_tree_contains_insert(&node.value),
-        ast::Expr::Subscript(node) => {
-            expr_tree_contains_insert(&node.value) || expr_tree_contains_insert(&node.slice)
+        for stmt in node.body {
+            self.visit_stmt(stmt);
         }
-        ast::Expr::Starred(node) => expr_tree_contains_insert(&node.value),
-        ast::Expr::NamedExpr(node) => {
-            expr_tree_contains_insert(&node.target) || expr_tree_contains_insert(&node.value)
+    }
+
+    fn visit_comprehension(&mut self, node: ast::Comprehension) {
+        self.visit_expr(node.target);
+        self.visit_expr(node.iter);
+        for guard in node.ifs {
+            self.visit_expr(guard);
         }
-        ast::Expr::Await(node) => expr_tree_contains_insert(&node.value),
-        _ => false,
     }
 }
 
-fn comprehension_contains_insert(comprehension: &ast::Comprehension) -> bool {
-    expr_tree_contains_insert(&comprehension.target)
-        || expr_tree_contains_insert(&comprehension.iter)
-        || comprehension.ifs.iter().any(expr_tree_contains_insert)
+impl AuthoredInsertValidator {
+    fn visit_arg_with_default(&mut self, node: ast::ArgWithDefault) {
+        self.visit_arg(node.def);
+        if let Some(default) = node.default {
+            self.visit_expr(*default);
+        }
+    }
 }
 
 fn validate_special_surface_placement(

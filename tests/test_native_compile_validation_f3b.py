@@ -34,6 +34,33 @@ def test_native_compile_validate_rejects_authored_astichi_insert() -> None:
         native_compile_validate_source("astichi_insert('block')\n")
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "x = astichi_insert(slot, value)\n",
+        "def f():\n    return astichi_insert(slot, value)\n",
+        "def f(x=astichi_insert(slot, value)):\n    pass\n",
+        "@decorator(astichi_insert(slot, value))\ndef f():\n    pass\n",
+        "for item in astichi_insert(slot, value):\n    pass\n",
+        "with manager(astichi_insert(slot, value)):\n    pass\n",
+        "match value:\n    case _ if astichi_insert(slot, value):\n        pass\n",
+        "try:\n    pass\nexcept astichi_insert(slot, value):\n    pass\n",
+        "async def f():\n    await astichi_insert(slot, value)\n",
+        "lambda x=astichi_insert(slot, value): x\n",
+    ],
+)
+def test_native_compile_validate_rejects_authored_astichi_insert_in_expr_contexts(
+    source: str,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    if not native_compile_validation_enabled():
+        pytest.skip("F3b compile_validation capability not advertised")
+
+    with pytest.raises(Exception, match="astichi_insert"):
+        native_compile_validate_source(source)
+
+
 def test_native_compile_matches_python_funcargs_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

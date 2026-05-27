@@ -1152,7 +1152,7 @@ class AssemblyScope:
                 self._append_lower_occurrence(prefix, composable)
 
     def _initialize_native_scope_backend(self) -> None:
-        selected = select_effective_lower_engine().selected_engine
+        selected = select_lower_engine().selected_engine
         if selected not in {"native-rust", "native-cpp"}:
             return
         module = load_native_extension(required=True)

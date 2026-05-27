@@ -9,8 +9,7 @@ from astichi.lower_engine.native import native_capabilities, select_effective_lo
 from astichi.lower_engine.self_native import has_self_native_production
 from astichi.lower_engine.self_native import SELF_NATIVE_NO_PYTHON_PARSE_COMPILE_FEATURE
 
-# Placeholder module for composables that defer AST work to native materialize.
-_HOT_PATH_PLACEHOLDER_TREE = ast.Module(body=[ast.Pass()], type_ignores=[])
+_HOT_PATH_PLACEHOLDER_ATTR = "_astichi_hot_path_placeholder"
 
 _MATRIX_ENV = "ASTICHI_LOWER_ENGINE_MATRIX"
 
@@ -53,20 +52,15 @@ def o3_production_hot_path_compile_active() -> bool:
 
 
 def hot_path_compile_placeholder_tree() -> ast.Module:
-    """Return the shared placeholder tree used before materialize handoff."""
-    return _HOT_PATH_PLACEHOLDER_TREE
+    """Return a private placeholder tree used before materialize handoff."""
+    tree = ast.Module(body=[ast.Pass()], type_ignores=[])
+    setattr(tree, _HOT_PATH_PLACEHOLDER_ATTR, True)
+    return tree
 
 
 def is_hot_path_placeholder_tree(tree: ast.Module) -> bool:
-    """True when ``tree`` is the shared hot-path compile placeholder."""
-    return (
-        tree is _HOT_PATH_PLACEHOLDER_TREE
-        or (
-            len(tree.body) == 1
-            and isinstance(tree.body[0], ast.Pass)
-            and not tree.type_ignores
-        )
-    )
+    """True when ``tree`` is an explicit hot-path compile placeholder."""
+    return bool(getattr(tree, _HOT_PATH_PLACEHOLDER_ATTR, False))
 
 
 def resolve_hot_path_materialization_tree(

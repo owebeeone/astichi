@@ -45,9 +45,14 @@ SELF_NATIVE_SLICE_FEATURES: tuple[str, ...] = (
     SELF_NATIVE_CURRENT_SURFACES_FEATURE,
 )
 
-# ``current_surfaces`` is the capstone flag only; production requires every
-# self-native slice feature (H4 — not hybrid ``full_lower_engine`` alone).
-REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES: tuple[str, ...] = SELF_NATIVE_SLICE_FEATURES
+# ``current_surfaces`` is the capstone flag only. Production requires semantic
+# self-native coverage, while allocation optimizations such as no-PyDict
+# snapshots remain optional performance features guarded by perf tests.
+REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES: tuple[str, ...] = tuple(
+    feature
+    for feature in SELF_NATIVE_SLICE_FEATURES
+    if feature != SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE
+)
 
 
 def native_engine_features(capabilities: dict[str, Any]) -> frozenset[str]:

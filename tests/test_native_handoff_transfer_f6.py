@@ -8,7 +8,6 @@ import pytest
 
 import astichi
 from astichi.assembler import AssemblyScope, as_composable, require_one
-from astichi.asttools import clone_ast
 from astichi.lower_engine.native import load_native_extension, native_capabilities
 from astichi.lower_engine.self_native import SELF_NATIVE_HANDOFF_TRANSFER_FEATURE
 from astichi.lower_engine.self_native_gates import native_handoff_transfer_enabled

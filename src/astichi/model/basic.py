@@ -76,6 +76,59 @@ class BasicComposable(Composable):
         compare=False,
     )
 
+    def _stored_tree(self) -> ast.Module:
+        """Return the stored tree without resolving hot-path placeholders."""
+        return object.__getattribute__(self, "__dict__")["_tree"]
+
+    def _public_tree(self, tree: ast.Module) -> ast.Module:
+        """Resolve source-backed placeholders outside the production hot path."""
+        binding = object.__getattribute__(self, "_lower_template")
+        if binding is None:
+            return tree
+        from astichi.lower_engine.native_hot_path_compile import (
+            is_hot_path_placeholder_tree,
+            o3_production_hot_path_compile_active,
+            resolve_hot_path_materialization_tree,
+        )
+
+        if not is_hot_path_placeholder_tree(tree):
+            return tree
+        if o3_production_hot_path_compile_active():
+            # Keep incidental public access from defeating the no-parse hot path.
+            return tree
+        resolved = resolve_hot_path_materialization_tree(
+            tree=tree,
+            native_source=getattr(binding, "native_source", None),
+            file_name=object.__getattribute__(self, "origin").file_name,
+        )
+        if resolved is None:
+            return tree
+        from astichi.ast_provenance import attach_astichi_source_file
+
+        attach_astichi_source_file(
+            resolved,
+            object.__getattribute__(self, "origin").file_name,
+        )
+        object.__setattr__(self, "tree", resolved)
+        markers = recognize_markers(resolved)
+        object.__setattr__(self, "markers", markers)
+        from astichi.hygiene import analyze_names
+
+        keep_names = object.__getattribute__(self, "keep_names")
+        classification = analyze_names(
+            self,
+            mode="permissive",
+            preserved_names=keep_names,
+        )
+        object.__setattr__(self, "classification", classification)
+        object.__setattr__(
+            self,
+            "demand_ports",
+            extract_demand_ports(markers, classification),
+        )
+        object.__setattr__(self, "supply_ports", extract_supply_ports(markers))
+        return resolved
+
     def arg_bindings_map(self) -> dict[str, str]:
         """Return the identifier-arg resolutions as a plain dict."""
         return dict(self.arg_bindings)
@@ -85,7 +138,7 @@ class BasicComposable(Composable):
         from copy import deepcopy
 
         return BasicComposable(
-            tree=deepcopy(self.tree, memo),
+            tree=deepcopy(self._stored_tree(), memo),
             origin=self.origin,
             markers=deepcopy(self.markers, memo),
             classification=deepcopy(self.classification, memo),
@@ -368,6 +421,20 @@ class BasicComposable(Composable):
         )
 
 
+def _basic_composable_tree(self: BasicComposable) -> ast.Module:
+    return self._public_tree(self._stored_tree())
+
+
+def _set_basic_composable_tree(self: BasicComposable, tree: ast.Module) -> None:
+    object.__setattr__(self, "_tree", tree)
+
+
+BasicComposable.tree = property(  # type: ignore[assignment]
+    _basic_composable_tree,
+    _set_basic_composable_tree,
+)
+
+
 def _resolve_bindings(
     mapping: Mapping[str, object] | None,
     values: dict[str, object],
@@ -552,7 +619,7 @@ def _try_native_keep_names(
         return None
     _increment_counter("native_specialize_keep")
     return BasicComposable(
-        tree=piece.tree,
+        tree=piece._stored_tree(),
         origin=piece.origin,
         markers=piece.markers,
         classification=piece.classification,

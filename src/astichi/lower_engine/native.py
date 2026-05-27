@@ -234,12 +234,19 @@ def _import_native_extension() -> ModuleType:
     dev_dir = _repo_native_engine_dir()
     if dev_dir is not None:
         path_text = str(dev_dir)
-        if path_text not in sys.path:
+        inserted = path_text not in sys.path
+        if inserted:
             sys.path.insert(0, path_text)
         try:
             return importlib.import_module(EXTENSION_NAME)
         except ImportError:
             pass
+        finally:
+            if inserted:
+                try:
+                    sys.path.remove(path_text)
+                except ValueError:
+                    pass
     return importlib.import_module(EXTENSION_NAME)
 
 

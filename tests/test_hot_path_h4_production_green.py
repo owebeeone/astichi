@@ -15,6 +15,7 @@ from astichi.lower_engine.native import (
 from astichi.lower_engine.self_native import (
     REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
     SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+    SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE,
     SELF_NATIVE_SLICE_FEATURES,
     has_self_native_production,
     missing_self_native_production_features,
@@ -23,9 +24,14 @@ from astichi.validation.self_native_contract import assert_self_native_productio
 from tests.test_lifecycle_hot_path_python_gate import _run_lifecycle_baseline_subprocess
 
 
-def test_required_production_features_are_full_self_native_slice() -> None:
-    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == SELF_NATIVE_SLICE_FEATURES
+def test_required_production_features_are_semantic_self_native_slice() -> None:
+    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == tuple(
+        feature
+        for feature in SELF_NATIVE_SLICE_FEATURES
+        if feature != SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE
+    )
     assert SELF_NATIVE_CURRENT_SURFACES_FEATURE in REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES
+    assert SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE not in REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES
 
 
 def test_current_surfaces_advertised_only_with_full_production_stack() -> None:

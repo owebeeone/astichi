@@ -57,7 +57,10 @@ def test_production_compile_uses_placeholder_without_counters(
     monkeypatch.delenv("ASTICHI_LOWER_ENGINE_MATRIX", raising=False)
 
     compiled = astichi.compile("result = astichi_hole(value)\n")
+    assert compiled.markers == ()
+    assert is_hot_path_placeholder_tree(compiled._stored_tree())
     assert is_hot_path_placeholder_tree(compiled.tree)
+    assert compiled.emit(provenance=False).strip() == "result = astichi_hole(value)"
     assert compiled.markers == ()
 
 
@@ -98,5 +101,37 @@ def test_lifecycle_style_import_compile_batch_uses_o3(
     )
     for source in snippets:
         compiled = astichi.compile(source)
+        assert is_hot_path_placeholder_tree(compiled._stored_tree())
         assert isinstance(compiled.tree, ast.Module)
-        assert is_hot_path_placeholder_tree(compiled.tree)
+
+
+def test_o3_compile_uses_offset_fallback_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    if not native_hot_path_compile_enabled():
+        pytest.skip("F3d no_python_parse capability not advertised")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.delenv("ASTICHI_LOWER_ENGINE_MATRIX", raising=False)
+
+    compiled = astichi.compile("x = 1", line_number=10, offset=4)
+    assert compiled.emit(provenance=False).strip() == "x = 1"
+
+
+def test_real_pass_module_is_not_placeholder_in_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    if not native_hot_path_compile_enabled():
+        pytest.skip("F3d no_python_parse capability not advertised")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE_MATRIX", "1")
+
+    compiled = astichi.compile("pass\n")
+    assert not is_hot_path_placeholder_tree(compiled.tree)
+    executable = compiled.to_executable_ast()
+    assert isinstance(executable.body[0], ast.Pass)

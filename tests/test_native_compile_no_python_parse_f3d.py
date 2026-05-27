@@ -8,7 +8,10 @@ import pytest
 
 import astichi
 from astichi.lower_engine.native import load_native_extension, native_capabilities
-from astichi.lower_engine.native_hot_path_compile import native_hot_path_compile_enabled
+from astichi.lower_engine.native_hot_path_compile import (
+    is_hot_path_placeholder_tree,
+    native_hot_path_compile_enabled,
+)
 from astichi.lower_engine.self_native import (
     SELF_NATIVE_NO_PYTHON_PARSE_COMPILE_FEATURE,
 )
@@ -55,6 +58,6 @@ def test_native_hot_path_compile_uses_placeholder_until_materialize(
     monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
     with collect_perf_counters():
         compiled = astichi.compile("result = astichi_hole(value)\n")
+    assert is_hot_path_placeholder_tree(compiled._stored_tree())
     assert isinstance(compiled.tree, ast.Module)
-    assert len(compiled.tree.body) == 1
-    assert isinstance(compiled.tree.body[0], ast.Pass)
+    assert compiled.emit(provenance=False).strip() == "result = astichi_hole(value)"

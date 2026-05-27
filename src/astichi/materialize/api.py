@@ -3651,22 +3651,6 @@ def to_executable_ast(composable: BasicComposable) -> ast.Module:
     if composable._already_materialized:
         return composable.to_executable_ast()
 
-    from astichi.lower_engine.native_hot_path_compile import (
-        is_hot_path_placeholder_tree,
-        native_hot_path_compile_enabled,
-    )
-
-    binding = composable._lower_template
-    if (
-        binding is not None
-        and native_hot_path_compile_enabled()
-        and is_hot_path_placeholder_tree(composable.tree)
-        and getattr(binding, "native_source", None) is not None
-    ):
-        raise RuntimeError(
-            "hot-path composables must materialize via scope.build() native handoff "
-            "before to_executable_ast(); Python materialize fallback is disabled"
-        )
     materialized = materialize_composable(composable)
     tree = clone_ast(materialized.tree)
     ast.fix_missing_locations(tree)

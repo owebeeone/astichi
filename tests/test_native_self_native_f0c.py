@@ -17,6 +17,7 @@ from astichi.lower_engine.native import (
 from astichi.lower_engine.self_native import (
     REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES,
     SELF_NATIVE_CURRENT_SURFACES_FEATURE,
+    SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE,
     SELF_NATIVE_SLICE_FEATURES,
     has_self_native_production,
     missing_self_native_production_features,
@@ -37,7 +38,8 @@ def test_built_extension_self_native_tier_matches_current_surfaces_cap() -> None
         assert missing == tuple(
             feature
             for feature in SELF_NATIVE_SLICE_FEATURES
-            if feature not in features
+            if feature != SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE
+            and feature not in features
         )
         return
 
@@ -74,8 +76,9 @@ def test_hybrid_caps_satisfy_select_lower_engine_not_production(
     assert snapshot["requested_engine"] == "auto"
     assert snapshot["selected_engine"] == "python"
     assert "does not advertise required features:" in snapshot["reason_detail"]
-    for feature in SELF_NATIVE_SLICE_FEATURES:
+    for feature in REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES:
         assert feature in snapshot["reason_detail"]
+    assert SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE not in snapshot["reason_detail"]
 
 
 def test_explicit_native_production_fails_for_hybrid_only(
@@ -138,7 +141,13 @@ def test_self_native_production_selects_when_cap_advertised(
 
 
 def test_required_self_native_production_features_tuple() -> None:
-    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == SELF_NATIVE_SLICE_FEATURES
+    assert SELF_NATIVE_CURRENT_SURFACES_FEATURE in REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES
+    assert SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE not in REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES
+    assert REQUIRED_SELF_NATIVE_PRODUCTION_FEATURES == tuple(
+        feature
+        for feature in SELF_NATIVE_SLICE_FEATURES
+        if feature != SELF_NATIVE_NO_PYDICT_SNAPSHOTS_FEATURE
+    )
 
 
 def test_built_extension_hybrid_auto_still_selects_native_rust() -> None:

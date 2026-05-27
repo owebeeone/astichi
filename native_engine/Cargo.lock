@@ -25,6 +25,7 @@ name = "astichi_native_engine"
 version = "1.0.5"
 dependencies = [
  "pyo3",
+ "rustpython-ast",
  "rustpython-parser",
  "sha2",
 ]
