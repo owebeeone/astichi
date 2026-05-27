@@ -26,6 +26,7 @@ from astichi.lower_engine.native import (
     select_lower_engine,
 )
 from astichi.lower_engine.self_native import (
+    SELF_NATIVE_BIND_EXTERNAL_FEATURE,
     SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE,
     SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE,
 )
@@ -227,9 +228,10 @@ def test_native_engine_capabilities_when_extension_available() -> None:
     features = capabilities["engine_features"]
     if SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE not in features:
         pytest.skip(
-            "rebuild native_engine for F1b capabilities "
+            "rebuild native_engine for F1b+ capabilities "
             "(uv run python native_engine/build.py)"
         )
+    assert SELF_NATIVE_BIND_EXTERNAL_FEATURE in features
     assert SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE in features
     assert capabilities["engine_features"] == [
         "native.extension.v1",
@@ -263,6 +265,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.full_lower_engine.current_surfaces.v1",
         "native.self_native.literal_payload_abi.v1",
         "native.self_native.scope_no_mirror_replay.v1",
+        "native.self_native.bind_external.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]
