@@ -201,6 +201,8 @@ Tag: `rust-fsn/f2d-facade-storage`
 
 Tag: `rust-fsn/f3a-compile-ledger`
 
+Ledger: `FullSelfNativeRustAstPlan-F3a-compile-ledger.md`.
+
 ### F3b — Native validators + native name/ports
 
 Tag: `rust-fsn/f3b-compile-validators`
