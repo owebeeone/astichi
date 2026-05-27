@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 from copy import deepcopy
-import hashlib
 from dataclasses import dataclass, field, replace
 from types import ModuleType
 from typing import Any
@@ -39,6 +38,7 @@ from astichi.lower_engine.package_v2 import (
     package_from_snapshot,
 )
 from astichi.lower_engine.registry import RegisteredSurfaceBundle
+from astichi.lower_engine.template_key import template_key_from_source
 from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
@@ -154,6 +154,7 @@ class LowerTemplateBinding:
 
 def register_inventory_template(
     *,
+    source: str,
     tree: ast.Module,
     origin: CompileOrigin,
     inventory: Inventory,
@@ -172,7 +173,7 @@ def register_inventory_template(
     ref_marker_specs = extract_ref_marker_specs(tree)
     unroll_marker_specs = extract_unroll_marker_specs(tree)
     source_summary = _source_summary(origin=origin, record_count=len(record_specs))
-    template_key = _template_key(tree=tree, source_summary=source_summary)
+    template_key = template_key_from_source(source)
     template_id = engine.register_template(
         template_key=template_key,
         source_summary=source_summary,
@@ -1723,12 +1724,6 @@ def _authored_summary(record: InventoryRecord) -> str:
 
 def _source_summary(*, origin: CompileOrigin, record_count: int) -> str:
     return f"compile line={origin.line_number} records={record_count}"
-
-
-def _template_key(*, tree: ast.Module, source_summary: str) -> str:
-    payload = ast.dump(tree, include_attributes=False) + "\n" + source_summary
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
-    return f"template:{digest}"
 
 
 def _sorted_inventory_records(inventory: Inventory) -> tuple[InventoryRecord, ...]:

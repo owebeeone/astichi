@@ -28,7 +28,15 @@ _EXPECTED_INITIAL_GOLDENS = {
     "registry_minimal_bundle.json",
     "scalar_expression_insert.json",
 }
-_STRUCTURAL_GOLDENS = tuple(sorted(_STRUCTURAL_GOLDENS_DIR.glob("*.json")))
+# ``lower_differential_harness.json`` is a differential harness fixture, not a
+# structural inventory snapshot.
+_STRUCTURAL_GOLDENS = tuple(
+    sorted(
+        path
+        for path in _STRUCTURAL_GOLDENS_DIR.glob("*.json")
+        if path.name != "lower_differential_harness.json"
+    )
+)
 
 
 def test_structural_golden_fixture_set_has_initial_cases() -> None:

@@ -95,6 +95,7 @@ from astichi.lower_engine.registry import (
     SurfaceRegistry,
     SurfaceSpec,
 )
+from astichi.lower_engine.template_key import template_key_from_source
 from astichi.lower_engine.templates import (
     TemplateCommentMarkerSpec,
     TemplateMarkerSpec,
@@ -142,6 +143,7 @@ __all__ = [
     "ShapePredicateDescriptor",
     "SELF_NATIVE_CURRENT_SURFACES_FEATURE",
     "StaleHandleError",
+    "template_key_from_source",
     "SurfaceBundleSpec",
     "SurfaceId",
     "SurfaceRegistry",

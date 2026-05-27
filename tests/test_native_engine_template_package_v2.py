@@ -212,10 +212,18 @@ def test_native_template_package_v2_block_production_uses_origin_line_when_sourc
     if module is None:
         pytest.skip("native engine extension is not built")
 
+    from astichi.frontend.api import _padded_source, _single_line_source
+
     source = "value = 1\n"
+    parse_source = _padded_source(
+        source,
+        line_number=217,
+        offset=0,
+        apply_offset=_single_line_source(source),
+    )
     actual = module.extract_template_package_v2_snapshot(
         _engine_with_current_bundle(module),
-        source,
+        parse_source,
         "package_v2.py",
         217,
     )

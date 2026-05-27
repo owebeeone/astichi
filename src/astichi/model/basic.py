@@ -742,7 +742,9 @@ def _rebuild_composable(
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
     inventory = build_inventory(tree, markers, demand_ports, supply_ports)
+    registration_source = f"{ast.unparse(tree)}\n"
     lower_template = _register_lower_template(
+        source=registration_source,
         tree=tree,
         origin=origin,
         inventory=inventory,
@@ -765,6 +767,7 @@ def _rebuild_composable(
 
 def _register_lower_template(
     *,
+    source: str,
     tree: ast.Module,
     origin: CompileOrigin,
     inventory: Inventory,
@@ -776,6 +779,7 @@ def _register_lower_template(
     )
 
     lower_template = register_inventory_template(
+        source=source,
         tree=tree,
         origin=origin,
         inventory=inventory,

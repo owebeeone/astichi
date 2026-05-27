@@ -212,6 +212,7 @@ def compile(
             from astichi.lower_engine import register_inventory_template
 
             lower_template = register_inventory_template(
+                source=parse_source,
                 tree=tree,
                 origin=origin,
                 inventory=inventory,

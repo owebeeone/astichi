@@ -26,6 +26,7 @@ _EXEMPT_MODULE_PREFIXES = (
     "test_hot_path_h4_production_green",
     "test_native_hot_path_no_pydict_h2",
     "test_o3_production_compile",
+    "test_template_key",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )

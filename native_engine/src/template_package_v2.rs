@@ -218,8 +218,7 @@ fn build_package(
     let module = crate::template_extract::validate_compile_module(&source, &filename)?;
     let records = crate::template_extract::extract_template_records(&source, &module, line_number)?;
     let source_summary = format!("compile line={line_number} records={}", records.len());
-    let template_key =
-        crate::template_extract::native_template_key(py, &source, &module, &source_summary)?;
+    let template_key = crate::template_extract::template_key_from_source(&source);
 
     let mut package = PackageBuilder::new(
         surface_bundle.bundle_signature(),

@@ -130,7 +130,7 @@ fn extract_template_snapshot(
         + &line_number.to_string()
         + " records="
         + &records.len().to_string();
-    let template_key = native_template_key(py, &source, &module, &source_summary)?;
+    let template_key = template_key_from_source(&source);
 
     structural_snapshot(
         py,
@@ -3057,35 +3057,25 @@ fn strip_known_suffix(value: &str) -> String {
         .to_string()
 }
 
+/// Template cache identity: SHA-256 of UTF-8 registration source (first 16 hex digits).
+pub(crate) fn template_key_from_source(source: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+    format!("template:{}", &digest[..16])
+}
+
 pub(crate) fn native_template_key(
-    py: Python<'_>,
+    _py: Python<'_>,
     source: &str,
-    module: &ast::ModModule,
-    source_summary: &str,
+    _module: &ast::ModModule,
+    _source_summary: &str,
 ) -> PyResult<String> {
-    let ast_dump = crate::parser_ir::ast_dump_without_attributes(py, source, module)?;
-    template_key(py, &ast_dump, source_summary)
+    Ok(template_key_from_source(source))
 }
 
-/// Package-v2 registration key without building a CPython ``ast`` tree.
-pub(crate) fn native_template_key_from_source(
-    py: Python<'_>,
-    source: &str,
-    source_summary: &str,
-) -> PyResult<String> {
-    template_key(py, source, source_summary)
-}
-
-fn template_key(py: Python<'_>, ast_dump: &str, source_summary: &str) -> PyResult<String> {
-    let payload = ast_dump.to_string() + "\n" + source_summary;
-    let digest: String = py
-        .import("hashlib")?
-        .getattr("sha256")?
-        .call1((PyBytes::new(py, payload.as_bytes()),))?
-        .getattr("hexdigest")?
-        .call0()?
-        .extract()?;
-    Ok("template:".to_string() + &digest[..16])
+/// Alias kept for call sites that already name the source-only entry point.
+pub(crate) fn native_template_key_from_source(source: &str) -> String {
+    template_key_from_source(source)
 }
 
 fn structural_snapshot(
