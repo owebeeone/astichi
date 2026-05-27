@@ -61,6 +61,13 @@ class EngineSelectionEvent:
 _native_cache: ModuleType | None | bool = False
 
 
+def reset_native_extension_cache() -> None:
+    """Clear the import cache so the next load re-resolves the extension module."""
+    global _native_cache
+    _native_cache = False
+    sys.modules.pop(EXTENSION_NAME, None)
+
+
 def requested_lower_engine(value: str | None = None) -> str:
     """Normalize an explicit or environment-provided lower-engine request."""
     requested = value or os.environ.get(ENGINE_SELECTION_ENV, DEFAULT_ENGINE)
@@ -208,32 +215,23 @@ def _select_native_tier_engine(
 
 
 def _import_native_extension() -> ModuleType:
-    try:
-        return importlib.import_module(EXTENSION_NAME)
-    except ImportError:
-        dev_dir = _repo_native_engine_dir()
-        if dev_dir is None:
-            raise
+    dev_dir = _repo_native_engine_dir()
+    if dev_dir is not None:
         path_text = str(dev_dir)
-        inserted = False
         if path_text not in sys.path:
             sys.path.insert(0, path_text)
-            inserted = True
         try:
             return importlib.import_module(EXTENSION_NAME)
-        finally:
-            if inserted:
-                try:
-                    sys.path.remove(path_text)
-                except ValueError:
-                    pass
+        except ImportError:
+            pass
+    return importlib.import_module(EXTENSION_NAME)
 
 
 def _repo_native_engine_dir() -> Path | None:
-    repo_root = Path(__file__).resolve().parents[3]
-    native_dir = repo_root / "native_engine"
-    if native_dir.exists():
-        return native_dir
+    for parent in Path(__file__).resolve().parents:
+        native_dir = parent / "native_engine"
+        if (native_dir / "Cargo.toml").exists():
+            return native_dir
     return None
 
 

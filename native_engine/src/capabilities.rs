@@ -43,6 +43,8 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.lower_template_package_v2.snapshot.partial.v1",
             "native.lower_template_package_v2.v1",
             "native.full_lower_engine.current_surfaces.v1",
+            "native.self_native.literal_payload_abi.v1",
+            "native.self_native.scope_no_mirror_replay.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

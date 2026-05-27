@@ -22,7 +22,12 @@ from astichi.lower_engine.native import (
     native_capabilities,
     native_self_test,
     requested_lower_engine,
+    reset_native_extension_cache,
     select_lower_engine,
+)
+from astichi.lower_engine.self_native import (
+    SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE,
+    SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE,
 )
 
 
@@ -212,12 +217,20 @@ def test_python_lower_engine_capabilities_advertise_package_v2() -> None:
 
 
 def test_native_engine_capabilities_when_extension_available() -> None:
+    reset_native_extension_cache()
     capabilities = native_capabilities()
     if capabilities is None:
         pytest.skip("native engine extension is not built")
 
     assert capabilities["abi_schema_version"] == 1
     assert capabilities["backend_label"] == "rust-pyo3-core"
+    features = capabilities["engine_features"]
+    if SELF_NATIVE_LITERAL_PAYLOAD_ABI_FEATURE not in features:
+        pytest.skip(
+            "rebuild native_engine for F1b capabilities "
+            "(uv run python native_engine/build.py)"
+        )
+    assert SELF_NATIVE_SCOPE_NO_MIRROR_REPLAY_FEATURE in features
     assert capabilities["engine_features"] == [
         "native.extension.v1",
         "native.engine_core.v1",
@@ -248,6 +261,8 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.lower_template_package_v2.snapshot.partial.v1",
         "native.lower_template_package_v2.v1",
         "native.full_lower_engine.current_surfaces.v1",
+        "native.self_native.literal_payload_abi.v1",
+        "native.self_native.scope_no_mirror_replay.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]

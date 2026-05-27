@@ -71,7 +71,7 @@ from astichi.model import (
     SourceLocation,
     StaticResourceName,
     empty_inventory,
-    value_to_ast,
+    external_value_to_source,
 )
 from astichi.model.composable import Composable
 from astichi.model.descriptors import (
@@ -1654,9 +1654,11 @@ class AssemblyScope:
         counters = active_perf_counters()
         try:
             external_literals = {
-                overlay_id.index: ast.unparse(value_to_ast(value))
+                overlay_id.index: external_value_to_source(value)
                 for overlay_id, value in self._external_value_by_overlay.items()
             }
+            if counters is not None and external_literals:
+                counters.increment("external_literal_payload", len(external_literals))
             if counters is None:
                 tree = self._native_module.assembly_state_materialize_to_python_ast(
                     self._native_engine_handle,
@@ -3718,6 +3720,13 @@ def _native_template_record_indexes(value: object) -> tuple[int, ...]:
 
 def _native_scope_mirror_replay_enabled() -> bool:
     """Opt-in compatibility path that mirrors native batch results into Python lower state."""
+    from astichi.lower_engine.native import native_capabilities
+
+    capabilities = native_capabilities()
+    if capabilities is not None:
+        features = capabilities.get("engine_features", ())
+        if "native.self_native.scope_no_mirror_replay.v1" in features:
+            return False
     value = os.environ.get("ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
 

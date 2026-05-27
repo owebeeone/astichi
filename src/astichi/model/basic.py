@@ -12,7 +12,11 @@ from astichi.diagnostics import format_astichi_error
 from astichi.lowering import RecognizedMarker, apply_external_bindings, recognize_markers
 from astichi.lowering.markers import ARG_IDENTIFIER, strip_identifier_suffix
 from astichi.model.composable import Composable
-from astichi.model.external_values import validate_external_value, value_to_ast
+from astichi.model.external_values import (
+    external_value_to_source,
+    validate_external_value,
+    value_to_ast,
+)
 from astichi.model.inventory import (
     Inventory,
     build_inventory,
@@ -415,7 +419,7 @@ def _try_native_bind(
                 workspace,
                 state,
                 overlay,
-                ast.unparse(value_to_ast(value)),
+                external_value_to_source(value),
             )
         _increment_counter("native_specialize_bind")
         return _native_reproject_specialized(
