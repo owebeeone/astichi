@@ -50,6 +50,7 @@ pub fn snapshot(py: Python<'_>) -> PyResult<Py<PyAny>> {
             "native.self_native.keep_names.v1",
             "native.self_native.reproject.v1",
             "native.self_native.facade_builder_tree_projection.v1",
+            "native.self_native.compile_validation.v1",
         ],
     )?;
     dict.set_item("supported_bundle_schema_versions", vec![1_u32])?;

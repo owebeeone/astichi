@@ -94,6 +94,7 @@ def compile(
         offset=offset,
         apply_offset=apply_offset,
     )
+    selected_native = _selected_native_lower_engine()
     try:
         tree = ast.parse(
             parse_source,
@@ -113,6 +114,11 @@ def compile(
             filename=origin.file_name,
         )
     attach_astichi_source_file(tree, origin.file_name)
+    if (
+        selected_native is not None
+        and not normalized_source_kind.allows_internal_insert_metadata()
+    ):
+        _maybe_native_compile_validate(source, origin.file_name)
     _validate_authored_marker_surface(tree, source_kind=normalized_source_kind)
     # Issue 006 6a: enforce statement-prefix placement for boundary markers
     # before any downstream pipeline step observes them.
@@ -141,7 +147,6 @@ def compile(
     )
     demand_ports = extract_demand_ports(markers, classification)
     supply_ports = extract_supply_ports(markers)
-    selected_native = _selected_native_lower_engine()
     if selected_native is None:
         inventory = build_inventory(tree, markers, demand_ports, supply_ports)
         from astichi.lower_engine import register_inventory_template
@@ -176,6 +181,17 @@ def compile(
     if validated_arg_bindings:
         return compiled.bind_identifier(dict(validated_arg_bindings))
     return compiled
+
+
+def _maybe_native_compile_validate(source: str, file_name: str) -> None:
+    from astichi.lower_engine.native_compile_validate import (
+        native_compile_validate_source,
+        native_compile_validation_enabled,
+    )
+
+    if not native_compile_validation_enabled():
+        return
+    native_compile_validate_source(source, file_name=file_name)
 
 
 def _selected_native_lower_engine() -> str | None:

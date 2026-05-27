@@ -87,6 +87,27 @@ enum ExprRecordContext {
     NamedVariadic,
 }
 
+/// Shared native compile validation: parse plus authored-surface placement rules.
+pub(crate) fn validate_compile_module(
+    source: &str,
+    filename: &str,
+) -> PyResult<ast::ModModule> {
+    reject_deferred_markers(source)?;
+    let module = crate::parser_ir::parse_native_module(source, filename)?;
+    let source_map = SourceMap::new(source);
+    validate_special_surface_placement(&module, &source_map)?;
+    Ok(module)
+}
+
+#[pyfunction(name = "compile_validate_source")]
+#[pyo3(signature = (source, filename = None))]
+fn compile_validate_source_py(source: String, filename: Option<String>) -> PyResult<()> {
+    let filename = filename.unwrap_or_else(|| "<astichi>".to_string());
+    let module = validate_compile_module(&source, &filename)?;
+    validate_authored_no_astichi_insert(&module, &SourceMap::new(&source))?;
+    Ok(())
+}
+
 #[pyfunction]
 #[pyo3(signature = (engine, source, filename = None, line_number = 1))]
 fn extract_template_snapshot(
@@ -101,10 +122,8 @@ fn extract_template_snapshot(
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
 
-    reject_deferred_markers(&source)?;
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
-    let module = crate::parser_ir::parse_native_module(&source, &filename)?;
-    validate_special_surface_placement(&module, &SourceMap::new(&source))?;
+    let module = validate_compile_module(&source, &filename)?;
     let records = extract_template_records(&source, &module, line_number)?;
 
     let source_summary = "compile line=".to_string()
@@ -124,6 +143,7 @@ fn extract_template_snapshot(
 
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_template_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_validate_source_py, m)?)?;
     Ok(())
 }
 
@@ -488,6 +508,146 @@ fn is_boundary_prefix_statement(stmt: &ast::Stmt) -> bool {
         ),
         _ => false,
     }
+}
+
+fn validate_authored_no_astichi_insert(
+    module: &ast::ModModule,
+    source_map: &SourceMap,
+) -> PyResult<()> {
+    for stmt in &module.body {
+        validate_stmt_no_authored_insert(stmt, source_map)?;
+    }
+    Ok(())
+}
+
+fn validate_stmt_no_authored_insert(stmt: &ast::Stmt, source_map: &SourceMap) -> PyResult<()> {
+    if let ast::Stmt::Expr(expr_stmt) = stmt {
+        if expr_tree_contains_insert(&expr_stmt.value) {
+            let line = source_map.line(expr_stmt.range);
+            return Err(crate::errors::schema_error(&format!(
+                "astichi_insert(...) is internal emitted-source metadata and cannot be authored directly at line {line}"
+            )));
+        }
+    }
+    match stmt {
+        ast::Stmt::FunctionDef(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+        }
+        ast::Stmt::AsyncFunctionDef(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+        }
+        ast::Stmt::ClassDef(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+        }
+        ast::Stmt::With(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+        }
+        ast::Stmt::If(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+            for child in &node.orelse {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+        }
+        ast::Stmt::Try(node) => {
+            for child in &node.body {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+            for child in &node.orelse {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+            for child in &node.finalbody {
+                validate_stmt_no_authored_insert(child, source_map)?;
+            }
+            for handler in &node.handlers {
+                if let ast::ExceptHandler::ExceptHandler(inner) = handler {
+                    for child in &inner.body {
+                        validate_stmt_no_authored_insert(child, source_map)?;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn expr_tree_contains_insert(expr: &ast::Expr) -> bool {
+    if is_call_named(expr, "astichi_insert") {
+        return true;
+    }
+    match expr {
+        ast::Expr::Call(node) => {
+            expr_tree_contains_insert(&node.func)
+                || node.args.iter().any(expr_tree_contains_insert)
+                || node
+                    .keywords
+                    .iter()
+                    .any(|keyword| expr_tree_contains_insert(&keyword.value))
+        }
+        ast::Expr::BinOp(node) => {
+            expr_tree_contains_insert(&node.left) || expr_tree_contains_insert(&node.right)
+        }
+        ast::Expr::UnaryOp(node) => expr_tree_contains_insert(&node.operand),
+        ast::Expr::BoolOp(node) => node.values.iter().any(expr_tree_contains_insert),
+        ast::Expr::IfExp(node) => {
+            expr_tree_contains_insert(&node.test)
+                || expr_tree_contains_insert(&node.body)
+                || expr_tree_contains_insert(&node.orelse)
+        }
+        ast::Expr::Dict(node) => {
+            node.keys
+                .iter()
+                .filter_map(|key| key.as_ref())
+                .any(expr_tree_contains_insert)
+                || node.values.iter().any(expr_tree_contains_insert)
+        }
+        ast::Expr::List(node) => node.elts.iter().any(expr_tree_contains_insert),
+        ast::Expr::Tuple(node) => node.elts.iter().any(expr_tree_contains_insert),
+        ast::Expr::Set(node) => node.elts.iter().any(expr_tree_contains_insert),
+        ast::Expr::ListComp(node) => {
+            expr_tree_contains_insert(&node.elt)
+                || node.generators.iter().any(comprehension_contains_insert)
+        }
+        ast::Expr::SetComp(node) => {
+            expr_tree_contains_insert(&node.elt)
+                || node.generators.iter().any(comprehension_contains_insert)
+        }
+        ast::Expr::DictComp(node) => {
+            expr_tree_contains_insert(&node.key)
+                || expr_tree_contains_insert(&node.value)
+                || node.generators.iter().any(comprehension_contains_insert)
+        }
+        ast::Expr::GeneratorExp(node) => {
+            expr_tree_contains_insert(&node.elt)
+                || node.generators.iter().any(comprehension_contains_insert)
+        }
+        ast::Expr::Attribute(node) => expr_tree_contains_insert(&node.value),
+        ast::Expr::Subscript(node) => {
+            expr_tree_contains_insert(&node.value) || expr_tree_contains_insert(&node.slice)
+        }
+        ast::Expr::Starred(node) => expr_tree_contains_insert(&node.value),
+        ast::Expr::NamedExpr(node) => {
+            expr_tree_contains_insert(&node.target) || expr_tree_contains_insert(&node.value)
+        }
+        ast::Expr::Await(node) => expr_tree_contains_insert(&node.value),
+        _ => false,
+    }
+}
+
+fn comprehension_contains_insert(comprehension: &ast::Comprehension) -> bool {
+    expr_tree_contains_insert(&comprehension.target)
+        || expr_tree_contains_insert(&comprehension.iter)
+        || comprehension.ifs.iter().any(expr_tree_contains_insert)
 }
 
 fn validate_special_surface_placement(

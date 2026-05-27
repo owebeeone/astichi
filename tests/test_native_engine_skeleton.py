@@ -26,6 +26,7 @@ from astichi.lower_engine.native import (
     select_lower_engine,
 )
 from astichi.lower_engine.self_native import (
+    SELF_NATIVE_COMPILE_VALIDATION_FEATURE,
     SELF_NATIVE_BIND_EXTERNAL_FEATURE,
     SELF_NATIVE_BIND_IDENTIFIER_FEATURE,
     SELF_NATIVE_FACADE_BUILDER_TREE_FEATURE,
@@ -235,6 +236,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
             "rebuild native_engine for F1b+ capabilities "
             "(uv run python native_engine/build.py)"
         )
+    assert SELF_NATIVE_COMPILE_VALIDATION_FEATURE in features
     assert SELF_NATIVE_BIND_EXTERNAL_FEATURE in features
     assert SELF_NATIVE_BIND_IDENTIFIER_FEATURE in features
     assert SELF_NATIVE_KEEP_NAMES_FEATURE in features
@@ -278,6 +280,7 @@ def test_native_engine_capabilities_when_extension_available() -> None:
         "native.self_native.keep_names.v1",
         "native.self_native.reproject.v1",
         "native.self_native.facade_builder_tree_projection.v1",
+        "native.self_native.compile_validation.v1",
     ]
     assert capabilities["artifact_kinds"] == ["python_ast"]
     assert capabilities["supported_bundle_schema_versions"] == [1]

@@ -15,6 +15,7 @@ _EXEMPT_MODULE_PREFIXES = (
     "test_native_success_path_guards",
     "test_native_self_native_f0c",
     "test_native_literal_payload_abi",
+    "test_native_compile_validation_f3b",
     "test_validation_perf_helper",
     "test_versioned_test_harness",
 )

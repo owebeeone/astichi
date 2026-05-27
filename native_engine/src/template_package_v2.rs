@@ -213,7 +213,7 @@ fn build_package(
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
     let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
-    let module = crate::parser_ir::parse_native_module(&source, &filename)?;
+    let module = crate::template_extract::validate_compile_module(&source, &filename)?;
     let records = crate::template_extract::extract_template_records(&source, &module, line_number)?;
     let source_summary = format!("compile line={line_number} records={}", records.len());
     let template_key =
