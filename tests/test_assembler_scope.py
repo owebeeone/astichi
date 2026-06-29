@@ -47,6 +47,20 @@ def test_scope_apply_rejects_unsupported_candidate_type() -> None:
     )
 
 
+def test_scope_wire_surfaces_require_one_diagnostic_when_no_match() -> None:
+    # wire() is sugar over apply(require_one(find_candidates(...))); it must
+    # surface the require_one diagnostic on a missing/ambiguous match, not swallow
+    # it. (Success path is covered by the reference snippet golden, not here.)
+    root = astichi.compile("value = 1\n")
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", root)
+
+    with pytest.raises(ValueError) as exc_info:
+        scope.wire(as_external_value(1), name="no_such_demand")
+
+    assert "expected exactly one candidate, found 0" in str(exc_info.value)
+
+
 def test_lower_build_strips_pass_sentinel_store_target() -> None:
     root = astichi.compile(
         """

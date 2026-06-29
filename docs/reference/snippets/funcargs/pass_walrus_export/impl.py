@@ -1,4 +1,4 @@
 astichi_funcargs(
     (out := astichi_pass(seed)),
-    _=astichi_export(out),
+    __astichi_ph_0__=astichi_export(out),
 )

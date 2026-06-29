@@ -104,7 +104,7 @@ cache files are trusted local build artifacts, not an untrusted input format.
 
 ## Submodule: `astichi.assembler`
 
-Experimental inventory-driven helpers for generated composition planners:
+Inventory-driven helpers for generated composition planners:
 
 | Name | Role |
 |------|------|

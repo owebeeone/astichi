@@ -926,6 +926,35 @@ class AssemblyScope:
         """Apply one candidate to the underlying builder graph."""
         self._apply_candidate(candidate, count_compatibility_kind=True)
 
+    def wire(
+        self,
+        resource: BindingResource,
+        *,
+        name: str | None = None,
+        build_match: tuple[str, ...] | None = None,
+        owner_match: tuple[str, ...] | None = None,
+    ) -> BindingCandidate:
+        """Find the one site ``resource`` satisfies and apply it, in one call.
+
+        Convenience shorthand for
+        ``apply(require_one(find_candidates(resource, ...)))``: it resolves the
+        resource against the inventory with the given (partial) selector,
+        requires exactly one compatible candidate, and applies it. Selector
+        semantics, the structural compatibility check, and the multi-line
+        ``require_one`` diagnostic on a missing/ambiguous match are unchanged;
+        the resolved candidate is returned for inspection.
+        """
+        candidate = require_one(
+            self.find_candidates(
+                resource,
+                name=name,
+                build_match=build_match,
+                owner_match=owner_match,
+            )
+        )
+        self.apply(candidate)
+        return candidate
+
     def _apply_candidate(
         self,
         candidate: BindingCandidate,

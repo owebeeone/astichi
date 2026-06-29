@@ -1,6 +1,6 @@
-"""astichi — AST composition for ahead-of-time Python codegen."""
+"""astichi — runtime AST composition and hygienic code generation for Python."""
 
-__version__ = "1.0.7"
+__version__ = "1.1.0"
 
 from astichi.builder import build
 from astichi.cache import GeneratedAstCache

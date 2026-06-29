@@ -11,7 +11,7 @@ Fast orientation:
 | [composable-api.md](composable-api.md) | `Composable`, `emit`, `materialize` |
 | [descriptor-api.md](descriptor-api.md) | `Composable.describe()`, descriptor objects, compatibility, and descriptor-driven builder use |
 | [inventory-api.md](inventory-api.md) | Inventory records, maps, production records, and pretty printing |
-| [assembler-scope.md](assembler-scope.md) | Experimental inventory-driven resource candidate lookup and application |
+| [assembler-scope.md](assembler-scope.md) | Inventory-driven resource candidate lookup and application |
 | [builder-api.md](builder-api.md) | `build()`, fluent, handle, and data-driven named APIs |
 | [addressing.md](addressing.md) | Instance paths and loop-expanded indices |
 | [marker-overview.md](marker-overview.md) | Marker list + links |

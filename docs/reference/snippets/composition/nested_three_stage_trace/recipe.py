@@ -84,6 +84,7 @@ def run() -> str:
         piece(
             """
             trace = []
+            astichi_export(trace)
             astichi_hole(body)
             result = trace
             """

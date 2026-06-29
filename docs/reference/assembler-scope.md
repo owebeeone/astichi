@@ -1,6 +1,6 @@
 # Assembler Scope
 
-`astichi.assembler` is an experimental helper layer for tools that already have
+`astichi.assembler` is a helper layer for tools that already have
 their own data model and want to apply the minimum needed information to an
 Astichi builder. It sits on top of the current lower-backed scope facade. Build
 and materialize remain authoritative.
@@ -47,6 +47,20 @@ candidate = require_one(
     )
 )
 scope.apply(candidate)
+```
+
+`AssemblyScope.wire(...)` collapses that
+`apply(require_one(find_candidates(...)))` triad into one call, returning the
+resolved candidate. Selector semantics, the structural compatibility match, and
+the multi-line `require_one` diagnostic on a missing/ambiguous match are
+identical:
+
+```python
+scope.wire(
+    as_external_value(9),
+    name="delta",
+    build_match=("Root", "GetterBody[1]"),
+)
 ```
 
 Selector fields are intentionally optional:
@@ -127,7 +141,11 @@ When `require_one(...)` does not receive exactly one candidate, it raises a
 multi-line diagnostic that includes the demand build path, logical owner path,
 source location when available, locator, and resource-side information.
 
-## Reference Snippet
+## Reference Snippets
 
 - [assembler_scope/resource_candidates](snippets/assembler_scope/resource_candidates/recipe.py)
+  — explicit `find_candidates` / `require_one` / `apply` form.
 - [resource_candidates_generated.py](snippets/assembler_scope/resource_candidates/resource_candidates_generated.py)
+- [assembler_scope/wire_shorthand](snippets/assembler_scope/wire_shorthand/recipe.py)
+  — the one-call `wire(...)` form; one polymorphic template specialized into many.
+- [wire_shorthand_generated.py](snippets/assembler_scope/wire_shorthand/wire_shorthand_generated.py)

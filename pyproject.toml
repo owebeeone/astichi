@@ -4,15 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "astichi"
-version = "1.0.7"
-description = "AST composition helpers: markers, hygiene, lifting, and lowering for composable Python code generation"
+version = "1.1.0"
+description = "Declarative runtime Python code generation: hygienic AST stitching with automatic hole/binding wiring"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "astichi contributors" }]
 license = { file = "LICENSE" }
-keywords = ["ast", "codegen", "composition", "compiler"]
+keywords = [
+  "ast",
+  "abstract-syntax-tree",
+  "ast-stitching",
+  "codegen",
+  "code-generation",
+  "composition",
+  "compiler",
+  "meta-programming",
+  "hygiene",
+]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
   "Programming Language :: Python :: 3",
@@ -21,6 +31,12 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3.15",
 ]
+
+[project.urls]
+Homepage = "https://github.com/owebeeone/astichi"
+Repository = "https://github.com/owebeeone/astichi"
+Issues = "https://github.com/owebeeone/astichi/issues"
+Source = "https://github.com/owebeeone/astichi"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

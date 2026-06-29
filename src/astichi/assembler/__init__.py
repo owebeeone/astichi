@@ -1,4 +1,4 @@
-"""Experimental assembler helpers for inventory-driven builder wiring."""
+"""Assembler helpers for inventory-driven builder wiring."""
 
 from astichi.assembler.scope import (
     AssemblyScope,

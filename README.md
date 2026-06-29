@@ -1,51 +1,117 @@
 # astichi
 
-AST-level composition and stitching for Python code generation.
+[![PyPI version](https://img.shields.io/pypi/v/astichi.svg)](https://pypi.org/project/astichi/)
+[![Python versions](https://img.shields.io/pypi/pyversions/astichi.svg)](https://pypi.org/project/astichi/)
+[![License](https://img.shields.io/pypi/l/astichi.svg)](https://github.com/owebeeone/astichi/blob/main/LICENSE)
 
-Astichi takes small, marker-bearing Python snippets, composes them into one
-coherent program, and emits runnable Python. It is built for generators that
-need low-overhead output without falling back to brittle string templates or
-runtime abstraction in hot paths.
+**A declarative, runtime code generator for Python.**
 
-Astichi is a fit when you want to:
+Astichi stitches small, marker-bearing Python snippets into specialized code
+**at runtime** — for example, inside a class decorator that assembles a tailored
+implementation each time it is applied — and emits plain, inspectable Python that
+then runs with no per-call dispatch overhead. An optional native Rust engine
+keeps that runtime generation fast enough to sit on the decoration / import path.
 
-- describe codegen intent in Python-shaped snippets
-- stitch block and expression fragments at named composition sites
-- bind compile-time values into source before final lowering
-- unroll compile-time loops into straight-line Python
-- synthesize managed imports that participate in hygiene
-- inspect composables with descriptors before wiring them
-- emit inspectable source with provenance instead of opaque runtime machinery
+The point is to make AST stitching **declarative**: you say *what* fills which
+hole and *what* satisfies which injection point — even partially — and astichi
+**connects the dots for you**. It matches snippets to compatible holes, values to
+their binding slots, and identifiers to their demands (with a real
+compatibility check, not string-matching), wires them across nested layers, and
+keeps every scope hygienic. You describe the graph; you don't hand-walk and
+mutate an AST.
 
-It is **not** a general macro system and **not** a generic codemod framework.
-It is a focused library for generators that need a reliable AST stitcher.
+It is a focused, hygienic **AST stitcher** — it composes generator-authored
+fragments; it is not a generic codemod or refactoring framework for existing
+source.
 
-## Why Astichi
+```bash
+pip install astichi
+```
 
-Code generators often hit the same wall: the desired output is simple,
-specialized Python, but the implementation ends up split between string
-concatenation, ad hoc templates, and fragile scope management.
+Release wheels for Linux, macOS, and Windows (CPython 3.12–3.15) bundle an
+optional native Rust acceleration engine; installs without a matching wheel fall
+back to pure Python. See [the native fast path](#native-rust-fast-path).
 
-Astichi handles the parts that usually go wrong:
+## Quick start
 
-- valid Python ASTs instead of fragile template fragments
-- deterministic insertion order for stitched code
-- compile-time binding and loop unrolling before emission
-- specialized straight-line Python instead of runtime dispatch layers
-- emitted source you can diff, test, and round-trip
+You author Python with **markers** in it, compile each snippet into a
+`Composable`, wire them together with a **builder**, then **materialize** and
+**emit** real Python.
 
-## Marker mental model
+```python
+import astichi
 
-Astichi is marker-bearing Python source plus a small build pipeline.
+root = astichi.compile("""
+items = []
+astichi_hole(body)            # a named insertion site
+result = tuple(items)
+""")
 
-- Markers are recognized from authored Python source.
-- Marker meaning comes from AST position, not string matching alone.
-- `compile(...)` parses marker-bearing source into a `Composable`.
-- `build()` wires composables together.
-- `describe()` exposes holes, binds, ports, and builder target addresses for
-  data-driven composition.
-- `materialize()` resolves inserts, bindings, and hygiene, then produces real
-  Python.
+step = astichi.compile("""
+astichi_pass(items, outer_bind=True).append("x")   # explicitly reuse outer `items`
+""")
+
+builder = astichi.build()
+builder.add.Root(root)
+builder.add.Step(step)
+builder.Root.body.add.Step(order=0)   # stitch `step` into the `body` hole
+
+print(builder.build().materialize().emit(provenance=False))
+```
+
+Emitted Python:
+
+```python
+items = []
+items.append("x")
+result = tuple(items)
+```
+
+Without `astichi_pass(items, outer_bind=True)`, the inner snippet would *not*
+silently reuse `items` just because the spelling matches. Astichi defaults to
+isolated scopes and only crosses them when the source says so — that is the
+hygiene guarantee that makes large stitched programs predictable.
+
+For the full compile → bind → build → describe → materialize → emit walkthrough,
+see the **[Using the API guide](https://github.com/owebeeone/astichi/blob/main/docs/guide/using-the-api.md)**.
+
+## What you get
+
+- **Connect-the-dots wiring.** Hand astichi a snippet, a value, or an identifier
+  plus a *partial* description of where it goes, and it finds the compatible hole
+  / binding slot / demand and attaches it — checking structural compatibility, not
+  just names. You under-specify; it resolves the match (and refuses ambiguous
+  ones with a diagnostic). This is the declarative core; see
+  [the assembler](#declarative-wiring-the-assembler-connects-the-dots).
+- **Multi-layer composition.** Composables compose into composables: build one,
+  reuse it as a piece of the next, nest child scopes, and wire identifiers
+  *across* layers — with hygiene preserved at every boundary.
+- **Valid ASTs, not string fragments.** Compose typed AST nodes with
+  deterministic insertion order instead of concatenating text.
+- **Hygiene by default.** Each inserted snippet lives in its own scope. Names
+  cross boundaries only through explicit `keep` / `pass` / `import` / `export`,
+  so stitched fragments never collide by accident.
+- **Generation-time specialization.** Bake values into the source and unroll
+  `astichi_for(...)` loops into straight-line Python *as you generate* — so the
+  emitted function carries no dispatch layer to pay for on every call.
+- **Managed imports.** Snippets declare the imports they need with
+  `astichi_pyimport(...)`; astichi collects, dedupes, collision-checks, and
+  inserts them at materialize time.
+- **Inspectable output.** Emitted source can be diffed, tested, and round-tripped,
+  optionally with a provenance tail for AST/source-location restoration.
+- **Descriptor-driven composition.** `describe()` exposes holes, binds, ports,
+  and target addresses so tools can wire fragments from data instead of
+  hand-written attribute chains.
+
+## The marker model
+
+> **These are not functions you import or call.** `astichi_hole`,
+> `astichi_keep`, `astichi_pass`, and the rest are **markers** — sentinel names
+> recognized in the Python *source text* you hand to `astichi.compile(...)`.
+> There is **no** `from astichi import astichi_hole`; you write the marker inside
+> the snippet string and astichi recognizes it by name and **AST position** (not
+> by string matching alone). The only names you actually import from `astichi`
+> are `compile`, `build`, `Composable`, and a few helpers.
 
 The core markers are:
 
@@ -55,6 +121,7 @@ The core markers are:
 - `name__astichi_arg__` -> identifier demand
 - `name__astichi_param_hole__` -> function-parameter insertion target
 - `astichi_funcargs(...)` -> call-argument payload
+- `astichi_for(...)` -> build-time loop unrolling
 - `astichi_bind_external(name)` -> external/literal value slot
 - `astichi_ref(path)` -> compile-time reducible identifier / attribute path
 - `astichi_pyimport(module=..., names=(...))` -> managed Python import
@@ -93,187 +160,249 @@ The one rule that matters most is scope:
 - Function parameters are the pinned exception: parameter names and uses in the
   function scope stay attached to that parameter binding.
 
-Small example:
+The full marker reference, edge cases, and value-form target rules live in the
+**[marker docs](https://github.com/owebeeone/astichi/blob/main/docs/reference/marker-overview.md)**
+and
+**[scoping & hygiene reference](https://github.com/owebeeone/astichi/blob/main/docs/reference/scoping-hygiene.md)**.
+
+## Declarative wiring: the assembler connects the dots
+
+This is the part that makes astichi feel low-fuss. The hardest, most
+error-prone part of stitching code by hand is the bookkeeping: *which* snippet
+is allowed in *which* hole, *which* value feeds *which* injection point, *which*
+identifier answers *which* demand — and keeping all of that straight as the
+graph grows across layers. `astichi.assembler.AssemblyScope` does that matching
+for you.
+
+The plain fluent builder makes you name the exact target up front
+(`builder.Root.body.add.Step()`). The assembler inverts it: you hand it a
+**resource** plus a **partial description** of where it belongs, and it
+**finds the site that resource can legally satisfy** — a block hole, an
+identifier demand, an external-value slot — using a structural **compatibility
+check** against the target's descriptor, not string-matching. Under-specify and
+it resolves the match; if more than one site fits, it refuses with a diagnostic
+rather than guessing. That is the "connect the dots" behavior: you declare
+intent, astichi does the wiring.
+
+It is built from three small, composable pieces:
+
+1. **Pluggable resources** — *what* to attach: `as_composable(...)` (a fragment),
+   `as_external_value(...)` (a compile-time value), `as_identifier(...)` (an
+   identifier spelling).
+2. **Partial selectors** — *where* it may attach, as much or as little as you
+   know: `name`, `build_match`, and `owner_match` (the last two are path patterns
+   with `.` / `?` / `*` / `+` wildcards).
+3. **One-call resolution** — `wire(resource, ...)` runs
+   `find_candidates(...)` → `require_one(...)` → `apply(...)` for you and returns
+   the resolved candidate. (The three steps stay public if you want them
+   separately, and `apply_batch(...)` takes an ordered stream.) `wire` raises a
+   diagnostic naming the build path, owner, and source location when the selector
+   matches nothing or more than one site.
 
 ```python
 import astichi
+from astichi.assembler import AssemblyScope, as_composable, as_external_value
 
-builder = astichi.build()
-builder.add.Root(
-    astichi.compile(
-        """
-items = []
+root = astichi.compile("""
+out = []
 astichi_hole(body)
-result = tuple(items)
-"""
-    )
-)
-builder.add.Step(
-    astichi.compile(
-        """
-astichi_pass(items, outer_bind=True).append("x")
-"""
-    )
-)
-builder.Root.body.add.Step(order=0)
+result = tuple(out)
+""")
+body = astichi.compile("""
+astichi_pass(out, outer_bind=True).append(astichi_bind_external(label))
+""")
 
-materialized = builder.build().materialize()
-print(materialized.emit(provenance=False))
+scope = AssemblyScope(astichi.build())
+scope.add("Root", root)
+
+# One call each, minimal selector — just the demand NAME. No exact target path.
+scope.wire(as_composable(body, build_name="Body"), name="body")
+scope.wire(as_external_value("done"), name="label")
+
+print(scope.build().materialize().emit(provenance=False))
 ```
 
 Emitted Python:
 
 ```python
-items = []
-items.append("x")
-result = tuple(items)
+out = []
+out.append('done')
+result = tuple(out)
 ```
 
-Without `astichi_pass(items, outer_bind=True)`, the inner snippet does not get
-to reuse `items` just because the spelling matches. That is deliberate. Astichi
-defaults to isolated scopes and only crosses them when the source says so.
+You named the *demand* (`body`, `label`) and nothing else — no
+`builder.Root.body.add(...)`, no exact address. The scope found the compatible
+hole and the compatible external slot and wired them.
 
-The fluent builder is also available as a data-driven named API. Descriptor
-target data can feed that API directly:
-
-```python
-hole = root.describe().single_hole_named("body")
-
-builder = astichi.build()
-builder.add("Root", root)
-builder.add("Step", astichi.compile("value = 1\n"))
-builder.target(hole.with_root_instance("Root")).add("Step")
-```
-
-That `builder.target(...)` call uses the same target address as
-`builder.Root.body.add.Step()`, but the address came from `describe()` instead
-of a Python attribute chain.
-
-## Example: schema-specialized row projector
-
-Suppose an ingestion pipeline knows its event schema at build time, and each
-field needs its own normalization step. A runtime loop or dispatch table adds
-overhead to every row. String templating works until ordering, scope, and
-correctness start fighting each other.
-
-Astichi lets you define the skeleton once, stitch in field-specific steps, and
-emit the straight-line Python you actually want to run.
+When you *do* need precision — disambiguating among many sites, indexed
+instances, ordering — tighten the same call with `build_match` / `owner_match`
+path patterns (`.` / `?` / `*` / `+` wildcards), `build_index`, and `order`. That
+is also what lets you compose along **two axes at once**: place the *same*
+template in many spots (**structure**), and specialize each placement
+differently (**substitution**). One template becomes many polymorphic concrete
+forms:
 
 ```python
 import astichi
-
-root = astichi.compile(
-    """
-astichi_bind_external(FIELDS)
-
-def project_row(row):
-    out = {}
-    for field in astichi_for(FIELDS):
-        astichi_hole(step)
-    return out
-"""
-).bind(FIELDS=("user_id", "total_cents", "created_at"))
-
-builder = astichi.build()
-builder.add.Root(root)
-
-builder.add.UserId(
-    astichi.compile("out['user_id'] = int(row['user_id'])\n")
-)
-builder.add.TotalCents(
-    astichi.compile("out['total_cents'] = int(row['total_cents'])\n")
-)
-builder.add.CreatedAt(
-    astichi.compile("out['created_at'] = row['created_at'][:10]\n")
+from astichi.assembler import (
+    AssemblyScope, as_composable, as_external_value, as_identifier,
 )
 
-builder.Root.step[0].add.UserId()
-builder.Root.step[1].add.TotalCents()
-builder.Root.step[2].add.CreatedAt()
+shell = astichi.compile("""
+class Accessors:
+    def __init__(self, data):
+        self._data = data
+    astichi_hole(methods)
+""")
 
-projector = builder.build().materialize()
-print(projector.emit(provenance=False))
+# One polymorphic template: the method name is an identifier demand,
+# the lookup key is an external-value slot.
+getter = astichi.compile("""
+def method_name__astichi_arg__(self):
+    return self._data[astichi_bind_external(key)]
+""")
+
+scope = AssemblyScope(astichi.build())
+scope.add("Shell", shell)
+
+for i, (method, key) in enumerate(
+    [("get_name", "name"), ("get_email", "email"), ("get_age", "age")], start=1
+):
+    inst = f"Getter[{i}]"
+    # axis 1 — structure: place the SAME template into `methods`, repeatedly
+    scope.wire(as_composable(getter, build_name="Getter", build_index=i, order=i), name="methods")
+    # axis 2 — specialization: bind THIS instance's name + key differently
+    scope.wire(as_identifier(method), name="method_name", build_match=("Shell", inst))
+    scope.wire(as_external_value(key), name="key", build_match=("Shell", inst))
+
+print(scope.build().materialize().emit(provenance=False))
 ```
 
-Emitted Python:
+Emitted Python — three specialized methods from one template:
 
 ```python
-def project_row(row):
-    out = {}
-    out["user_id"] = int(row["user_id"])
-    out["total_cents"] = int(row["total_cents"])
-    out["created_at"] = row["created_at"][:10]
-    return out
+class Accessors:
+
+    def __init__(self, data):
+        self._data = data
+
+    def get_name(self):
+        return self._data['name']
+
+    def get_email(self):
+        return self._data['email']
+
+    def get_age(self):
+        return self._data['age']
 ```
 
-That is the point: no runtime field loop, no dispatch registry, no handwritten
-template surgery. The generated function is plain Python, specialized to the
-known schema, and suitable for hot-path use.
+That is the polymorphic core: a single template, matched into a hole three
+times and specialized per instance — and `as_composable`, `as_identifier`, and
+`as_external_value` resources all attached by the same one-call `wire(...)`. YIDL
+pushes this to production scale (see [Maturity](#maturity)).
 
-This is exactly the class of problem where a reliable AST stitcher matters:
+Least-surprise means it never guesses. If a resource fits more than one site,
+`wire` refuses (via `require_one`) with a diagnostic that names every candidate's
+build path, owner, demand name, kind, and source location, so you know exactly
+how to narrow the selector:
 
-- block fragments must land in the right lexical scope
-- per-field steps must keep deterministic order
-- compile-time schema data must become literal Python
-- the final output must still be valid, inspectable source
+```text
+ValueError: expected exactly one candidate, found 2
+candidate 1:
+  demand: build_path=Root owner=. name=first kind=hole.block location=<astichi>:3 locator=body[1]/value
+  resource: composable build_name=Frag
+    production: name=__block__ kind=production.block location=<astichi>:1 locator=.
+candidate 2:
+  demand: build_path=Root owner=. name=second kind=hole.block location=<astichi>:4 locator=body[2]/value
+  resource: composable build_name=Frag
+    production: name=__block__ kind=production.block location=<astichi>:1 locator=.
+```
 
-## Current surface
+The same matching works **across layers**. A composable you already built can be
+registered as a piece of a larger assembly, child scopes resolve before their
+parents, and an identifier supplied in one layer can answer a demand in
+another — so you compose composables, and astichi keeps the wiring and the
+hygiene consistent the whole way up the tree.
 
-Astichi currently provides:
+Composables carrying `astichi_pyimport(...)` markers also have their imports
+auto-linked and deduped at materialize, and the materialization plan tracks both
+boundary hygiene and managed-import hygiene so independently authored fragments
+never silently collide. Full reference:
+**[Assembler Scope](https://github.com/owebeeone/astichi/blob/main/docs/reference/assembler-scope.md)**.
 
-- `astichi.compile(source, file_name=None, line_number=1, offset=0)`
-- `astichi.build()` for builder-based composition
-- concrete composables with `.bind(...)`, `.describe()`, `.materialize()`, and
-  `.emit(...)` / `.emit_commented()`
-- data-driven builder calls such as `builder.add("Root", root)` and
-  `builder.target(hole.with_root_instance("Root")).add("Step")`
-- provenance helpers in `astichi.emit`
+## Native Rust fast path
 
-Supported pieces today include block holes, expression inserts, external
-binding, managed Python imports, materialization, emission, and builder-driven
-loop unrolling.
+The target workload is **runtime** code generation — e.g. a class decorator that
+assembles a tailored implementation every time it is applied, across many classes
+at import time. Pure-Python AST assembly is too slow to sit on that per-use path,
+so astichi ships an optional native engine (`_astichi_native_engine`, built with
+PyO3) that drives the hot generation path in Rust.
 
-## Assembler scope (`astichi.assembler`)
+When it is present, lower-engine selection defaults to `auto` and prefers
+**native Rust** for the assembler's batch resolve/apply, keeping occurrence/edge
+state in the native engine. When the extension is absent, the exact same API runs
+on pure Python — native is an accelerator, never a requirement.
 
-For generators that already have their own planner (for example YIDL lifecycle
-assembly), `AssemblyScope` wraps a builder and drives **inventory-backed
-candidate lookup** instead of fluent `builder.Root...add` chains. You register
-composables with `scope.add(...)`, describe a resource plus optional selectors
-(`name`, `build_match`, `owner_match`), then `find_candidates` / `require_one` /
-`apply` or an ordered `apply_batch` of `BindingRequest` rows.
+- Release wheels bundle the extension; `pip install` from sdist compiles it when
+  no matching wheel exists. Set `ASTICHI_SKIP_NATIVE_BUILD=1` for a Python-only
+  install.
+- Build locally from the repo root with `uv run python native_engine/build.py`.
+- `engine=python` remains the differential oracle that the native path is tested
+  against.
 
-Resource helpers: `as_composable(...)`, `as_external_value(...)`,
-`as_identifier(...)`. Build and `materialize()` stay authoritative; the scope
-layer only resolves which hole or demand site a resource satisfies and applies
-that binding to the lower-backed assembly graph.
+See **[native_engine/README.md](https://github.com/owebeeone/astichi/blob/main/native_engine/README.md)**
+and the perf-refactor notes in
+[`dev-docs/`](https://github.com/owebeeone/astichi/tree/main/dev-docs) for the
+self-native production boundary.
 
-**Native rust fast path:** when the optional `_astichi_native_engine` extension is
-built (`uv run python native_engine/build.py`), lower-engine selection defaults
-to `auto` and prefers **native Rust** for batch resolve/apply. In that mode
-`apply_batch` keeps occurrence/edge state in the native engine; Python mirror
-replay is off by default (set `ASTICHI_NATIVE_SCOPE_MIRROR_REPLAY=1` only for
-compatibility/oracle work). Without the extension, the same API falls back to
-Python. See `docs/reference/assembler-scope.md`.
+## Maturity
 
-**Self-native production boundary** (plan
-`dev-docs/perf-refactor/HotPathNoPythonPlan.md`): when the extension advertises
-the full self-native slice stack including `native.self_native.current_surfaces.v1`,
-the lifecycle production
-path uses native compile parse, native compile validation, native scope
-materialize, one `copy_python_ast` at native materialize, and transfer handoff in
-`to_executable_ast` (no second `clone_ast` when `handoff_transfer.v1` is on).
-`engine=python` remains the differential oracle for tests. Explicit `native`
-without self-native caps fails with a diagnostic instead of silently using the
-hybrid path.
+Astichi is a `1.x` release backed by a suite of **2,250+ tests** — golden
+source/plan fixtures, structural snapshots, and integration coverage — run across
+CPython 3.12–3.15 and against **both** the Python and native lower engines, with
+`engine=python` serving as a differential oracle for the Rust path. Behavior is
+anchored by those golden and differential tests; the core
+`compile → build → materialize → emit` pipeline is stable, and new surface lands
+behind the same test discipline.
 
-## Layout
+**In the wild.** Astichi is the code-generation engine behind **YIDL lifecycle**:
+~6,400 lines of declarative `.yidl` across 8 layered concepts compile to **118**
+reusable templates and **310** match/contribution rules, which the assembler
+weaves into ~4,800 lines of generated lifecycle code — all on both axes (one
+template, many specialized placements) plus a concept-inheritance layer on top,
+driven through `AssemblyScope`, not by hand. That is the polymorphic, declarative
+model above at production scale.
 
-| Path | Role |
-|------|------|
-| `src/astichi/` | Library code |
-| `docs/` | User-facing docs |
-| `tests/` | Pytest suite |
-| `dev-docs/` | Design notes, active summary, and requirements |
+## Documentation
+
+| Topic | Doc |
+|-------|-----|
+| Docs home | [docs/README.md](https://github.com/owebeeone/astichi/blob/main/docs/README.md) |
+| End-to-end guide (compile → emit) | [guide/using-the-api.md](https://github.com/owebeeone/astichi/blob/main/docs/guide/using-the-api.md) |
+| Reference index | [reference/README.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/README.md) |
+| Glossary | [reference/glossary.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/glossary.md) |
+| Public API & submodules | [reference/public-api.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/public-api.md) |
+| `compile(...)` | [reference/compile-api.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/compile-api.md) |
+| `Composable`, `emit`, `materialize` | [reference/composable-api.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/composable-api.md) |
+| Builder (fluent + data-driven) | [reference/builder-api.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/builder-api.md) |
+| Descriptors (`describe()`) | [reference/descriptor-api.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/descriptor-api.md) |
+| Markers | [reference/marker-overview.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/marker-overview.md) |
+| Scoping & hygiene | [reference/scoping-hygiene.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/scoping-hygiene.md) |
+| Managed imports | [reference/marker-pyimport.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/marker-pyimport.md) |
+| Materialize & emit | [reference/materialize-and-emit.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/materialize-and-emit.md) |
+| Assembler scope (auto-attach) | [reference/assembler-scope.md](https://github.com/owebeeone/astichi/blob/main/docs/reference/assembler-scope.md) |
+| Implementation snapshot & open gaps | [dev-docs/AstichiSingleSourceSummary.md](https://github.com/owebeeone/astichi/blob/main/dev-docs/AstichiSingleSourceSummary.md) |
+
+## When astichi is *not* the right tool
+
+- You want to refactor or rewrite an existing user codebase — astichi composes
+  generator-authored fragments, it is not a generic `ast.NodeTransformer`-style
+  codemod or refactoring framework.
+- You need a one-off source transform — astichi earns its keep when the same
+  generator runs repeatedly (e.g. a decorator applied across many classes) and
+  ordering, scope, hygiene, and speed all matter at once.
+- A plain string template is genuinely enough and none of those concerns are
+  fighting you — you may not need astichi.
 
 ## Development
 
@@ -283,12 +412,16 @@ pip install -e ".[dev]"
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 ```
 
-Start with:
+Or with [uv](https://docs.astral.sh/uv/):
 
-- `docs/` for the user-facing surface
-- `dev-docs/AstichiSingleSourceSummary.md` for the current implementation
-  snapshot and known gaps
+```bash
+uv run --with pytest pytest -q
+```
+
+Build the native extension (optional): `uv run python native_engine/build.py`.
 
 ## License
 
-LGPL-2.1-or-later. See [LICENSE](LICENSE).
+LGPL-2.1-or-later. See [LICENSE](https://github.com/owebeeone/astichi/blob/main/LICENSE).
+</content>
+</invoke>

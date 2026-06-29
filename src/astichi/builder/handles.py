@@ -579,6 +579,33 @@ def _validate_registered_target_site(
     )
 
 
+def _registered_identifier_port_names(
+    graph: BuilderGraph,
+    instance_name: str,
+    ref_path: RefPath,
+    *,
+    supplies: bool,
+) -> frozenset[str]:
+    """Identifier demand/supply names exposed by the registered composable at ``ref_path``.
+
+    The body scanners only see *raw* ``astichi_import`` / ``astichi_pass`` /
+    ``astichi_export`` calls; once a composable is compiled those markers are
+    recognized and rewritten (e.g. to ``Pass``), so the scanners miss them. The
+    descriptor ports are the authoritative enumeration, so staged ``assign`` /
+    ``bind_identifier`` wiring consults them in addition to the body scan.
+    """
+    record = graph._instances.get(instance_name)
+    if record is None:
+        return frozenset()
+    description = record.composable.describe()
+    items = (
+        description.identifier_supplies if supplies else description.identifier_demands
+    )
+    return frozenset(
+        item.name for item in items if normalize_ref_path(item.ref_path) == ref_path
+    )
+
+
 def _validate_registered_identifier_demand(
     *,
     graph: BuilderGraph,
@@ -593,7 +620,10 @@ def _validate_registered_identifier_demand(
         instance_name=instance_name,
         role="assign source path",
     )
-    if inner_name in collect_identifier_demands_in_body(shell.body):
+    if inner_name in (
+        collect_identifier_demands_in_body(shell.body)
+        | _registered_identifier_port_names(graph, instance_name, ref_path, supplies=False)
+    ):
         return
     raise ValueError(
         format_astichi_error(
@@ -620,7 +650,10 @@ def _validate_registered_identifier_supplier(
         instance_name=instance_name,
         role="assign target path",
     )
-    if outer_name in collect_identifier_suppliers_in_body(shell.body):
+    if outer_name in (
+        collect_identifier_suppliers_in_body(shell.body)
+        | _registered_identifier_port_names(graph, instance_name, ref_path, supplies=True)
+    ):
         return
     raise ValueError(
         format_astichi_error(

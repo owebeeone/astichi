@@ -70,7 +70,7 @@ def run() -> str:
         """
         astichi_funcargs(
             param__astichi_arg__=astichi_ref(external=value_path),
-            _=astichi_import(vals),
+            __astichi_ph_0__=astichi_import(vals),
         )
         """
     )
@@ -99,6 +99,11 @@ def run() -> str:
             source_kw_scoped = 300
             head_supply = 1
             seed_star = 2
+            astichi_export(source_plain_scoped)
+            astichi_export(seed_star_scoped)
+            astichi_export(source_kw_scoped)
+            astichi_export(head_supply)
+            astichi_export(seed_star)
             v1 = 10
             v2 = 20
             v3 = 30
@@ -196,8 +201,8 @@ def run() -> str:
             """
             astichi_funcargs(
                 (out := seed),
-                _=astichi_import(seed),
-                _=astichi_export(out),
+                __astichi_ph_0__=astichi_import(seed),
+                __astichi_ph_1__=astichi_export(out),
             )
             """
         )
@@ -210,7 +215,7 @@ def run() -> str:
             """
             astichi_funcargs(
                 (out := astichi_pass(seed)),
-                _=astichi_export(out),
+                __astichi_ph_0__=astichi_export(out),
             )
             """
         )
@@ -223,8 +228,8 @@ def run() -> str:
             """
             astichi_funcargs(
                 msg=(out := seed),
-                _=astichi_import(seed),
-                _=astichi_export(out),
+                __astichi_ph_0__=astichi_import(seed),
+                __astichi_ph_1__=astichi_export(out),
             )
             """
         )
@@ -238,8 +243,8 @@ def run() -> str:
             """
             astichi_funcargs(
                 (out := seed),
-                _=astichi_import(seed),
-                _=astichi_export(out),
+                __astichi_ph_0__=astichi_import(seed),
+                __astichi_ph_1__=astichi_export(out),
             )
             """
         )
@@ -249,7 +254,7 @@ def run() -> str:
             """
             astichi_funcargs(
                 (out := astichi_pass(seed)),
-                _=astichi_export(out),
+                __astichi_ph_0__=astichi_export(out),
             )
             """
         )

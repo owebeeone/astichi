@@ -60,7 +60,7 @@ def run() -> str:
         """
         astichi_funcargs(
             field__astichi_arg__=astichi_ref(external=path_name),
-            _=astichi_import(cls_ctx),
+            __astichi_ph_0__=astichi_import(cls_ctx),
         )
         """
     )
