@@ -93,7 +93,7 @@ local named `session`, that local may be renamed away from the parameter.
 See:
 
 - [marker-params.md](marker-params.md)
-- [params/function_signature](snippets/params/function_signature/)
+- [params/function_signature](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/params/function_signature/)
 
 ## Local renaming
 
@@ -108,7 +108,7 @@ Example: two independent inserted snippets both define `total`; one remains
 
 See:
 
-- [scope/colliding_locals_two_inserts](snippets/scope/colliding_locals_two_inserts/)
+- [scope/colliding_locals_two_inserts](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/scope/colliding_locals_two_inserts/)
 
 Managed pyimport locals are part of the same binding model. A marker such as
 `astichi_pyimport(module=foo, names=(a,))` owns the local binding `a`; if hygiene
@@ -144,7 +144,7 @@ result = value
 
 See:
 
-- [scope/outer_hole_inner_insert_keep](snippets/scope/outer_hole_inner_insert_keep/)
+- [scope/outer_hole_inner_insert_keep](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/scope/outer_hole_inner_insert_keep/)
 - [marker-keep.md](marker-keep.md)
 
 ## Identifier demands

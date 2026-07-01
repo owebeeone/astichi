@@ -110,7 +110,7 @@ if enabled:
 
 ## Reference Snippet
 
-- [comment/generated_comment](snippets/comment/generated_comment/recipe.py)
+- [comment/generated_comment](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/comment/generated_comment/recipe.py)
 
 ## See Also
 

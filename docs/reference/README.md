@@ -1,7 +1,7 @@
 # Reference index
 
 Fast orientation:
-**[`../../README.md#marker-mental-model`](../../README.md#marker-mental-model)**.
+**[`../../README.md#marker-mental-model`](https://github.com/owebeeone/astichi/blob/main/README.md#marker-mental-model)**.
 
 | Document | Contents |
 |----------|----------|
@@ -30,7 +30,7 @@ Fast orientation:
 | [errors.md](errors.md) | Hard error categories |
 
 Current implementation snapshot:
-**[`../../dev-docs/AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)**.
+**[`../../dev-docs/AstichiSingleSourceSummary.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/AstichiSingleSourceSummary.md)**.
 
 Historical V1 design detail:
-**[`../../dev-docs/historical/AstichiApiDesignV1.md`](../../dev-docs/historical/AstichiApiDesignV1.md)**.
+**[`../../dev-docs/historical/AstichiApiDesignV1.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**.

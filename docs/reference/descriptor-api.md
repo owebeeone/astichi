@@ -481,14 +481,14 @@ descriptor set from `astichi.model`.
 ## Reference Snippets
 
 Runnable descriptor examples live under
-[`snippets/descriptor_api/`](snippets/descriptor_api/):
+[`snippets/descriptor_api/`](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/descriptor_api/):
 
-- [`external_bind_single/`](snippets/descriptor_api/external_bind_single/) uses
+- [`external_bind_single/`](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/descriptor_api/external_bind_single/) uses
   `description.external_binds` to bind a single composable before materializing.
-- [`staged_descriptor_targets/`](snippets/descriptor_api/staged_descriptor_targets/)
+- [`staged_descriptor_targets/`](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/descriptor_api/staged_descriptor_targets/)
   uses descriptor hole addresses with `builder.target(...)` and descriptor
   identifier paths with `builder.bind_identifier(...)`.
-- [`unrolled_indexed_descriptor_targets/`](snippets/descriptor_api/unrolled_indexed_descriptor_targets/)
+- [`unrolled_indexed_descriptor_targets/`](https://github.com/owebeeone/astichi/tree/main/docs/reference/snippets/descriptor_api/unrolled_indexed_descriptor_targets/)
   resolves a descriptor target once, then uses `target[i]` and indexed source
   instances for loop-expanded holes.
 

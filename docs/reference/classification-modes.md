@@ -2,7 +2,7 @@
 
 Astichi classifies identifiers in snippets before lowering. **Lexical hygiene**
 must follow
-**[`IdentifierHygieneRequirements.md`](../../dev-docs/historical/IdentifierHygieneRequirements.md)**.
+**[`IdentifierHygieneRequirements.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/IdentifierHygieneRequirements.md)**.
 
 ## Name classes
 
@@ -100,4 +100,4 @@ hygiene-rename the **local** and its references.
 - [marker-keep.md](marker-keep.md)
 - [marker-ref.md](marker-ref.md)
 - [ReferenceGuide.md](ReferenceGuide.md)
-- **[§6](../../dev-docs/historical/AstichiApiDesignV1.md)**
+- **[§6](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

@@ -1,0 +1,3 @@
+# Documentation site build (mkdocs + Material). Kept separate from the package
+# so building the docs never triggers the native-extension build.
+mkdocs-material>=9.5

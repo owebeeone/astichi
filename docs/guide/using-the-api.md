@@ -268,4 +268,4 @@ round-trip checks. See [Materialize and emit](../reference/materialize-and-emit.
 - [Managed Python imports](../reference/marker-pyimport.md)
 - [Descriptor API](../reference/descriptor-api.md)
 - [Builder API](../reference/builder-api.md)
-- **[`AstichiSingleSourceSummary.md`](../../dev-docs/AstichiSingleSourceSummary.md)** — current snapshot and open gaps
+- **[`AstichiSingleSourceSummary.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/AstichiSingleSourceSummary.md)** — current snapshot and open gaps

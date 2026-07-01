@@ -208,9 +208,9 @@ are not managed by Astichi and do not participate in pyimport synthesis.
 
 Reference snippets:
 
-- [pyimport/from_import](snippets/pyimport/from_import.py)
-- [pyimport/dynamic_module_ref](snippets/pyimport/dynamic_module_ref.py)
-- [pyimport/expression_payload](snippets/pyimport/expression_payload/recipe.py)
+- [pyimport/from_import](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/pyimport/from_import.py)
+- [pyimport/dynamic_module_ref](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/pyimport/dynamic_module_ref.py)
+- [pyimport/expression_payload](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/pyimport/expression_payload/recipe.py)
 
 ## See also
 

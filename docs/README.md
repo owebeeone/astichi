@@ -9,7 +9,7 @@ These pages describe the **current user-facing behavior** in `src/` and the
 test suite.
 
 For the active project snapshot and known gaps, start with
-**[`../dev-docs/AstichiSingleSourceSummary.md`](../dev-docs/AstichiSingleSourceSummary.md)**.
+**[`../dev-docs/AstichiSingleSourceSummary.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/AstichiSingleSourceSummary.md)**.
 Older V1 design docs remain useful background, but some planned details there
 no longer match the live implementation exactly.
 
@@ -37,4 +37,4 @@ no longer match the live implementation exactly.
 - **`reference/`** — compact, linkable API and behavior.
 
 Contributor design notes, milestones, and internals live under
-**[`../dev-docs/`](../dev-docs/)**.
+**[`../dev-docs/`](https://github.com/owebeeone/astichi/tree/main/dev-docs/)**.

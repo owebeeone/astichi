@@ -51,16 +51,16 @@ an existing `if` / `elif` chain.
 ## Examples
 
 - Unfilled defaulted block hole:
-  [defaulted_block_hole_empty/root.py](snippets/statement/defaulted_block_hole_empty/root.py)
+  [defaulted_block_hole_empty/root.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_empty/root.py)
   →
-  [defaulted_block_hole_empty_generated.py](snippets/statement/defaulted_block_hole_empty/defaulted_block_hole_empty_generated.py)
+  [defaulted_block_hole_empty_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_empty/defaulted_block_hole_empty_generated.py)
 - Filled defaulted block hole:
-  [defaulted_block_hole_filled/root.py](snippets/statement/defaulted_block_hole_filled/root.py)
+  [defaulted_block_hole_filled/root.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_filled/root.py)
   →
-  [defaulted_block_hole_filled_generated.py](snippets/statement/defaulted_block_hole_filled/defaulted_block_hole_filled_generated.py)
+  [defaulted_block_hole_filled_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_filled/defaulted_block_hole_filled_generated.py)
 
 ## See also
 
 - [marker-overview.md](marker-overview.md)
 - [marker-clause-targets.md](marker-clause-targets.md)
-- **[§5.1](../../dev-docs/historical/AstichiApiDesignV1.md)**
+- **[§5.1](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

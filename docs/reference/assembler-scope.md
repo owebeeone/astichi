@@ -143,9 +143,9 @@ source location when available, locator, and resource-side information.
 
 ## Reference Snippets
 
-- [assembler_scope/resource_candidates](snippets/assembler_scope/resource_candidates/recipe.py)
+- [assembler_scope/resource_candidates](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/assembler_scope/resource_candidates/recipe.py)
   — explicit `find_candidates` / `require_one` / `apply` form.
-- [resource_candidates_generated.py](snippets/assembler_scope/resource_candidates/resource_candidates_generated.py)
-- [assembler_scope/wire_shorthand](snippets/assembler_scope/wire_shorthand/recipe.py)
+- [resource_candidates_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/assembler_scope/resource_candidates/resource_candidates_generated.py)
+- [assembler_scope/wire_shorthand](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/assembler_scope/wire_shorthand/recipe.py)
   — the one-call `wire(...)` form; one polymorphic template specialized into many.
-- [wire_shorthand_generated.py](snippets/assembler_scope/wire_shorthand/wire_shorthand_generated.py)
+- [wire_shorthand_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/assembler_scope/wire_shorthand/wire_shorthand_generated.py)

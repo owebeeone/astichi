@@ -1,0 +1,89 @@
+site_name: astichi
+site_description: >-
+  Declarative runtime Python code generation — hygienic AST stitching with
+  automatic hole/binding wiring.
+site_url: https://owebeeone.github.io/astichi/
+repo_url: https://github.com/owebeeone/astichi
+repo_name: owebeeone/astichi
+edit_uri: edit/main/docs/
+copyright: LGPL-2.1-or-later
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+
+exclude_docs: |
+  *.pyc
+  **/__pycache__/**
+
+nav:
+  - Home: README.md
+  - Guide:
+      - Using the API: guide/using-the-api.md
+  - Reference:
+      - Overview: reference/README.md
+      - Reference guide: reference/ReferenceGuide.md
+      - Glossary: reference/glossary.md
+      - Public API: reference/public-api.md
+      - "compile()": reference/compile-api.md
+      - Composable, emit & materialize: reference/composable-api.md
+      - Builder: reference/builder-api.md
+      - Descriptors: reference/descriptor-api.md
+      - Inventory: reference/inventory-api.md
+      - Assembler scope: reference/assembler-scope.md
+      - Addressing: reference/addressing.md
+      - Materialize & emit: reference/materialize-and-emit.md
+      - Scoping & hygiene: reference/scoping-hygiene.md
+      - Classification modes: reference/classification-modes.md
+      - Errors: reference/errors.md
+      - Markers:
+          - Overview: reference/marker-overview.md
+          - Holes: reference/marker-holes.md
+          - Clause targets: reference/marker-clause-targets.md
+          - Binds & exports: reference/marker-binds-and-exports.md
+          - For & insert: reference/marker-for-and-insert.md
+          - Params: reference/marker-params.md
+          - Ref: reference/marker-ref.md
+          - Managed imports: reference/marker-pyimport.md
+          - Keep: reference/marker-keep.md
+          - Comment: reference/marker-comment.md
+  - Performance: validation/perf/README.md
