@@ -17,7 +17,7 @@ A.second[0, 1]
 A.third
 ```
 
-These are **real handle objects**, not transient parser state (**[§2.4](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**).
+These are **real handle objects**, not transient parser state.
 
 ## Descendant paths
 
@@ -72,11 +72,9 @@ the handle:
 a.second[0, 1].add.B(order=10)
 ```
 
-Nested loop expansion produces a **Cartesian-style** index tuple per the design
-examples in **[§9.2](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)** and **§16.1**.
+Nested loop expansion produces a **Cartesian-style** index tuple.
 
 ## See also
 
 - [Builder API](builder-api.md)
 - [Descriptor API](descriptor-api.md)
-- **[§9 — Addressing](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

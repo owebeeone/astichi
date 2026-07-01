@@ -36,4 +36,3 @@ so the names cannot accidentally mean something else.
 
 - [scoping-hygiene.md](scoping-hygiene.md)
 - [public-api.md](public-api.md)
-- **[§5.2–5.6](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

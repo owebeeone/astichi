@@ -46,8 +46,6 @@ Returns a **`Composable`** produced by the lowering pipeline:
 3. Classify names (strict / permissive, preserved names, externals)  
 4. Lower into the internal composable model  
 
-See **[§7](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)** in the design doc.
-
 The value retains **origin** metadata (`CompileOrigin`: file, line, offset) for
 diagnostics and provenance.
 
@@ -64,4 +62,3 @@ types are part of the public API contract for the release).
 - [Composable API](composable-api.md)
 - [Classification modes](classification-modes.md)
 - [Marker: astichi_comment](marker-comment.md)
-- **[§4 — Compile API](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

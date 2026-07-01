@@ -3026,20 +3026,6 @@ pub(crate) fn template_key_from_source(source: &str) -> String {
     format!("template:{}", &digest[..16])
 }
 
-pub(crate) fn native_template_key(
-    _py: Python<'_>,
-    source: &str,
-    _module: &ast::ModModule,
-    _source_summary: &str,
-) -> PyResult<String> {
-    Ok(template_key_from_source(source))
-}
-
-/// Alias kept for call sites that already name the source-only entry point.
-pub(crate) fn native_template_key_from_source(source: &str) -> String {
-    template_key_from_source(source)
-}
-
 fn structural_snapshot(
     py: Python<'_>,
     surface_bundle: Py<PyAny>,

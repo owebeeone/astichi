@@ -28,9 +28,3 @@ Fast orientation:
 | [scoping-hygiene.md](scoping-hygiene.md) | Scope isolation, local renaming, intentional identifier wiring |
 | [classification-modes.md](classification-modes.md) | Strict / permissive, preserved names |
 | [errors.md](errors.md) | Hard error categories |
-
-Current implementation snapshot:
-**[`../../dev-docs/AstichiSingleSourceSummary.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/AstichiSingleSourceSummary.md)**.
-
-Historical V1 design detail:
-**[`../../dev-docs/historical/AstichiApiDesignV1.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**.

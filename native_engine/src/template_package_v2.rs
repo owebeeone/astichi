@@ -205,7 +205,7 @@ fn template_package_v2_snapshot(
 }
 
 fn build_package(
-    py: Python<'_>,
+    _py: Python<'_>,
     engine: &EngineHandle,
     source: String,
     filename: Option<String>,

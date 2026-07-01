@@ -6,6 +6,12 @@ name: CI
 on:
   push:
     branches: [main]
+    # Docs-only pushes are handled by docs.yml; skip the native build + test matrix.
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
+      - "docs-requirements.txt"
   pull_request:
 
 permissions:

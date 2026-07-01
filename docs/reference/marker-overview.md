@@ -10,9 +10,6 @@ passed to `astichi.compile(...)`.
 **Hole shape** (scalar vs variadic vs block) is inferred from **AST context**,
 not from encoding a “kind” in the hole name.
 
-**Design background:**
-**[AstichiApiDesignV1.md §5](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**.
-
 ## Marker Vocabulary
 
 ```text

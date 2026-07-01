@@ -20,10 +20,9 @@ identifier passed to the marker).
 ## Classification
 
 Keep-marker recognition runs **before** ordinary free-name classification on the
-same subtree (V1 §6).
+same subtree.
 
 ## See also
 
 - [scoping-hygiene.md](scoping-hygiene.md)
 - [classification-modes.md](classification-modes.md)
-- **[§5.5](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

@@ -109,7 +109,7 @@ a.third.add.B(order=10)
 result = b.build()
 ```
 
-Fluent and handle styles **must** behave identically (**[§8](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**).
+Fluent and handle styles **must** behave identically.
 
 ## Data-driven named API
 
@@ -341,4 +341,3 @@ When multiple inserts target the same variadic hole, each edge carries an
 ## See also
 
 - [Addressing](addressing.md)
-- **[§8 — Builder API](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

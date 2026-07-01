@@ -12,8 +12,7 @@ It **requires**:
 - **valid lexical hygiene** (`IdentifierHygieneRequirements.md`)  
 - **legal** shape for the target  
 
-On violation it **raises**; it never returns a value that violates the contract
-(**[§10.2](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**).
+On violation it **raises**; it never returns a value that violates the contract.
 
 During materialization Astichi also consumes executable-only markers. Managed
 `astichi_pyimport(...)` statements become ordinary Python imports at module
@@ -39,7 +38,7 @@ Renders **source text** for debugging, tests, inspection, or downstream codegen.
 
 **Semantics of the tail:** holes, binds, inserts, exports, and related meaning
 are always recovered by **reparsing** the emitted Python before the tail. The
-payload is **not** a second source of truth for markers (**[§11.2](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**).
+payload is **not** a second source of truth for markers.
 
 ### Edited files
 
@@ -85,4 +84,3 @@ expanded. Other brace text is emitted literally.
 - [Compile API](compile-api.md)
 - [Marker: astichi_comment](marker-comment.md)
 - [Marker: astichi_pyimport](marker-pyimport.md)
-- **[§10–13](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**

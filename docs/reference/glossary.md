@@ -1,7 +1,6 @@
 # Glossary
 
-Short definitions. Design background:
-**[`../../dev-docs/historical/AstichiApiDesignV1.md`](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**.
+Short definitions.
 
 | Term | Meaning |
 |------|---------|

@@ -63,4 +63,3 @@ an existing `if` / `elif` chain.
 
 - [marker-overview.md](marker-overview.md)
 - [marker-clause-targets.md](marker-clause-targets.md)
-- **[§5.1](https://github.com/owebeeone/astichi/blob/main/dev-docs/historical/AstichiApiDesignV1.md)**
