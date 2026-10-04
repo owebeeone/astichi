@@ -97,7 +97,7 @@ Every fluent operation must have an equivalent raw operation.
 
 ### 4.2 Keep implementation layered
 
-Follow `astichi/dev-docs/historical/AstichiImplementationBoundaries.md`.
+Follow `astichi/dev-docs/history/AstichiImplementationBoundaries.md`.
 
 Do not collapse these concerns into one blended subsystem:
 
@@ -185,7 +185,7 @@ Do not weaken this during implementation for convenience.
 
 Lexical hygiene must satisfy:
 
-- `astichi/dev-docs/historical/IdentifierHygieneRequirements.md`
+- `astichi/dev-docs/history/IdentifierHygieneRequirements.md`
 
 ## 6. Source and provenance rules
 

@@ -18,6 +18,8 @@ This file defines repository-specific working instructions for `astichi`.
 - **Read `dev-docs/AstichiSingleSourceSummary.md` first.** It is the active
   handoff and the authoritative project document.
 - Then `dev-docs/AstichiCodingRules.md` for repository-specific coding rules.
+- `dev-docs/README.md` indexes current work, proposals, and history without
+  replacing those authoritative documents.
 
 ## Authoritative docs
 
@@ -26,7 +28,7 @@ For active Astichi work, use these docs:
 - `dev-docs/AstichiCodingRules.md`
 - `dev-docs/AstichiSingleSourceSummary.md`
 
-Archived docs under `dev-docs/historical/` are not authoritative and should not
+Archived docs under `dev-docs/history/` are not authoritative and should not
 be read or edited during normal work. They exist only for historical context
 when a concrete question requires original rationale. When behavior changes,
 update `dev-docs/AstichiSingleSourceSummary.md`, `docs/`, and tests/goldens;

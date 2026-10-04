@@ -527,7 +527,7 @@ Work:
 - Remove obsolete tests that only preserve old intermediate representation.
 - Replace success-path bespoke tests with structural or final goldens where
   appropriate.
-- Update `dev-docs/perf-refactor/AssemblyApiLedger.md`.
+- Update `dev-docs/history/perf-refactor/AssemblyApiLedger.md`.
 
 Acceptance:
 

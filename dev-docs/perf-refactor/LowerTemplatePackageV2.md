@@ -307,7 +307,7 @@ structural_snapshot(state, materialization_plan) -> StructuralSnapshot
 ## Python-First Migration
 
 The detailed Python roll-build slices are in
-`dev-docs/perf-refactor/PythonLowerTemplatePackageV2Plan.md`.
+`dev-docs/history/perf-refactor/PythonLowerTemplatePackageV2Plan.md`.
 
 1. Add Python `LowerTemplatePackageV2` containers populated from existing
    `BasicComposable.markers`, name classification, inventory extraction, and

@@ -583,7 +583,7 @@ results should be behavior-bearing objects rather than enums.
 L3 is the descriptor-level identifier wiring slice.
 
 It is already sketched separately in
-`dev-docs/AstichiBindBuilderDesign.md`. The key API is a builder-level
+`dev-docs/proposals/AstichiBindBuilderDesign.md`. The key API is a builder-level
 operation that binds a descriptor-selected identifier demand to a
 descriptor-selected identifier supply.
 

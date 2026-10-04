@@ -8,23 +8,23 @@ Status: index only.
 `tests/test_lifecycle_hot_path_python_gate.py` + counter table (`native_compile_parse`
 must be 0 on lifecycle import; `copy_python_ast` == class count). Tags: `rust-hot/*`.
 
-**[`FullSelfNativeRustAstPlan.md`](FullSelfNativeRustAstPlan.md)** — historical
+**[`FullSelfNativeRustAstPlan.md`](../history/perf-refactor/FullSelfNativeRustAstPlan.md)** — historical
 `rust-fsn/*` slice work (routing/oracles); did not clear the hot-path gate.
 
-## Historical context (do not execute)
+## Retained Contracts And Follow-Up
 
-These documents informed the inventory-first refactor and hybrid native era.
-They are retained for background, grep, and archaeology only:
+- [Engine selection](EngineSelectionContract.md)
+- [Surface extension](SurfaceExtensionContract.md)
+- [Verification and goldens](VerificationAndGoldens.md)
+- [Lower-template package](LowerTemplatePackageV2.md)
+- [Remaining Python rollout](RemainingRollBuildPlan.md): retained because the
+  canonical summary still references it. Do not use its older native rollout
+  sequence in place of the active hot-path plan.
 
-- `AstichiPerfRefactorProposal.md` (parent proposal under `dev-docs/`)
-- `StructuralInventoryDesign.md`, `BuildOperationsAnalysis.md`,
-  `SurfaceExtensionContract.md`, `VerificationAndGoldens.md`,
-  `AssemblyApiLedger.md`, `SnapshotGrammar.md`, `LowerTemplatePackageV2.md`,
-  `PythonLowerTemplatePackageV2Plan.md`, `EngineSelectionContract.md` (update
-  capability names when F0c/F5 touch selection — do not follow old slice lists),
-  `NativeAstProbe.md`, `NativeDecisionProfile.md`,
-  `NativeLowerEngineDetailedPlan.md`, `NativePerformancePlan.md`,
-  `SlicedBuildPlan.md`, `RemainingRollBuildPlan.md`
+## Historical Context
 
-When a historical doc disagrees with `FullSelfNativeRustAstPlan.md`, **this plan
-wins**.
+Earlier analyses, inventory-first/hybrid plans, full-self-native slice ledgers,
+and benchmark snapshots now live in `dev-docs/history/perf-refactor/`.
+They are original rationale and evidence, not competing execution plans.
+The active hot-path plan controls its current gates; the single-source summary
+and coding rules remain authoritative for semantics and implementation rules.

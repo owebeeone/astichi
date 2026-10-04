@@ -8,7 +8,7 @@ engine-handle lifecycle functions only. It does not route
 compile/build/materialization behavior to native code yet, and it must not be
 selected as a usable native lower engine until it advertises the full
 lower-engine capability set from
-`dev-docs/perf-refactor/NativeLowerEngineDetailedPlan.md`.
+`dev-docs/history/perf-refactor/NativeLowerEngineDetailedPlan.md`.
 
 N1 core functions:
 

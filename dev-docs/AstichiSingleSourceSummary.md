@@ -7,7 +7,7 @@ new AI or engineer to continue the project without reading the rest of
 `dev-docs/`.
 
 `dev-docs/AstichiSingleSourceSummary.md` and `dev-docs/AstichiCodingRules.md`
-are the only active dev-docs. Everything else under `dev-docs/historical/` is
+are the only active dev-docs. Everything else under `dev-docs/history/` is
 archival context only: frozen, non-authoritative, and not required for active
 work.
 
@@ -166,7 +166,7 @@ work.
   - Inventory and the experimental assembler-scope helpers are current
     implemented behavior. See §3.5.
   - Source-only builder definitions and the build resolver are not implemented;
-    `dev-docs/AtichiBuildResolverProposal.md` remains an unimplemented
+    `dev-docs/proposals/AtichiBuildResolverProposal.md` remains an unimplemented
     proposal, not authoritative behavior.
   - Keep new behavior reflected in this summary, `docs/reference/`, snippets,
     and goldens. Do not maintain archived specs/plans as active docs.
@@ -824,8 +824,8 @@ Current shape vocabulary in code:
 
 Archived parameter-hole design and implementation notes:
 
-- `dev-docs/historical/AstichiV3ParameterHoleSpec.md`
-- `dev-docs/historical/AstichiV3ParameterHoleImplementationPlan.md`
+- `dev-docs/history/AstichiV3ParameterHoleSpec.md`
+- `dev-docs/history/AstichiV3ParameterHoleImplementationPlan.md`
 
 **Future hole / clause shapes (non-normative):** the current vocabulary covers
 block suites, scalar/`*`/`**` expression sites, identifier-shaped demands, and
@@ -835,7 +835,7 @@ similar **list-field** AST targets needs a broader shape inventory
 (whole-clause supplies, optional `stmt` / `stmt_block`, and finer targets only
 where justified). Design space and rationale — including “whole-unit” modeling
 vs splitting clause headers and bodies — live in
-`dev-docs/historical/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only,
+`dev-docs/history/AstichiV3TargetAdditionalHoleShapes.md` (brainstorm only,
 not shipped).
 
 ## 5. What is already implemented and working
@@ -1136,8 +1136,8 @@ builder wiring, the name is local to that inserted scope.
 
 ### 9.4 Historical docs handling
 
-Completed specs and implementation plans may be moved to `dev-docs/historical/`
-and listed in `dev-docs/historical/README.md`. Do not maintain status, links,
+Completed specs and implementation plans may be moved to `dev-docs/history/`
+and listed in `dev-docs/history/README.md`. Do not maintain status, links,
 or wording inside archived docs unless explicitly asked. The active truth belongs
 in this summary, `docs/reference/`, reference snippets, tests, and goldens.
 
@@ -1175,7 +1175,7 @@ Do this, in order:
    `uv run python tests/versioned_test_harness.py run-tests-all --pytest-args -q`.
 5. Use `docs/reference/`, snippets, and goldens for current behavior.
 6. Do not use archived docs as active plans. Only consult
-   `dev-docs/historical/` for original rationale when a concrete question
+   `dev-docs/history/` for original rationale when a concrete question
    requires it.
 7. When adding or changing behavior, update this summary, reference docs,
    snippets, and tests/goldens in the same change.
