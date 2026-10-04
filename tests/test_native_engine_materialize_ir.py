@@ -582,7 +582,41 @@ def test_native_materialization_workspace_applies_sequence_call_argument_edge_wh
     )
 
 
-def test_native_materialization_workspace_applies_nested_call_argument_edge_when_available() -> None:
+@pytest.mark.parametrize(
+    ("source", "payload", "expected"),
+    [
+        (
+            "if ready:\n    result = func(*astichi_hole(args))\n",
+            "astichi_funcargs(1)\n",
+            "if ready:\n    result = func(1)",
+        ),
+        (
+            "result = outer((*astichi_hole(args),))\n",
+            "astichi_funcargs(1, 2)\n",
+            "result = outer((1, 2))",
+        ),
+        (
+            "result = outer(inner(**astichi_hole(args)))\n",
+            "astichi_funcargs(answer=42)\n",
+            "result = outer(inner(answer=42))",
+        ),
+        (
+            "result = (*astichi_hole(args),) == (1, 2)\n",
+            "astichi_funcargs(1, 2)\n",
+            "result = (1, 2) == (1, 2)",
+        ),
+        (
+            "result = (1, 2) == (*astichi_hole(args),)\n",
+            "astichi_funcargs(1, 2)\n",
+            "result = (1, 2) == (1, 2)",
+        ),
+    ],
+)
+def test_native_materialization_workspace_applies_nested_call_argument_edge_when_available(
+    source: str,
+    payload: str,
+    expected: str,
+) -> None:
     module = load_native_extension(required=False)
     if module is None:
         pytest.skip("native engine extension is not built")
@@ -590,14 +624,13 @@ def test_native_materialization_workspace_applies_nested_call_argument_edge_when
     engine = _engine_with_current_bundle(module)
     root_template = module.register_template_package_v2_source(
         engine,
-        "if ready:\n"
-        "    result = func(*astichi_hole(args))\n",
+        source,
         "workspace.py",
         1,
     )
     args_template = module.register_template_package_v2_source(
         engine,
-        "astichi_funcargs(1)\n",
+        payload,
         "workspace.py",
         1,
     )
@@ -633,8 +666,45 @@ def test_native_materialization_workspace_applies_nested_call_argument_edge_when
         edge,
     )
 
-    assert module.materialization_workspace_to_source(engine, workspace) == (
-        "if ready:\n    result = func(1)"
+    assert module.materialization_workspace_to_source(engine, workspace) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "result = {'before': 0, **astichi_hole(entries), 'after': 3}\n",
+        "result = outer(options={'before': 0, **astichi_hole(entries), 'after': 3})\n",
+    ],
+)
+def test_native_assembly_state_splices_dict_displays_when_available(source: str) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+
+    engine = _engine_with_current_bundle(module)
+    template = module.register_template_package_v2_source(
+        engine, source, "workspace.py", 1
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(engine, state, template, ("Root",))
+    target = _template_record_handle_by_name(
+        module, engine, state, template, root, "entries"
+    )
+    for order, payload in enumerate(("{'first': 1}\n", "{**extra, 2: 'second'}\n")):
+        child_template = module.register_template_package_v2_source(
+            engine, payload, "workspace.py", 1
+        )
+        child = module.assembly_state_append_occurrence(
+            engine, state, child_template, ("Root", f"Entry{order}"), root
+        )
+        module.assembly_state_append_edge(
+            engine, state, target, child, "astichi.operation.splice_call_arguments", order
+        )
+
+    artifact = module.assembly_state_materialize_to_python_ast(engine, state, {}, root.index)
+
+    assert ast.unparse(artifact) == source.strip().replace(
+        "**astichi_hole(entries)", "'first': 1, **extra, 2: 'second'"
     )
 
 

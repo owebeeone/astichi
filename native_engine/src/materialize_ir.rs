@@ -962,7 +962,7 @@ fn materialized_call_argument_payload(
     let source_path = source_template
         .unique_locator_ast_path_for_surface("astichi.surface.expression.production")?;
     let expression = clone_expr_at_path(source_module, source_path)?;
-    if target_path.contains("/keywords[") {
+    if call_argument_slot(target_path)?.1.field == "keywords" {
         return expression_to_keyword_payload(expression);
     }
     Ok((vec![expression], Vec::new()))
@@ -2366,6 +2366,41 @@ fn splice_call_arguments_at_path(
     payload_args: Vec<ast::Expr>,
     payload_keywords: Vec<ast::Keyword>,
 ) -> PyResult<()> {
+    let (parent_path, slot) = call_argument_slot(target_path)?;
+    if slot.field == "values" {
+        if !payload_keywords.is_empty() {
+            return Err(crate::errors::schema_error(
+                "native dict-display splice requires dict expression payloads",
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        for expression in payload_args {
+            let ast::Expr::Dict(payload) = expression else {
+                return Err(crate::errors::schema_error(
+                    "native dict-display splice requires dict expression payloads",
+                ));
+            };
+            keys.extend(payload.keys);
+            values.extend(payload.values);
+        }
+        let ast::Expr::Dict(target) = expr_mut_at_path(module, parent_path)? else {
+            return Err(crate::errors::schema_error(
+                "native dict-display path did not resolve to a dict",
+            ));
+        };
+        let index = slot.index.ok_or_else(|| {
+            crate::errors::schema_error("native dict-display segment requires an index")
+        })?;
+        if !matches!(target.keys.get(index), Some(None)) {
+            return Err(crate::errors::schema_error(
+                "native dict-display splice expected an unpacking entry",
+            ));
+        }
+        target.keys.splice(index..index + 1, keys);
+        target.values.splice(index..index + 1, values);
+        return Ok(());
+    }
     let (call_path, arg_kind, arg_index) = call_argument_parent_path(target_path)?;
     match arg_kind {
         CallArgumentKind::Positional => {
@@ -2422,52 +2457,29 @@ enum CallArgumentKind {
 }
 
 fn call_argument_parent_path(target_path: &str) -> PyResult<(String, CallArgumentKind, usize)> {
-    if let Some((prefix, tail)) = target_path.rsplit_once("/args[") {
-        let Some(index_text) = tail.strip_suffix("]/value") else {
+    let (parent_path, segment) = call_argument_slot(target_path)?;
+    let index = segment.index.ok_or_else(|| {
+        crate::errors::schema_error("native call-argument segment requires an index")
+    })?;
+    let kind = match segment.field.as_str() {
+        "args" => CallArgumentKind::Positional,
+        "keywords" => CallArgumentKind::Keyword,
+        "elts" => CallArgumentKind::SequenceStarred,
+        _ => {
             return Err(crate::errors::schema_error(
-                "native call-argument splice expected starred args[index]/value locator",
+                "native call-argument splice expected args[index], keywords[index], or elts[index] locator",
             ));
-        };
-        return Ok((
-            prefix.to_string(),
-            CallArgumentKind::Positional,
-            parse_call_argument_index(index_text)?,
-        ));
-    }
-    if let Some((prefix, tail)) = target_path.rsplit_once("/elts[") {
-        let Some(index_text) = tail.strip_suffix("]/value") else {
-            return Err(crate::errors::schema_error(
-                "native call-argument splice expected starred elts[index]/value locator",
-            ));
-        };
-        return Ok((
-            prefix.to_string(),
-            CallArgumentKind::SequenceStarred,
-            parse_call_argument_index(index_text)?,
-        ));
-    }
-    let Some((prefix, tail)) = target_path.rsplit_once("/keywords[") else {
-        return Err(crate::errors::schema_error(
-            "native call-argument splice expected args[index], keywords[index], or elts[index] locator",
-        ));
+        }
     };
-    let Some(index_text) = tail.strip_suffix("]/value") else {
-        return Err(crate::errors::schema_error(
-            "native call-argument splice expected keyword keywords[index]/value locator",
-        ));
-    };
-    Ok((
-        prefix.to_string(),
-        CallArgumentKind::Keyword,
-        parse_call_argument_index(index_text)?,
-    ))
+    Ok((parent_path.to_string(), kind, index))
 }
 
-fn parse_call_argument_index(index_text: &str) -> PyResult<usize> {
-    let index = index_text.parse::<usize>().map_err(|_| {
-        crate::errors::schema_error("native call-argument index is not an unsigned integer")
+fn call_argument_slot(target_path: &str) -> PyResult<(&str, PathSegment)> {
+    let argument_path = target_path.strip_suffix("/value").unwrap_or(target_path);
+    let (parent_path, segment) = argument_path.rsplit_once('/').ok_or_else(|| {
+        crate::errors::schema_error("native call-argument splice expected a parent expression path")
     })?;
-    Ok(index)
+    Ok((parent_path, parse_path_segment(segment)?))
 }
 
 fn sequence_expr_elts_mut_at_path<'a>(
@@ -2691,6 +2703,16 @@ fn expr_mut_from_expr<'a>(
                 let keyword = node.keywords.get_mut(index).ok_or_else(|| {
                     crate::errors::schema_error("native call keyword index is out of range")
                 })?;
+                let Some((value_slot, rest)) = rest.split_first() else {
+                    return Err(crate::errors::schema_error(
+                        "native keyword expression path requires a value field",
+                    ));
+                };
+                if value_slot.field != "value" || value_slot.index.is_some() {
+                    return Err(crate::errors::schema_error(
+                        "native keyword expression path requires a value field",
+                    ));
+                }
                 expr_mut_from_expr(&mut keyword.value, rest)
             }
             _ => Err(crate::errors::schema_error(&format!(
@@ -2708,6 +2730,14 @@ fn expr_mut_from_expr<'a>(
         ast::Expr::BinOp(node) => match first.field.as_str() {
             "left" => expr_mut_from_boxed_expr(&mut node.left, rest),
             "right" => expr_mut_from_boxed_expr(&mut node.right, rest),
+            _ => Err(crate::errors::schema_error(&format!(
+                "native expression path cannot enter field `{}` on {}",
+                first.field, expr_name
+            ))),
+        },
+        ast::Expr::Compare(node) => match first.field.as_str() {
+            "left" => expr_mut_from_boxed_expr(&mut node.left, rest),
+            "comparators" => expr_mut_from_indexed_expr(&mut node.comparators, first, rest),
             _ => Err(crate::errors::schema_error(&format!(
                 "native expression path cannot enter field `{}` on {}",
                 first.field, expr_name

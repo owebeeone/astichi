@@ -71,19 +71,22 @@ def resolve_hot_path_materialization_tree(
 ) -> ast.Module | None:
     """Return a parsed tree when compile registered a placeholder module body.
 
-    Lifecycle production materializes through ``AssemblyScope.build`` native
-    handoff; this helper is for ``build_merge`` / ``materialize_composable`` on
-    composables that never went through scope assembly.
+    Production scopes prefer native materialization. This helper resolves the
+    source-backed AST for other materialization paths, including scope subset
+    materialization and standalone composables.
     """
     if not is_hot_path_placeholder_tree(tree):
         return None
     if native_source is None:
         return None
+    from astichi.ast_provenance import attach_astichi_source_file
     from astichi.lower_engine.native_compile_parse import (
         native_compile_tree_from_parse_source,
     )
 
-    return native_compile_tree_from_parse_source(
+    resolved = native_compile_tree_from_parse_source(
         native_source,
         file_name=file_name,
     )
+    attach_astichi_source_file(resolved, file_name)
+    return resolved

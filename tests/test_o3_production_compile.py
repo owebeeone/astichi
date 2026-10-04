@@ -8,6 +8,7 @@ import os
 import pytest
 
 import astichi
+from astichi.assembler import AssemblyScope
 from astichi.lower_engine.native_hot_path_compile import (
     is_hot_path_placeholder_tree,
     native_hot_path_compile_enabled,
@@ -135,3 +136,46 @@ def test_real_pass_module_is_not_placeholder_in_matrix(
     assert not is_hot_path_placeholder_tree(compiled.tree)
     executable = compiled.to_executable_ast()
     assert isinstance(executable.body[0], ast.Pass)
+
+
+def test_production_subset_materialization_resolves_deferred_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    if not native_hot_path_compile_enabled():
+        pytest.skip("F3d no_python_parse capability not advertised")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.delenv("ASTICHI_LOWER_ENGINE_MATRIX", raising=False)
+    monkeypatch.setattr(
+        AssemblyScope, "_try_native_materialize_if_supported", lambda self: None
+    )
+    compiled = astichi.compile("class Example:\n    value = 42\n")
+    assert is_hot_path_placeholder_tree(compiled._stored_tree())
+    scope = AssemblyScope(astichi.build())
+    scope.add("Root", compiled)
+
+    source = scope.build().emit_commented()
+
+    assert source == "class Example:\n    value = 42\n"
+
+
+def test_production_deferred_parse_preserves_comment_source_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    if not native_hot_path_compile_enabled():
+        pytest.skip("F3d no_python_parse capability not advertised")
+
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    monkeypatch.delenv("ASTICHI_LOWER_ENGINE_MATRIX", raising=False)
+    compiled = astichi.compile(
+        'astichi_comment("{__file__}:{__line__}")\nvalue = 1\n',
+        file_name="src/example.py",
+        line_number=9,
+    )
+    assert is_hot_path_placeholder_tree(compiled._stored_tree())
+
+    assert compiled.emit_commented() == "# src/example.py:9\nvalue = 1\n"

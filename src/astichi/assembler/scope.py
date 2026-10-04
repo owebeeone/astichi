@@ -1559,7 +1559,7 @@ class AssemblyScope:
         if root is None:
             return None
         visiting.add(occurrence_id)
-        tree = clone_ast(root.tree)
+        tree = clone_ast(root._tree_for_emit_or_materialize())
         operations = operations_by_occurrence.get(occurrence_id, ())
         source_trees: dict[OccurrenceId, ast.Module] = {}
         for operation in operations:

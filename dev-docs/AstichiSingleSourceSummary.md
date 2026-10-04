@@ -241,6 +241,10 @@ These are the rules that should not be re-litigated during implementation.
 - `emit_commented()` is a peer final-output surface to `materialize()`: it
   renders `astichi_comment(...)` markers as real Python comments and does not
   add Astichi provenance
+- Native compilation may defer its Python AST. AST-based materialization must
+  resolve that template before traversing it, preserve its source-file metadata,
+  and never treat the private placeholder as generated output. Consumers that
+  need executable ASTs use `to_executable_ast()`, not the internal compile tree.
 - Implementation stays layered.
   - `frontend -> lowering -> hygiene -> model -> builder -> materialize -> emit`
 - Do not store absolute filesystem paths in committed docs/config/examples/tests.
@@ -701,6 +705,11 @@ supports simple starred and double-starred argument holes. Payloads that need
 payload-local boundary directives or broader duplicate-key diagnostics remain
 on the adapter path until the full lower materialization gate owns that
 surface.
+
+Native argument insertion resolves the immediate argument/element slot, not an
+ancestor call's slot. It supports tuple argument holes on either side of a
+comparison and dict-display spread holes, including inside keyword values.
+Dict-display inserts preserve ordered keys, values, and nested unpacking.
 
 Elif-clause materialization is represented in lower operation and hygiene
 streams, has structural plan goldens, and final lower materialization supports

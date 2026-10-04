@@ -14,6 +14,11 @@ It **requires**:
 
 On violation it **raises**; it never returns a value that violates the contract.
 
+Native compilation can defer parsing the Python AST. Materialization resolves
+the deferred template before using AST-based paths; its private placeholder is
+never final output. Use `to_executable_ast()` to obtain a runnable AST, including
+for empty resources, rather than inspecting the internal compile-time tree.
+
 During materialization Astichi also consumes executable-only markers. Managed
 `astichi_pyimport(...)` statements become ordinary Python imports at module
 head, after a module docstring and after ordinary `from __future__ import ...`
