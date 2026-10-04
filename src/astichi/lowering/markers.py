@@ -1139,10 +1139,11 @@ def is_call_to_marker(node: ast.AST, marker: MarkerSpec) -> bool:
 
 
 class _MarkerVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, *, binding_inventory: bool = False) -> None:
         self.markers: list[RecognizedMarker] = []
         self._stack: list[ast.AST] = []
         self._elif_target_names: set[tuple[int, str]] = set()
+        self._binding_inventory = binding_inventory
 
     def visit(self, node: ast.AST) -> object:
         self._stack.append(node)
@@ -1154,10 +1155,20 @@ class _MarkerVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         marker = _marker_from_call(node)
         if marker is not None and marker.accepts_call_context(node):
-            marker.validate_node(node)
             shape = marker.call_context_shape()
             if shape is None:
                 shape = _infer_shape(node, self._parent())
+            if self._binding_inventory:
+                template = marker.demand_template(
+                    RecognizedMarker(marker, node, CALL_CONTEXT, shape)
+                )
+                if template is None or not (
+                    template.origin.is_external_bind_demand()
+                    or template.origin.is_identifier_demand()
+                ):
+                    self.generic_visit(node)
+                    return
+            marker.validate_node(node)
             if marker is ELIF:
                 _validate_elif_target_position(node, self._parent(), self._grandparent())
                 assert shape is ELIF_CLAUSE
@@ -1180,7 +1191,7 @@ class _MarkerVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
-        if not _contains_astichi_hole_context(node):
+        if self._binding_inventory or not _contains_astichi_hole_context(node):
             self.generic_visit(node)
             return
         _validate_defaulted_block_hole(node)
@@ -1259,6 +1270,8 @@ class _MarkerVisitor(ast.NodeVisitor):
         _, suffix_marker = strip_identifier_suffix(name)
         if suffix_marker is None:
             return
+        if self._binding_inventory and suffix_marker is not ARG_IDENTIFIER:
+            return
         if suffix_marker is PARAM_HOLE_IDENTIFIER:
             suffix_marker.validate_node(node)
         self.markers.append(
@@ -1275,7 +1288,7 @@ class _MarkerVisitor(ast.NodeVisitor):
         return suffix_marker
 
     def _visit_params_payload(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        if node.name != PARAMS.source_name:
+        if self._binding_inventory or node.name != PARAMS.source_name:
             return
         PARAMS.validate_node(node)
         self.markers.append(
@@ -1288,7 +1301,7 @@ class _MarkerVisitor(ast.NodeVisitor):
         )
 
     def _visit_elif_payload(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        if node.name != ELIF.source_name:
+        if self._binding_inventory or node.name != ELIF.source_name:
             return
         ELIF.validate_node(node)
         self.markers.append(
@@ -1301,6 +1314,8 @@ class _MarkerVisitor(ast.NodeVisitor):
         )
 
     def _visit_decorators(self, decorators: list[ast.expr]) -> None:
+        if self._binding_inventory:
+            return
         for decorator in decorators:
             if not isinstance(decorator, ast.Call):
                 continue
@@ -1323,6 +1338,8 @@ class _MarkerVisitor(ast.NodeVisitor):
         self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
     ) -> None:
         _, suffix_marker = strip_identifier_suffix(node.name)
+        if self._binding_inventory and suffix_marker is not ARG_IDENTIFIER:
+            return
         if suffix_marker is None:
             # Fallback: catch bare-suffix pathology (e.g.
             # `class __astichi_keep__:`). `strip_identifier_suffix`
@@ -1591,5 +1608,12 @@ def _validate_defaulted_block_hole(node: ast.With) -> None:
 def recognize_markers(tree: ast.AST) -> tuple[RecognizedMarker, ...]:
     """Recognize V1 markers from a parsed AST."""
     visitor = _MarkerVisitor()
+    visitor.visit(tree)
+    return tuple(visitor.markers)
+
+
+def recognize_binding_markers(tree: ast.AST) -> tuple[RecognizedMarker, ...]:
+    """Collect bindable sites, visiting dormant suites without validating other markers."""
+    visitor = _MarkerVisitor(binding_inventory=True)
     visitor.visit(tree)
     return tuple(visitor.markers)

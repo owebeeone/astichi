@@ -1,0 +1,10 @@
+def fallback(input_value):
+    return ('fallback', input_value)
+
+def replaced(input_value):
+    return ('replacement', input_value)
+
+def nested():
+    if True:
+        return 42
+# astichi-provenance: eNp9VN+L00AQ7rVpGpv2isLpeVp/nUhPsMqBIojgXUXUaB4OX0vYJNtuaLobks3VPgg++rBvrv+vs8m2Tb1ioTQz+833zXyzzc/mn4NmrfiIBsq4FOZXFuYxlr/lyYX8IQfC8Fm4lGM5IDVhf8hpwCNG3+NJBUHRHEthTVAc+yiYSWGgdJpJKLgGD/kcU55t4HbCMkbjZYEZS9IdK2QDwg2miIQd0STn3iWKc+BvI0oZR0peuqLDlwn2AjZX7BCbcUQxZdKpi3bAYo9NJhnm0umKNqahtzndV2EVcSiuezB6FJDIy9LAm0QwvjiesjhU8fMQT1Aecxx6hMXY8yMaRnSaDZOlzH0kzEuUqm5d0Z4tKnMJe7bwdG0RN2eLEmdVsuQheZT7pFl4YF5gnqd0Y0OzHB2Omt/yZGsruKxXW7FGjGYcgQ2rY/KCdIQxg06lS/qOQe45PXIffh84I1CrCcNVK1uz1aNQkiPRCPh3JWZ8YShcnaoOM1+zDDXLedk3JmdkdBW11tLT9Z0GZI3tLBL7IQ5YijhLYT1w98CjVlo4kEHbd11hFztOwN954VXfqQNP7R92S89sCyvFSYwCDMN0SU+nb+grdlPHt8kRuaPogc4Eui7QmUB3qNsixy55DPgn8B245GRrR8/W/p7qp5dqB69XaWHrFopbSd4okT0QsUBkD0QONNdbXfAOmllZ6GvsLY092+mvQrQ04nztb0v7a0H2dDXIR2j4czGpU5hnavMqoIp5JsUZ323d/xypifqn6ruAA4vcGPKr9KAD0jZId0C6t9PPdYXztCzpQkkHSrpQ8qoYciuzukQmS3Gc4fJ62NqGKuKKDW1tQwWE9eskmlKg2/wvh38BPQ/Ciw==

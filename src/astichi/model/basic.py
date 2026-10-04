@@ -19,6 +19,7 @@ from astichi.model.external_values import (
 )
 from astichi.model.inventory import (
     Inventory,
+    PortInventoryPayload,
     build_inventory,
     empty_inventory,
 )
@@ -240,7 +241,7 @@ class BasicComposable(Composable):
 
         bind_external_demands = {
             port.name
-            for port in self.demand_ports
+            for port in _binding_demand_ports(self)
             if port.is_external_bind_demand()
         }
         known_demands = tuple(sorted(bind_external_demands))
@@ -353,7 +354,7 @@ class BasicComposable(Composable):
         # share the same identifier-binding surface.
         arg_demand_names = {
             port.name
-            for port in self.demand_ports
+            for port in _binding_demand_ports(self)
             if port.is_identifier_demand()
         }
         existing = dict(self.arg_bindings)
@@ -830,6 +831,21 @@ def _rebuild_composable(
         _lower_template=lower_template,
         _already_materialized=already_materialized,
     )
+
+
+def _binding_demand_ports(composable: BasicComposable) -> tuple[DemandPort, ...]:
+    """Include explicitly bindable fallback sites, but not mandatory public ports."""
+    binding = composable._lower_template
+    if binding is None:
+        return composable.demand_ports
+    dormant = tuple(
+        record.projection_record.payload.port
+        for record in binding.record_specs
+        if record.projection_record is not None
+        and isinstance(record.projection_record.payload, PortInventoryPayload)
+        and isinstance(record.projection_record.payload.port, DemandPort)
+    )
+    return (*composable.demand_ports, *dormant)
 
 
 def _register_lower_template(

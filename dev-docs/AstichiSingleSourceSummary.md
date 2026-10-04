@@ -107,6 +107,12 @@ work.
   - If no local insert shell targets the site, materialize lowers the fallback
     suite in place and then recognizes/validates markers inside the selected
     fallback. Discarded fallback contents remain branch-inactive.
+  - Both lower engines retain dormant external/identifier binding sites for
+    `AssemblyScope` wiring before selection. Python compile-time demand ports
+    remain branch-inactive; explicit bindings are accepted by `bind()` and
+    `bind_identifier()` for adapter builds too. Replacing a fallback still
+    discards its unbound contents. The `defaulted_hole_bindings.py` golden
+    covers this path, including binding sites nested in ordinary control flow.
   - `astichi_pyimport(...)` is rejected inside fallback suites, because managed
     imports must remain top-of-Astichi-scope declarations.
 - Implemented V2 work:

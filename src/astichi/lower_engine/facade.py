@@ -52,7 +52,13 @@ from astichi.lowering.call_argument_payloads import (
     FuncArgPayload,
     extract_funcargs_payload,
 )
-from astichi.lowering.markers import strip_identifier_suffix
+from astichi.lowering.markers import (
+    RecognizedMarker,
+    inactive_fallback_body_node_ids,
+    recognize_binding_markers,
+    recognize_markers,
+    strip_identifier_suffix,
+)
 from astichi.model.composable import Composable
 from astichi.model.inventory import (
     BlockProductionInventoryPayload,
@@ -76,6 +82,7 @@ from astichi.model.inventory import (
     LocatedStaticCodePathNode,
     StaticCodePathNode,
     StaticResourceName,
+    build_inventory,
 )
 from astichi.model.origin import CompileOrigin
 from astichi.model.ports import DemandPort, SupplyPort
@@ -162,6 +169,7 @@ def register_inventory_template(
     """Register existing inventory metadata as one lower-engine template."""
     engine = LowerEngine()
     bundle = engine.surface_registry.register_bundle(current_surface_bundle_spec())
+    inventory = _inventory_with_fallback_bindings(tree, inventory)
     record_specs = tuple(
         _template_record_spec(engine=engine, record=record)
         for record in _sorted_inventory_records(inventory)
@@ -200,6 +208,49 @@ def register_inventory_template(
         surface_bundle_signature=bundle.bundle_signature,
         package_v2=engine.template_package(template_id),
     )
+
+
+def _inventory_with_fallback_bindings(tree: ast.Module, inventory: Inventory) -> Inventory:
+    """Keep dormant bindings addressable without activating public fallback ports."""
+    inactive_ids = inactive_fallback_body_node_ids(recognize_markers(tree))
+    if not inactive_ids:
+        return inventory
+    markers: list[RecognizedMarker] = []
+    ports: list[DemandPort] = []
+    for marker in recognize_binding_markers(tree):
+        if id(marker.node) not in inactive_ids or marker.name_id is None:
+            continue
+        template = marker.spec.demand_template(marker)
+        if template is None or not (
+            template.origin.is_external_bind_demand()
+            or template.origin.is_identifier_demand()
+        ):
+            continue
+        markers.append(marker)
+        ports.append(
+            DemandPort(
+                name=marker.name_id,
+                shape=template.shape,
+                placement=placement_for_shape(template.shape),
+                mutability=template.mutability,
+                origins=PortOrigins.of(template.origin),
+            )
+        )
+    if not markers:
+        return inventory
+    bindings = build_inventory(tree, tuple(markers), tuple(ports), ())
+    merged = MutableInventory()
+    for record in inventory.records.values():
+        merged.add_existing_record(record)
+    next_id = len(merged.records) + 1
+    for record in bindings.records.values():
+        if not isinstance(record.payload, PortInventoryPayload):
+            continue
+        while f"#{next_id}" in merged.records:
+            next_id += 1
+        merged.add_existing_record(replace(record, record_id=f"#{next_id}"))
+        next_id += 1
+    return merged.freeze()
 
 
 def register_native_template_source(

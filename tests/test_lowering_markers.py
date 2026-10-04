@@ -139,6 +139,21 @@ def validate():
     assert compiled.classification.unresolved_free == frozenset()
 
 
+def test_fallback_binding_scan_leaves_unrelated_markers_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "python")
+    compiled = astichi.compile(
+        """
+with astichi_hole(body) as astichi_fallback:
+    astichi_hole()
+    result = astichi_bind_external(fallback_value)
+"""
+    )
+
+    assert [port.name for port in compiled.demand_ports] == ["body"]
+
+
 @pytest.mark.parametrize(
     ("source", "pattern"),
     [

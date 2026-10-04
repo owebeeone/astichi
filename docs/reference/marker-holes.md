@@ -36,6 +36,12 @@ an existing `if` / `elif` chain.
 - Fallback contents are branch-inactive until selected. Markers inside a
   discarded fallback do not create demands; markers inside a selected fallback
   are recognized and validated during materialization.
+- External and identifier sites in a fallback can be explicitly bound before
+  selection, including through `AssemblyScope.wire()` / `apply_batch()`.
+  The lower inventory retains these dormant binding addresses on both engines;
+  Python compile-time public ports do not become mandatory. `bind()` and
+  `bind_identifier()` also accept these declared fallback sites. An unbound site
+  in a replaced fallback does not need a value.
 - Defaulted block holes are additive like ordinary statement block holes.
   `describe()` exposes them as holes with `has_default=True`.
 
@@ -58,6 +64,9 @@ an existing `if` / `elif` chain.
   [defaulted_block_hole_filled/root.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_filled/root.py)
   →
   [defaulted_block_hole_filled_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_filled/defaulted_block_hole_filled_generated.py)
+- Bound fallback external/identifier sites, with an unbound discarded suite:
+  [golden source](../../tests/data/gold_src/defaulted_hole_bindings.py) and
+  [generated output](../../tests/data/goldens/materialized/defaulted_hole_bindings.py).
 
 ## See also
 
