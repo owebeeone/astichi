@@ -51,6 +51,10 @@ decorator-carried records when the insert target has a matching hole.
 
 Build explicitly from the Astichi repo root:
 
+The native dependencies require Rust 1.85 or newer. The private crate uses
+PyO3 0.29.3, SHA-2 0.11, and RustPython parser/AST 0.4.0; dependency versions are
+locked in `native_engine/Cargo.lock`.
+
 ```bash
 uv run python native_engine/build.py
 ```

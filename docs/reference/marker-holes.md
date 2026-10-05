@@ -65,8 +65,8 @@ an existing `if` / `elif` chain.
   →
   [defaulted_block_hole_filled_generated.py](https://github.com/owebeeone/astichi/blob/main/docs/reference/snippets/statement/defaulted_block_hole_filled/defaulted_block_hole_filled_generated.py)
 - Bound fallback external/identifier sites, with an unbound discarded suite:
-  [golden source](../../tests/data/gold_src/defaulted_hole_bindings.py) and
-  [generated output](../../tests/data/goldens/materialized/defaulted_hole_bindings.py).
+  [golden source](https://github.com/owebeeone/astichi/blob/main/tests/data/gold_src/defaulted_hole_bindings.py) and
+  [generated output](https://github.com/owebeeone/astichi/blob/main/tests/data/goldens/materialized/defaulted_hole_bindings.py).
 
 ## See also
 

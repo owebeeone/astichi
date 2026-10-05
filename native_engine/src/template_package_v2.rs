@@ -296,7 +296,10 @@ fn py_string_tuple(py: Python<'_>, values: Vec<&str>) -> PyResult<Py<PyAny>> {
 }
 
 impl PackageBuilder {
-    pub(crate) fn hydrate_python_package<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    pub(crate) fn hydrate_python_package<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let module = PyModule::import(py, "astichi.lower_engine.package_v2")?;
         let cls = module.getattr("LowerTemplatePackageV2")?;
         let template_key = self
@@ -337,7 +340,10 @@ impl PackageBuilder {
             let kwargs = PyDict::new(py);
             kwargs.set_item("surface_key", self.strings[row.surface_key_id].as_str())?;
             kwargs.set_item("locator_id", row.locator_id)?;
-            kwargs.set_item("inventory_kind", self.strings[row.inventory_kind_id].as_str())?;
+            kwargs.set_item(
+                "inventory_kind",
+                self.strings[row.inventory_kind_id].as_str(),
+            )?;
             kwargs.set_item(
                 "owner_path",
                 py_path_tuple(py, &self.paths[row.owner_path_id])?,
@@ -401,10 +407,7 @@ impl PackageBuilder {
             kwargs.set_item("operation_key", self.strings[row.operation_key_id].as_str())?;
             kwargs.set_item(
                 "flags",
-                py_string_tuple(
-                    py,
-                    row.flags.iter().map(|flag| flag.as_str()).collect(),
-                )?,
+                py_string_tuple(py, row.flags.iter().map(|flag| flag.as_str()).collect())?,
             )?;
             instance.call_method("add_marker", (), Some(&kwargs))?;
         }
@@ -413,9 +416,7 @@ impl PackageBuilder {
             let kwargs = PyDict::new(py);
             kwargs.set_item("marker_id", row.marker_id)?;
             match row.module_path_id {
-                Some(id) => {
-                    kwargs.set_item("module_path", py_path_tuple(py, &self.paths[id])?)?
-                }
+                Some(id) => kwargs.set_item("module_path", py_path_tuple(py, &self.paths[id])?)?,
                 None => kwargs.set_item("module_path", py.None())?,
             };
             kwargs.set_item(
@@ -430,10 +431,7 @@ impl PackageBuilder {
             )?;
             kwargs.set_item(
                 "flags",
-                py_string_tuple(
-                    py,
-                    row.flags.iter().map(|flag| flag.as_str()).collect(),
-                )?,
+                py_string_tuple(py, row.flags.iter().map(|flag| flag.as_str()).collect())?,
             )?;
             instance.call_method("add_pyimport_marker", (), Some(&kwargs))?;
         }
@@ -444,10 +442,7 @@ impl PackageBuilder {
             kwargs.set_item("payload", self.strings[row.payload_id].as_str())?;
             kwargs.set_item(
                 "flags",
-                py_string_tuple(
-                    py,
-                    row.flags.iter().map(|flag| flag.as_str()).collect(),
-                )?,
+                py_string_tuple(py, row.flags.iter().map(|flag| flag.as_str()).collect())?,
             )?;
             instance.call_method("add_comment_marker", (), Some(&kwargs))?;
         }
@@ -459,24 +454,15 @@ impl PackageBuilder {
             kwargs.set_item("context", self.strings[row.context_id].as_str())?;
             kwargs.set_item(
                 "sentinel_attr",
-                py_optional_string(
-                    py,
-                    row.sentinel_attr_id
-                        .map(|id| self.strings[id].as_str()),
-                )?,
+                py_optional_string(py, row.sentinel_attr_id.map(|id| self.strings[id].as_str()))?,
             )?;
             match row.literal_path_id {
-                Some(id) => {
-                    kwargs.set_item("literal_path", py_path_tuple(py, &self.paths[id])?)?
-                }
+                Some(id) => kwargs.set_item("literal_path", py_path_tuple(py, &self.paths[id])?)?,
                 None => kwargs.set_item("literal_path", py.None())?,
             };
             kwargs.set_item(
                 "flags",
-                py_string_tuple(
-                    py,
-                    row.flags.iter().map(|flag| flag.as_str()).collect(),
-                )?,
+                py_string_tuple(py, row.flags.iter().map(|flag| flag.as_str()).collect())?,
             )?;
             instance.call_method("add_ref_marker", (), Some(&kwargs))?;
         }
@@ -484,10 +470,22 @@ impl PackageBuilder {
         for row in &self.unroll_markers {
             let kwargs = PyDict::new(py);
             kwargs.set_item("marker_id", row.marker_id)?;
-            kwargs.set_item("statement_path", self.ast_paths[row.statement_path_id].as_str())?;
-            kwargs.set_item("target_ast_path", self.ast_paths[row.target_ast_path_id].as_str())?;
-            kwargs.set_item("iter_ast_path", self.ast_paths[row.iter_ast_path_id].as_str())?;
-            kwargs.set_item("domain_ast_path", self.ast_paths[row.domain_ast_path_id].as_str())?;
+            kwargs.set_item(
+                "statement_path",
+                self.ast_paths[row.statement_path_id].as_str(),
+            )?;
+            kwargs.set_item(
+                "target_ast_path",
+                self.ast_paths[row.target_ast_path_id].as_str(),
+            )?;
+            kwargs.set_item(
+                "iter_ast_path",
+                self.ast_paths[row.iter_ast_path_id].as_str(),
+            )?;
+            kwargs.set_item(
+                "domain_ast_path",
+                self.ast_paths[row.domain_ast_path_id].as_str(),
+            )?;
             kwargs.set_item("body_path", self.ast_paths[row.body_path_id].as_str())?;
             match row.orelse_path_id {
                 Some(id) => kwargs.set_item("orelse_path", self.ast_paths[id].as_str())?,
@@ -500,10 +498,7 @@ impl PackageBuilder {
             kwargs.set_item("domain_shape", self.strings[row.domain_shape_id].as_str())?;
             kwargs.set_item(
                 "flags",
-                py_string_tuple(
-                    py,
-                    row.flags.iter().map(|flag| flag.as_str()).collect(),
-                )?,
+                py_string_tuple(py, row.flags.iter().map(|flag| flag.as_str()).collect())?,
             )?;
             instance.call_method("add_unroll_marker", (), Some(&kwargs))?;
         }
@@ -1921,12 +1916,7 @@ fn extract_typed_marker_rows_stmt(
                     package,
                 )?;
             }
-            extract_ref_rows_arguments(
-                &node.args,
-                &format!("{path}/args"),
-                Some(path),
-                package,
-            )?;
+            extract_ref_rows_arguments(&node.args, &format!("{path}/args"), Some(path), package)?;
             extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
             if let Some(returns) = node.returns.as_ref() {
                 extract_ref_rows_expr(returns, &format!("{path}/returns"), Some(path), package)?;
@@ -1942,12 +1932,7 @@ fn extract_typed_marker_rows_stmt(
                     package,
                 )?;
             }
-            extract_ref_rows_arguments(
-                &node.args,
-                &format!("{path}/args"),
-                Some(path),
-                package,
-            )?;
+            extract_ref_rows_arguments(&node.args, &format!("{path}/args"), Some(path), package)?;
             extract_typed_marker_rows_stmt_list(&node.body, &format!("{path}/body"), package)?;
             if let Some(returns) = node.returns.as_ref() {
                 extract_ref_rows_expr(returns, &format!("{path}/returns"), Some(path), package)?;
@@ -4094,10 +4079,7 @@ fn append_suffix_identifier_marker(
     true
 }
 
-fn suffix_marker_spec(
-    name: &str,
-    allow_param_hole: bool,
-) -> Option<(SuffixMarkerSpec, String)> {
+fn suffix_marker_spec(name: &str, allow_param_hole: bool) -> Option<(SuffixMarkerSpec, String)> {
     if let Some(base) = valid_suffix_base(name, ARG_SUFFIX) {
         return Some((
             SuffixMarkerSpec {

@@ -347,6 +347,8 @@ on pure Python — native is an accelerator, never a requirement.
   no matching wheel exists. Set `ASTICHI_SKIP_NATIVE_BUILD=1` for a Python-only
   install.
 - Build locally from the repo root with `uv run python native_engine/build.py`.
+- Native source builds require Rust 1.85 or newer; prebuilt wheels need no Rust
+  installation.
 - `engine=python` remains the differential oracle that the native path is tested
   against.
 

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fmt::Write;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule};
@@ -89,10 +90,7 @@ enum ExprRecordContext {
 }
 
 /// Shared native compile validation: parse plus authored-surface placement rules.
-pub(crate) fn validate_compile_module(
-    source: &str,
-    filename: &str,
-) -> PyResult<ast::ModModule> {
+pub(crate) fn validate_compile_module(source: &str, filename: &str) -> PyResult<ast::ModModule> {
     reject_deferred_markers(source)?;
     let module = crate::parser_ir::parse_native_module(source, filename)?;
     let source_map = SourceMap::new(source);
@@ -3022,7 +3020,10 @@ fn strip_known_suffix(value: &str) -> String {
 /// Template cache identity: SHA-256 of UTF-8 registration source (first 16 hex digits).
 pub(crate) fn template_key_from_source(source: &str) -> String {
     use sha2::{Digest, Sha256};
-    let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+    let mut digest = String::with_capacity(64);
+    for byte in Sha256::digest(source.as_bytes()).iter() {
+        write!(&mut digest, "{byte:02x}").expect("writing to a String cannot fail");
+    }
     format!("template:{}", &digest[..16])
 }
 

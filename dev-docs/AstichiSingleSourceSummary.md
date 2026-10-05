@@ -13,6 +13,13 @@ work.
 
 ## 1. Current snapshot
 
+- Release preparation is configured through `gearu.toml`; `RELEASE.md` owns the
+  release procedure and checks. Local candidate/exact-commit gates run the full
+  declared Python test matrix, strict docs build, and isolated native wheel
+  verification. Registry publication remains in the GitHub release workflow.
+- Native dependencies use PyO3 0.29.3, SHA-2 0.11, and RustPython parser/AST
+  0.4.0, with a refreshed Cargo lockfile. Native source builds require Rust 1.85
+  or newer. Template keys retain the same lowercase SHA-256 encoding.
 - Goal: composable assembly of Python source snippets via valid-Python
   marker syntax, additive builder wiring, build-time merge, materialize-time
   hygiene, and emit-time round-trip support.

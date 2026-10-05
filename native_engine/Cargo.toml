@@ -2,6 +2,7 @@
 name = "astichi_native_engine"
 version = "1.1.1"
 edition = "2021"
+rust-version = "1.85"
 publish = false
 
 [lib]
@@ -9,10 +10,10 @@ name = "_astichi_native_engine"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.28.3", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.29.3", features = ["extension-module", "abi3-py38"] }
 rustpython-parser = "0.4.0"
 rustpython-ast = { version = "0.4.0", features = ["visitor"] }
-sha2 = "0.10"
+sha2 = "0.11"
 
 [profile.release]
 lto = true

@@ -635,10 +635,7 @@ fn lower_template_package_v2_from_registered_template(
     let package = native_template.package_v2().ok_or_else(|| {
         crate::errors::schema_error("native template does not carry package-v2 rows")
     })?;
-    Ok(package
-        .hydrate_python_package(py)?
-        .into_any()
-        .unbind())
+    Ok(package.hydrate_python_package(py)?.into_any().unbind())
 }
 
 #[pyfunction(name = "assembly_state_create")]
