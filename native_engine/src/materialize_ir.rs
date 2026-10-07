@@ -1180,44 +1180,12 @@ fn clone_stmt_from_stmt_list(body: &[ast::Stmt], segments: &[PathSegment]) -> Py
 }
 
 fn clone_stmt_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<ast::Stmt> {
-    let Some((first, rest)) = segments.split_first() else {
+    let Some((first, _)) = segments.split_first() else {
         return Ok(stmt.clone());
     };
-    match stmt {
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
-        }
-        ast::Stmt::AsyncFor(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::AsyncFor(node) if first.field == "orelse" => {
-            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
-        }
-        ast::Stmt::While(node) if first.field == "body" => {
-            clone_stmt_from_nested_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::While(node) if first.field == "orelse" => {
-            clone_stmt_from_nested_stmt_list(&node.orelse, first, rest)
-        }
-        _ => Err(crate::errors::schema_error(&format!(
+    match nested_statement_at_path(stmt, segments)? {
+        Some((child, rest)) => clone_stmt_from_stmt(child, rest),
+        None => Err(crate::errors::schema_error(&format!(
             "native statement path cannot enter field `{}` on {}",
             first.field,
             stmt_kind(stmt)
@@ -1225,30 +1193,174 @@ fn clone_stmt_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<
     }
 }
 
-fn clone_stmt_from_nested_stmt_list(
-    body: &[ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-) -> PyResult<ast::Stmt> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!(
-            "{} statement segment requires an index",
-            segment.field
-        ))
-    })?;
-    let stmt = body.get(index).ok_or_else(|| {
-        crate::errors::schema_error("native statement body index is out of range")
-    })?;
-    if rest.is_empty() {
-        return Ok(stmt.clone());
-    }
-    clone_stmt_from_stmt(stmt, rest)
-}
-
 #[derive(Clone)]
 struct PathSegment {
     field: String,
     index: Option<usize>,
+}
+
+fn path_index(segment: &PathSegment) -> PyResult<usize> {
+    segment.index.ok_or_else(|| {
+        crate::errors::schema_error(&format!("{} path segment requires an index", segment.field))
+    })
+}
+
+fn branch_body_segments(segments: &[PathSegment]) -> PyResult<&[PathSegment]> {
+    let rest = &segments[1..];
+    if rest.first().is_some_and(|segment| segment.field == "body") {
+        return Ok(rest);
+    }
+    Err(crate::errors::schema_error(
+        "branch statement path must enter its body",
+    ))
+}
+
+// All statement-body navigation uses these two views, including handler/case bodies.
+fn nested_statement_suite<'a, 'p>(
+    stmt: &'a ast::Stmt,
+    segments: &'p [PathSegment],
+) -> PyResult<Option<(&'a Vec<ast::Stmt>, &'p [PathSegment])>> {
+    let Some(first) = segments.first() else {
+        return Ok(None);
+    };
+    let body = match (stmt, first.field.as_str()) {
+        (ast::Stmt::FunctionDef(node), "body") => &node.body,
+        (ast::Stmt::AsyncFunctionDef(node), "body") => &node.body,
+        (ast::Stmt::ClassDef(node), "body") => &node.body,
+        (ast::Stmt::If(node), "body") => &node.body,
+        (ast::Stmt::If(node), "orelse") => &node.orelse,
+        (ast::Stmt::For(node), "body") => &node.body,
+        (ast::Stmt::For(node), "orelse") => &node.orelse,
+        (ast::Stmt::AsyncFor(node), "body") => &node.body,
+        (ast::Stmt::AsyncFor(node), "orelse") => &node.orelse,
+        (ast::Stmt::While(node), "body") => &node.body,
+        (ast::Stmt::While(node), "orelse") => &node.orelse,
+        (ast::Stmt::With(node), "body") => &node.body,
+        (ast::Stmt::AsyncWith(node), "body") => &node.body,
+        (ast::Stmt::Try(node), "body") => &node.body,
+        (ast::Stmt::Try(node), "orelse") => &node.orelse,
+        (ast::Stmt::Try(node), "finalbody") => &node.finalbody,
+        (ast::Stmt::TryStar(node), "body") => &node.body,
+        (ast::Stmt::TryStar(node), "orelse") => &node.orelse,
+        (ast::Stmt::TryStar(node), "finalbody") => &node.finalbody,
+        (ast::Stmt::Try(node), "handlers") => {
+            let handler = node
+                .handlers
+                .get(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("handler index is out of range"))?;
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            return Ok(Some((&handler.body, branch_body_segments(segments)?)));
+        }
+        (ast::Stmt::TryStar(node), "handlers") => {
+            let handler = node
+                .handlers
+                .get(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("handler index is out of range"))?;
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            return Ok(Some((&handler.body, branch_body_segments(segments)?)));
+        }
+        (ast::Stmt::Match(node), "cases") => {
+            let case = node
+                .cases
+                .get(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("case index is out of range"))?;
+            return Ok(Some((&case.body, branch_body_segments(segments)?)));
+        }
+        _ => {
+            return Ok(None);
+        }
+    };
+    Ok(Some((body, segments)))
+}
+
+fn nested_statement_suite_mut<'a, 'p>(
+    stmt: &'a mut ast::Stmt,
+    segments: &'p [PathSegment],
+) -> PyResult<Option<(&'a mut Vec<ast::Stmt>, &'p [PathSegment])>> {
+    let Some(first) = segments.first() else {
+        return Ok(None);
+    };
+    let body = match (stmt, first.field.as_str()) {
+        (ast::Stmt::FunctionDef(node), "body") => &mut node.body,
+        (ast::Stmt::AsyncFunctionDef(node), "body") => &mut node.body,
+        (ast::Stmt::ClassDef(node), "body") => &mut node.body,
+        (ast::Stmt::If(node), "body") => &mut node.body,
+        (ast::Stmt::If(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::For(node), "body") => &mut node.body,
+        (ast::Stmt::For(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::AsyncFor(node), "body") => &mut node.body,
+        (ast::Stmt::AsyncFor(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::While(node), "body") => &mut node.body,
+        (ast::Stmt::While(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::With(node), "body") => &mut node.body,
+        (ast::Stmt::AsyncWith(node), "body") => &mut node.body,
+        (ast::Stmt::Try(node), "body") => &mut node.body,
+        (ast::Stmt::Try(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::Try(node), "finalbody") => &mut node.finalbody,
+        (ast::Stmt::TryStar(node), "body") => &mut node.body,
+        (ast::Stmt::TryStar(node), "orelse") => &mut node.orelse,
+        (ast::Stmt::TryStar(node), "finalbody") => &mut node.finalbody,
+        (ast::Stmt::Try(node), "handlers") => {
+            let handler = node
+                .handlers
+                .get_mut(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("handler index is out of range"))?;
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            return Ok(Some((&mut handler.body, branch_body_segments(segments)?)));
+        }
+        (ast::Stmt::TryStar(node), "handlers") => {
+            let handler = node
+                .handlers
+                .get_mut(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("handler index is out of range"))?;
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            return Ok(Some((&mut handler.body, branch_body_segments(segments)?)));
+        }
+        (ast::Stmt::Match(node), "cases") => {
+            let case = node
+                .cases
+                .get_mut(path_index(first)?)
+                .ok_or_else(|| crate::errors::schema_error("case index is out of range"))?;
+            return Ok(Some((&mut case.body, branch_body_segments(segments)?)));
+        }
+        _ => {
+            return Ok(None);
+        }
+    };
+    Ok(Some((body, segments)))
+}
+
+fn nested_statement_at_path<'a, 'p>(
+    stmt: &'a ast::Stmt,
+    segments: &'p [PathSegment],
+) -> PyResult<Option<(&'a ast::Stmt, &'p [PathSegment])>> {
+    let Some((body, path)) = nested_statement_suite(stmt, segments)? else {
+        return Ok(None);
+    };
+    let child = body
+        .get(path_index(&path[0])?)
+        .ok_or_else(|| crate::errors::schema_error("statement index is out of range"))?;
+    Ok(Some((child, &path[1..])))
+}
+
+fn nested_statement_at_path_mut<'a, 'p>(
+    stmt: &'a mut ast::Stmt,
+    segments: &'p [PathSegment],
+) -> PyResult<Option<(&'a mut ast::Stmt, &'p [PathSegment])>> {
+    let Some((body, path)) = nested_statement_suite_mut(stmt, segments)? else {
+        return Ok(None);
+    };
+    let child = body
+        .get_mut(path_index(&path[0])?)
+        .ok_or_else(|| crate::errors::schema_error("statement index is out of range"))?;
+    Ok(Some((child, &path[1..])))
+}
+
+fn is_statement_suite_field(field: &str) -> bool {
+    matches!(
+        field,
+        "body" | "orelse" | "finalbody" | "handlers" | "cases"
+    )
 }
 
 fn parse_ast_path(path: &str) -> PyResult<Vec<PathSegment>> {
@@ -1313,6 +1425,11 @@ fn resolve_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<&'s
     let Some((first, rest)) = segments.split_first() else {
         return Ok(stmt_kind(stmt));
     };
+    if is_statement_suite_field(&first.field) {
+        if let Some((body, path)) = nested_statement_suite(stmt, segments)? {
+            return resolve_indexed_stmt_list(body, &path[0], &path[1..]);
+        }
+    }
     match stmt {
         ast::Stmt::Expr(node) if first.field == "value" => resolve_from_expr(&node.value, rest),
         ast::Stmt::Assign(node) if first.field == "value" => resolve_from_expr(&node.value, rest),
@@ -1330,27 +1447,6 @@ fn resolve_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<&'s
                 .as_ref()
                 .ok_or_else(|| crate::errors::schema_error("return locator value is missing"))?;
             resolve_from_expr(value, rest)
-        }
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            resolve_indexed_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            resolve_indexed_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            resolve_indexed_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            resolve_indexed_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            resolve_indexed_stmt_list(&node.orelse, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            resolve_indexed_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            resolve_indexed_stmt_list(&node.orelse, first, rest)
         }
         _ => Err(crate::errors::schema_error(&format!(
             "native locator cannot resolve statement field `{}` on {}",
@@ -1457,6 +1553,14 @@ fn clone_expr_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<
             "expression path must include a statement expression field",
         ));
     };
+    if is_statement_suite_field(&first.field) {
+        let Some((child, child_path)) = nested_statement_at_path(stmt, segments)? else {
+            return Err(crate::errors::schema_error(
+                "statement suite path does not select a body",
+            ));
+        };
+        return clone_expr_from_stmt(child, child_path);
+    }
     match stmt {
         ast::Stmt::Expr(node) if first.field == "value" => clone_expr_from_expr(&node.value, rest),
         ast::Stmt::Assign(node) if first.field == "value" => {
@@ -1477,50 +1581,12 @@ fn clone_expr_from_stmt(stmt: &ast::Stmt, segments: &[PathSegment]) -> PyResult<
                 .ok_or_else(|| crate::errors::schema_error("return expression value is missing"))?;
             clone_expr_from_expr(value, rest)
         }
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            clone_indexed_expr_from_stmt_list(&node.orelse, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            clone_indexed_expr_from_stmt_list(&node.body, first, rest)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            clone_indexed_expr_from_stmt_list(&node.orelse, first, rest)
-        }
         _ => Err(crate::errors::schema_error(&format!(
             "native expression path cannot enter statement field `{}` on {}",
             first.field,
             stmt_kind(stmt)
         ))),
     }
-}
-
-fn clone_indexed_expr_from_stmt_list(
-    body: &[ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-) -> PyResult<ast::Expr> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!(
-            "{} expression segment requires an index",
-            segment.field
-        ))
-    })?;
-    let stmt = body.get(index).ok_or_else(|| {
-        crate::errors::schema_error("native expression body index is out of range")
-    })?;
-    clone_expr_from_stmt(stmt, rest)
 }
 
 fn clone_expr_from_expr(expr: &ast::Expr, segments: &[PathSegment]) -> PyResult<ast::Expr> {
@@ -1650,6 +1716,14 @@ fn replace_expr_in_stmt(
             "expression replacement path must include a statement expression field",
         ));
     };
+    if is_statement_suite_field(&first.field) {
+        let Some((child, child_path)) = nested_statement_at_path_mut(stmt, segments)? else {
+            return Err(crate::errors::schema_error(
+                "statement suite path does not select a body",
+            ));
+        };
+        return replace_expr_in_stmt(child, child_path, replacement);
+    }
     match stmt {
         ast::Stmt::Expr(node) if first.field == "value" => {
             replace_boxed_expr(&mut node.value, rest, replacement)
@@ -1670,51 +1744,12 @@ fn replace_expr_in_stmt(
                 .ok_or_else(|| crate::errors::schema_error("return expression value is missing"))?;
             replace_boxed_expr(value, rest, replacement)
         }
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            replace_nested_expr_in_stmt_list(&mut node.orelse, first, rest, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            replace_nested_expr_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            replace_nested_expr_in_stmt_list(&mut node.orelse, first, rest, replacement)
-        }
         _ => Err(crate::errors::schema_error(&format!(
             "native expression replacement cannot enter statement field `{}` on {}",
             first.field,
             stmt_kind(stmt)
         ))),
     }
-}
-
-fn replace_nested_expr_in_stmt_list(
-    body: &mut [ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-    replacement: ast::Expr,
-) -> PyResult<()> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!(
-            "{} expression segment requires an index",
-            segment.field
-        ))
-    })?;
-    let stmt = body.get_mut(index).ok_or_else(|| {
-        crate::errors::schema_error("native expression body index is out of range")
-    })?;
-    replace_expr_in_stmt(stmt, rest, replacement)
 }
 
 fn replace_boxed_expr(
@@ -1852,52 +1887,8 @@ fn function_args_in_stmt_at_segments<'a>(
             _ => None,
         };
     }
-    let (first, rest) = segments.split_first()?;
-    match stmt {
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            function_args_at_segments(&node.body, segments)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            function_args_at_segments(&node.body, segments)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            let child = node.body.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            let child = node.body.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            let child = node.orelse.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            let child = node.body.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            let child = node.orelse.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::AsyncFor(node) if first.field == "body" => {
-            let child = node.body.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::AsyncFor(node) if first.field == "orelse" => {
-            let child = node.orelse.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::While(node) if first.field == "body" => {
-            let child = node.body.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        ast::Stmt::While(node) if first.field == "orelse" => {
-            let child = node.orelse.get(first.index?)?;
-            function_args_in_stmt_at_segments(child, rest)
-        }
-        _ => None,
-    }
+    let (child, rest) = nested_statement_at_path(stmt, segments).ok()??;
+    function_args_in_stmt_at_segments(child, rest)
 }
 
 fn splice_parameters_in_stmt_list(
@@ -1930,113 +1921,32 @@ fn splice_parameters_in_stmt(
     segments: &[PathSegment],
     payload_args: ast::Arguments,
 ) -> PyResult<()> {
-    let Some((first, rest)) = segments.split_first() else {
+    let Some((first, _)) = segments.split_first() else {
         return Err(crate::errors::schema_error(
             "parameter splice requires an argument path",
         ));
     };
+    if is_statement_suite_field(&first.field) {
+        let Some((child, rest)) = nested_statement_at_path_mut(stmt, segments)? else {
+            return Err(crate::errors::schema_error(
+                "parameter path does not select a statement body",
+            ));
+        };
+        return splice_parameters_in_stmt(child, rest, payload_args);
+    }
     let stmt_name = stmt_kind(stmt);
     match stmt {
-        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
-            "args" => splice_parameters_in_arguments(&mut node.args, segments, payload_args),
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
-            "args" => splice_parameters_in_arguments(&mut node.args, segments, payload_args),
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::ClassDef(node) => match first.field.as_str() {
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::If(node) => match first.field.as_str() {
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            "orelse" => {
-                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::For(node) => match first.field.as_str() {
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            "orelse" => {
-                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            "orelse" => {
-                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::While(node) => match first.field.as_str() {
-            "body" => {
-                splice_parameters_in_nested_stmt_list(&mut node.body, first, rest, payload_args)
-            }
-            "orelse" => {
-                splice_parameters_in_nested_stmt_list(&mut node.orelse, first, rest, payload_args)
-            }
-            _ => Err(crate::errors::schema_error(&format!(
-                "native parameter splice cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
+        ast::Stmt::FunctionDef(node) if first.field == "args" => {
+            splice_parameters_in_arguments(&mut node.args, segments, payload_args)
+        }
+        ast::Stmt::AsyncFunctionDef(node) if first.field == "args" => {
+            splice_parameters_in_arguments(&mut node.args, segments, payload_args)
+        }
         _ => Err(crate::errors::schema_error(&format!(
             "native parameter splice cannot enter statement field `{}` on {}",
             first.field, stmt_name
         ))),
     }
-}
-
-fn splice_parameters_in_nested_stmt_list(
-    body: &mut [ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-    payload_args: ast::Arguments,
-) -> PyResult<()> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!(
-            "{} parameter segment requires an index",
-            segment.field
-        ))
-    })?;
-    let stmt = body.get_mut(index).ok_or_else(|| {
-        crate::errors::schema_error("native parameter body index is out of range")
-    })?;
-    splice_parameters_in_stmt(stmt, rest, payload_args)
 }
 
 fn find_function_args_with_parameter_hole_in_stmt_list<'a>(
@@ -2535,6 +2445,14 @@ fn expr_mut_from_stmt<'a>(
         ));
     };
     let stmt_name = stmt_kind(stmt);
+    if is_statement_suite_field(&first.field) {
+        let Some((child, child_path)) = nested_statement_at_path_mut(stmt, segments)? else {
+            return Err(crate::errors::schema_error(
+                "statement suite path does not select a body",
+            ));
+        };
+        return expr_mut_from_stmt(child, child_path);
+    }
     match stmt {
         ast::Stmt::Expr(node) => match first.field.as_str() {
             "value" => expr_mut_from_boxed_expr(&mut node.value, rest),
@@ -2563,95 +2481,11 @@ fn expr_mut_from_stmt<'a>(
                 first.field, stmt_name
             ))),
         },
-        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::ClassDef(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::If(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::For(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::While(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            "orelse" => expr_mut_from_nested_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::With(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncWith(node) => match first.field.as_str() {
-            "body" => expr_mut_from_nested_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native expression path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
         _ => Err(crate::errors::schema_error(&format!(
             "native expression path cannot enter statement field `{}` on {}",
             first.field, stmt_name
         ))),
     }
-}
-
-fn expr_mut_from_nested_stmt_list<'a>(
-    body: &'a mut [ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-) -> PyResult<&'a mut ast::Expr> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!(
-            "{} expression segment requires an index",
-            segment.field
-        ))
-    })?;
-    let stmt = body.get_mut(index).ok_or_else(|| {
-        crate::errors::schema_error("native expression body index is out of range")
-    })?;
-    expr_mut_from_stmt(stmt, rest)
 }
 
 fn expr_mut_from_boxed_expr<'a>(
@@ -2815,6 +2649,14 @@ fn call_expr_mut_from_stmt<'a>(
         ));
     };
     let stmt_name = stmt_kind(stmt);
+    if is_statement_suite_field(&first.field) {
+        let Some((child, child_path)) = nested_statement_at_path_mut(stmt, segments)? else {
+            return Err(crate::errors::schema_error(
+                "statement suite path does not select a body",
+            ));
+        };
+        return call_expr_mut_from_stmt(child, child_path);
+    }
     match stmt {
         ast::Stmt::Expr(node) => match first.field.as_str() {
             "value" => call_expr_mut_from_expr(&mut node.value, rest),
@@ -2840,78 +2682,11 @@ fn call_expr_mut_from_stmt<'a>(
                 first.field, stmt_name
             ))),
         },
-        ast::Stmt::FunctionDef(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFunctionDef(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::ClassDef(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::If(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::For(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::AsyncFor(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
-        ast::Stmt::While(node) => match first.field.as_str() {
-            "body" => call_expr_mut_from_stmt_list(&mut node.body, first, rest),
-            "orelse" => call_expr_mut_from_stmt_list(&mut node.orelse, first, rest),
-            _ => Err(crate::errors::schema_error(&format!(
-                "native call path cannot enter statement field `{}` on {}",
-                first.field, stmt_name
-            ))),
-        },
         _ => Err(crate::errors::schema_error(&format!(
             "native call path cannot enter statement field `{}` on {}",
             first.field, stmt_name
         ))),
     }
-}
-
-fn call_expr_mut_from_stmt_list<'a>(
-    body: &'a mut [ast::Stmt],
-    segment: &PathSegment,
-    rest: &[PathSegment],
-) -> PyResult<&'a mut ast::ExprCall> {
-    let index = segment.index.ok_or_else(|| {
-        crate::errors::schema_error(&format!("{} call segment requires an index", segment.field))
-    })?;
-    let stmt = body
-        .get_mut(index)
-        .ok_or_else(|| crate::errors::schema_error("native call body index is out of range"))?;
-    call_expr_mut_from_stmt(stmt, rest)
 }
 
 fn call_expr_mut_from_expr<'a>(
@@ -3199,11 +2974,11 @@ fn lower_native_statement_markers_in_stmt(mut stmt: ast::Stmt) -> PyResult<Vec<a
 fn lower_native_statement_markers_in_stmt_fields(stmt: &mut ast::Stmt) -> PyResult<()> {
     match stmt {
         ast::Stmt::FunctionDef(node) => {
-            strip_unfilled_parameter_holes(&mut node.args);
+            reject_unfilled_parameter_holes(&node.args)?;
             lower_native_statement_markers_in_stmt_list(&mut node.body)
         }
         ast::Stmt::AsyncFunctionDef(node) => {
-            strip_unfilled_parameter_holes(&mut node.args);
+            reject_unfilled_parameter_holes(&node.args)?;
             lower_native_statement_markers_in_stmt_list(&mut node.body)
         }
         ast::Stmt::ClassDef(node) => lower_native_statement_markers_in_stmt_list(&mut node.body),
@@ -3259,17 +3034,24 @@ fn lower_native_statement_markers_in_stmt_fields(stmt: &mut ast::Stmt) -> PyResu
     }
 }
 
-fn strip_unfilled_parameter_holes(args: &mut ast::Arguments) {
-    args.posonlyargs
-        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
-    args.args
-        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
-    args.kwonlyargs
-        .retain(|arg| !is_unfilled_parameter_hole_name(&arg.def.arg));
-}
-
-fn is_unfilled_parameter_hole_name(name: &str) -> bool {
-    name.ends_with("__astichi_param_hole__")
+fn reject_unfilled_parameter_holes(args: &ast::Arguments) -> PyResult<()> {
+    let names = args
+        .posonlyargs
+        .iter()
+        .chain(&args.args)
+        .chain(&args.kwonlyargs)
+        .map(|arg| arg.def.arg.as_str())
+        .chain(args.vararg.iter().map(|arg| arg.arg.as_str()))
+        .chain(args.kwarg.iter().map(|arg| arg.arg.as_str()))
+        .filter_map(|name| name.strip_suffix("__astichi_param_hole__"))
+        .collect::<BTreeSet<_>>();
+    if names.is_empty() {
+        return Ok(());
+    }
+    Err(crate::errors::schema_error(&format!(
+        "mandatory parameter holes remain unresolved: {}",
+        names.into_iter().collect::<Vec<_>>().join(", ")
+    )))
 }
 
 fn is_defaulted_block_fallback_with(node: &ast::StmtWith) -> bool {
@@ -5768,39 +5550,13 @@ fn replace_statements_in_stmt(
     segments: &[PathSegment],
     replacement: Vec<ast::Stmt>,
 ) -> PyResult<()> {
-    let Some((first, rest)) = segments.split_first() else {
-        return Err(crate::errors::schema_error(
-            "statement splice requires a statement path",
-        ));
+    let stmt_name = stmt_kind(stmt);
+    let Some((body, path)) = nested_statement_suite_mut(stmt, segments)? else {
+        return Err(crate::errors::schema_error(&format!(
+            "native statement splice cannot enter body on {stmt_name}"
+        )));
     };
-    match stmt {
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            replace_statements_in_stmt_list(&mut node.orelse, first, rest, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            replace_statements_in_stmt_list(&mut node.body, first, rest, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            replace_statements_in_stmt_list(&mut node.orelse, first, rest, replacement)
-        }
-        _ => Err(crate::errors::schema_error(&format!(
-            "native statement splice cannot enter field `{}` on {}",
-            first.field,
-            stmt_kind(stmt)
-        ))),
-    }
+    replace_statements_in_stmt_list(body, &path[0], &path[1..], replacement)
 }
 
 fn replace_statements_in_stmt_list(
@@ -5864,39 +5620,7 @@ fn replace_statement_in_stmt(
     segments: &[PathSegment],
     replacement: ast::Stmt,
 ) -> PyResult<()> {
-    let Some((first, _rest)) = segments.split_first() else {
-        return Err(crate::errors::schema_error(
-            "statement replacement requires a statement path",
-        ));
-    };
-    match stmt {
-        ast::Stmt::FunctionDef(node) if first.field == "body" => {
-            replace_statement_in_body(&mut node.body, segments, replacement)
-        }
-        ast::Stmt::AsyncFunctionDef(node) if first.field == "body" => {
-            replace_statement_in_body(&mut node.body, segments, replacement)
-        }
-        ast::Stmt::ClassDef(node) if first.field == "body" => {
-            replace_statement_in_body(&mut node.body, segments, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "body" => {
-            replace_statement_in_body(&mut node.body, segments, replacement)
-        }
-        ast::Stmt::If(node) if first.field == "orelse" => {
-            replace_statement_in_body(&mut node.orelse, segments, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "body" => {
-            replace_statement_in_body(&mut node.body, segments, replacement)
-        }
-        ast::Stmt::For(node) if first.field == "orelse" => {
-            replace_statement_in_body(&mut node.orelse, segments, replacement)
-        }
-        _ => Err(crate::errors::schema_error(&format!(
-            "native statement replacement cannot enter field `{}` on {}",
-            first.field,
-            stmt_kind(stmt)
-        ))),
-    }
+    replace_statements_in_stmt(stmt, segments, vec![replacement])
 }
 
 fn stmt_kind(stmt: &ast::Stmt) -> &'static str {

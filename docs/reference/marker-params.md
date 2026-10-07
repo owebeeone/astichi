@@ -26,6 +26,9 @@ Rules:
 - The marker cannot have an annotation or default.
 - Multiple parameter holes are allowed in one signature only when their target
   names are distinct.
+- Parameter holes are mandatory: materialization rejects a target that has no
+  payload. Native scope building follows the same rule; final cleanup must not
+  silently remove an unresolved marker and emit a different signature.
 
 ```python
 def foo(p1__astichi_param_hole__, user_param, p2__astichi_param_hole__):

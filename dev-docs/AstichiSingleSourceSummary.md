@@ -252,6 +252,15 @@ These are the rules that should not be re-litigated during implementation.
   resolve that template before traversing it, preserve its source-file metadata,
   and never treat the private placeholder as generated output. Consumers that
   need executable ASTs use `to_executable_ast()`, not the internal compile tree.
+- Native statement-body addressing covers functions/classes, conditional and
+  loop bodies/else suites, synchronous/asynchronous context managers,
+  `try`/`except`/`else`/`finally`, `except*`, and match-case bodies. Read and write
+  navigation share statement-suite helpers; direct-native insertion regressions
+  ensure a secondary Python-tree materializer cannot hide missing traversal.
+- Required parameter holes must reject when unfilled. Native finalization must
+  not delete unresolved `__astichi_param_hole__` parameters and thereby certify
+  an incomplete function signature. This is separate from optional annotation
+  holes, whose documented zero-contribution behavior removes the annotation.
 - Implementation stays layered.
   - `frontend -> lowering -> hygiene -> model -> builder -> materialize -> emit`
 - Do not store absolute filesystem paths in committed docs/config/examples/tests.

@@ -870,6 +870,25 @@ fn child_owner(owner: &[String], name: &str) -> Vec<String> {
     child
 }
 
+fn stmt_suite_records(
+    body: &[ast::Stmt],
+    path: &str,
+    source_map: &SourceMap,
+    owner: &[String],
+    records: &mut Vec<ExtractedRecord>,
+) -> PyResult<()> {
+    for (index, stmt) in body.iter().enumerate() {
+        stmt_records(
+            stmt,
+            &format!("{path}[{index}]"),
+            source_map,
+            owner,
+            records,
+        )?;
+    }
+    Ok(())
+}
+
 fn stmt_records(
     stmt: &ast::Stmt,
     path: &str,
@@ -1048,6 +1067,38 @@ fn stmt_records(
             }
             Ok(())
         }
+        ast::Stmt::AsyncFor(node) => {
+            expr_records(
+                &node.target,
+                &format!("{path}/target"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            expr_records(
+                &node.iter,
+                &format!("{path}/iter"),
+                source_map,
+                ExprRecordContext::Expression,
+                owner,
+                records,
+            )?;
+            stmt_suite_records(
+                &node.body,
+                &format!("{path}/body"),
+                source_map,
+                owner,
+                records,
+            )?;
+            stmt_suite_records(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                source_map,
+                owner,
+                records,
+            )
+        }
         ast::Stmt::With(node) => {
             defaulted_block_hole_record(node, path, source_map, owner, records)?;
             for (index, stmt) in node.body.iter().enumerate() {
@@ -1061,6 +1112,13 @@ fn stmt_records(
             }
             Ok(())
         }
+        ast::Stmt::AsyncWith(node) => stmt_suite_records(
+            &node.body,
+            &format!("{path}/body"),
+            source_map,
+            owner,
+            records,
+        ),
         ast::Stmt::If(node) => {
             if is_call_named(&node.test, "astichi_elif") {
                 let ast::Expr::Call(call) = node.test.as_ref() else {
@@ -1139,6 +1197,50 @@ fn stmt_records(
                 stmt_records(
                     stmt,
                     &format!("{path}/finalbody[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            Ok(())
+        }
+        ast::Stmt::TryStar(node) => {
+            stmt_suite_records(
+                &node.body,
+                &format!("{path}/body"),
+                source_map,
+                owner,
+                records,
+            )?;
+            for (index, handler) in node.handlers.iter().enumerate() {
+                except_handler_records(
+                    handler,
+                    &format!("{path}/handlers[{index}]"),
+                    source_map,
+                    owner,
+                    records,
+                )?;
+            }
+            stmt_suite_records(
+                &node.orelse,
+                &format!("{path}/orelse"),
+                source_map,
+                owner,
+                records,
+            )?;
+            stmt_suite_records(
+                &node.finalbody,
+                &format!("{path}/finalbody"),
+                source_map,
+                owner,
+                records,
+            )
+        }
+        ast::Stmt::Match(node) => {
+            for (index, case) in node.cases.iter().enumerate() {
+                stmt_suite_records(
+                    &case.body,
+                    &format!("{path}/cases[{index}]/body"),
                     source_map,
                     owner,
                     records,

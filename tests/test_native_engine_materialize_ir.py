@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from copy import deepcopy
+from textwrap import indent
 
 import pytest
 
@@ -774,6 +775,193 @@ def test_native_assembly_state_materializes_elif_clause_when_available() -> None
         "    else:\n"
         "        return 'fallback'"
     )
+
+
+_STATEMENT_SUITES = (
+    ("plain", "{body}", 0, False),
+    ("if.body", "if True:\n{body}", 1, False),
+    ("if.else", "if False:\n    pass\nelse:\n{body}", 1, False),
+    ("for.body", "for item in items:\n{body}", 1, False),
+    ("for.else", "for item in items:\n    pass\nelse:\n{body}", 1, False),
+    ("while.body", "while False:\n{body}", 1, False),
+    ("while.else", "while False:\n    pass\nelse:\n{body}", 1, False),
+    ("async_for.body", "async for item in items:\n{body}", 1, True),
+    ("async_for.else", "async for item in items:\n    pass\nelse:\n{body}", 1, True),
+    ("with.body", "with guard():\n{body}", 1, False),
+    ("async_with.body", "async with guard():\n{body}", 1, True),
+    ("try.body", "try:\n{body}except Exception:\n    pass\n", 1, False),
+    ("try.except", "try:\n    pass\nexcept Exception:\n{body}", 1, False),
+    (
+        "try.else",
+        "try:\n    pass\nexcept Exception:\n    pass\nelse:\n{body}",
+        1,
+        False,
+    ),
+    ("try.finally", "try:\n    pass\nfinally:\n{body}", 1, False),
+    ("try_star.body", "try:\n{body}except* Exception:\n    pass\n", 1, False),
+    ("try_star.except", "try:\n    pass\nexcept* Exception:\n{body}", 1, False),
+    (
+        "try_star.else",
+        "try:\n    pass\nexcept* Exception:\n    pass\nelse:\n{body}",
+        1,
+        False,
+    ),
+    (
+        "try_star.finally",
+        "try:\n    pass\nexcept* Exception:\n    pass\nfinally:\n{body}",
+        1,
+        False,
+    ),
+    ("match.case", "match value:\n    case _:\n{body}", 2, False),
+)
+
+_NESTED_INSERTIONS = (
+    (
+        "elif",
+        "if False:\n    pass\nelif astichi_elif(site):\n    pass\n",
+        "def astichi_elif():\n    if True:\n        result = 7\n",
+        "astichi.operation.append_clause",
+        "if False:\n    pass\nelif True:\n    result = 7\n",
+    ),
+    (
+        "block",
+        "astichi_hole(site)\n",
+        "result = 7\n",
+        "astichi.operation.splice_body_at_marker",
+        "result = 7\n",
+    ),
+    (
+        "expression",
+        "result = astichi_hole(site)\n",
+        "7\n",
+        "astichi.operation.replace_expression",
+        "result = 7\n",
+    ),
+    (
+        "call_args",
+        "result = func(*astichi_hole(site))\n",
+        "astichi_funcargs(7)\n",
+        "astichi.operation.splice_call_arguments",
+        "result = func(7)\n",
+    ),
+    (
+        "parameters",
+        "def nested(site__astichi_param_hole__):\n    pass\n",
+        "def astichi_params(value):\n    pass\n",
+        "astichi.operation.splice_parameters",
+        "def nested(value):\n    pass\n",
+    ),
+)
+
+
+def _wrap_statement_suite(frame: str, depth: int, asynchronous: bool, body: str) -> str:
+    function = "async def run():\n" if asynchronous else "def run():\n"
+    return function + indent(frame.format(body=indent(body, "    " * depth)), "    ")
+
+
+@pytest.mark.parametrize(
+    "_name,frame,depth,asynchronous",
+    _STATEMENT_SUITES,
+    ids=[row[0] for row in _STATEMENT_SUITES],
+)
+@pytest.mark.parametrize(
+    "_operation,body,payload,operation_key,expected_body",
+    _NESTED_INSERTIONS,
+    ids=[row[0] for row in _NESTED_INSERTIONS],
+)
+def test_native_nested_insertions_do_not_need_python_fallback(
+    _name: str,
+    frame: str,
+    depth: int,
+    asynchronous: bool,
+    _operation: str,
+    body: str,
+    payload: str,
+    operation_key: str,
+    expected_body: str,
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+    engine = _engine_with_current_bundle(module)
+    source = _wrap_statement_suite(frame, depth, asynchronous, body)
+    template = module.register_template_package_v2_source(
+        engine, source, "workspace.py", 1
+    )
+    payload_template = module.register_template_package_v2_source(
+        engine, payload, "payload.py", 1
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(engine, state, template, ("Root",))
+    child = module.assembly_state_append_occurrence(
+        engine, state, payload_template, ("Root", "Payload"), root
+    )
+    target = _template_record_handle_by_name(
+        module, engine, state, template, root, "site"
+    )
+    module.assembly_state_append_edge(engine, state, target, child, operation_key, 0)
+
+    # Call native assembly directly: the scope's secondary path would mask gaps.
+    artifact = module.assembly_state_materialize_to_python_ast(
+        engine, state, {}, root.index
+    )
+
+    expected = ast.parse(
+        _wrap_statement_suite(frame, depth, asynchronous, expected_body)
+    )
+    assert ast.dump(artifact, include_attributes=False) == ast.dump(
+        expected, include_attributes=False
+    )
+    compile(artifact, "workspace.py", "exec")
+
+
+@pytest.mark.parametrize(
+    "_name,frame,depth,asynchronous",
+    _STATEMENT_SUITES,
+    ids=[row[0] for row in _STATEMENT_SUITES],
+)
+def test_native_rejects_unfilled_parameter_holes_before_cleanup(
+    _name: str, frame: str, depth: int, asynchronous: bool
+) -> None:
+    module = load_native_extension(required=False)
+    if module is None:
+        pytest.skip("native engine extension is not built")
+    engine = _engine_with_current_bundle(module)
+    source = _wrap_statement_suite(
+        frame,
+        depth,
+        asynchronous,
+        "def nested(site__astichi_param_hole__):\n    pass\n",
+    )
+    template = module.register_template_package_v2_source(
+        engine, source, "workspace.py", 1
+    )
+    state = module.assembly_state_create(engine)
+    root = module.assembly_state_append_occurrence(engine, state, template, ("Root",))
+
+    with pytest.raises(
+        ValueError, match="mandatory parameter holes remain unresolved: site"
+    ):
+        module.assembly_state_materialize_to_python_ast(engine, state, {}, root.index)
+
+
+def test_native_scope_cannot_certify_an_unfilled_parameter_hole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if load_native_extension(required=False) is None:
+        pytest.skip("native engine extension is not built")
+    monkeypatch.setenv("ASTICHI_LOWER_ENGINE", "native")
+    import astichi
+    from astichi.assembler import AssemblyScope
+
+    scope = AssemblyScope(astichi.build())
+    scope.add(
+        "Root", astichi.compile("def run(args__astichi_param_hole__):\n    return 42\n")
+    )
+    with pytest.raises(
+        (ValueError, RuntimeError), match="mandatory|native materialization"
+    ):
+        scope.build().to_executable_ast()
 
 
 def test_native_materialization_workspace_applies_identifier_overlay_when_available() -> None:
