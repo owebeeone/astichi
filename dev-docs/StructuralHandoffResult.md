@@ -1,6 +1,22 @@
 # Localized native composable handoff result
 
-Status: implemented and owner-verified on the focused fix branch; unpublished.
+Status: implemented, owner-verified and merged into GitHub main; no release.
+
+The operator authorized integration after inspecting the committed fix. Main was
+restored to the clean baseline and fast-forwarded through `f8f7e59` (handoff fix)
+and `6c7c221` (matching-build cleanup), then pushed without force. The archived
+SDK detour was not merged or pushed. This landing adds no code beyond those
+tested commits.
+
+GWZ's coordinated merge fast-forwarded the member but could not finalize against
+the workspace's existing configuration-integrity marker. Supported abort with
+preservation closed that operation; a repository-local fast-forward completed
+integration without changing workspace configuration. The SSH push authenticated
+as an account without repository write access; GitHub CLI owner credentials
+completed the HTTPS push. These are separately observed workflow limitations,
+not established GWZ defects. Follow-ups could examine coordinated merge handling
+with pending configuration and the SSH identity selection; neither requires
+changes to this fix or blocks the completed landing.
 
 Scope and original operator authority are recorded in `StructuralHandoffTask.md`.
 Baseline: `1c47f781d3804130fdd61cbee07a3b2e4529158a`. The stopped SDK detour,

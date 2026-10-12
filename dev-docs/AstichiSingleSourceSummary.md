@@ -13,7 +13,7 @@ work.
 
 ## 1. Current snapshot
 
-- The localized native composable handoff candidate copies registered native
+- The localized native composable handoff fix on main copies registered native
   trees/packages into temporary specialization engines and rebuilds metadata
   from the transformed tree without reparsing it. Original location text stays
   paired with its byte offsets; emitted text still determines template keys.

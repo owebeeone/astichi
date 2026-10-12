@@ -6,11 +6,16 @@ The operator authorized preserving the stopped SDK detour, returning to Astichi
 baseline `1c47f781d3804130fdd61cbee07a3b2e4529158a`, and testing localized
 internal handoff changes. The detour code is preserved on
 `archive/dataclass-sdk-detour`; raw evidence is preserved separately. The active
-branch is `fix/structural-composable-handoff`.
+implementation branch was `fix/structural-composable-handoff`.
 
 Editable: Astichi internal handoffs, focused tests, validation tools and reports.
 YIDL and Lifecycle are reference-only benchmark consumers. Dataclass work and
 workspace membership/configuration are outside scope. No release or publication.
+
+Later operator authorization permits merging these fixes into main and pushing
+main to GitHub. The archive remains separate; release/tag/registry publication
+is still outside scope. This amendment overrides the earlier code-publication
+boundary only.
 
 Required outcome: retain generated source, template identity, marker/port
 semantics, diagnostics and published-composable immutability while eliminating
