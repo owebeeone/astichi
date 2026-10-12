@@ -28,6 +28,12 @@ Current frontend/build results are concrete composables that also expose
 `.bind(mapping=None, /, **values)` for `astichi_bind_external(...)`
 substitution.
 
+Native binding with a rebuilt native extension carries the registered tree
+through specialization, preserving the original source coordinates of existing
+nodes. Diagnostic locations refer to authored source, not the layout of newly
+rendered code. Source emission and template identity still use rendered text.
+This internal handoff does not change the public binding API.
+
 ## `emit(*, provenance: bool = True) -> str`
 
 Renders **Python source** for this composable.

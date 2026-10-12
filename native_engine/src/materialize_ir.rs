@@ -518,17 +518,18 @@ fn assembly_state_materialize_to_python_ast(
 }
 
 #[pyfunction(name = "materialization_workspace_copy_to_python_ast")]
-#[pyo3(signature = (engine, workspace, location_policy = "fix_missing"))]
+#[pyo3(signature = (engine, workspace, location_policy = "fix_missing", source = ""))]
 fn materialization_workspace_copy_to_python_ast(
     py: Python<'_>,
     engine: PyRef<'_, EngineHandle>,
     workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
     location_policy: &str,
+    source: &str,
 ) -> PyResult<Py<PyAny>> {
     engine.ensure_open()?;
     ensure_owner(engine.owner_id(), workspace.owner_id)?;
     let workspace_ref = engine.workspace(workspace.index)?;
-    crate::parser_ir::convert_module_artifact(py, "", workspace_ref.module(), location_policy)
+    crate::parser_ir::convert_module_artifact(py, source, workspace_ref.module(), location_policy)
         .map(|(artifact, _stats)| artifact)
 }
 
@@ -541,12 +542,55 @@ fn materialization_workspace_to_source(
     location_policy: &str,
 ) -> PyResult<String> {
     let module =
-        materialization_workspace_copy_to_python_ast(py, engine, workspace, location_policy)?;
+        materialization_workspace_copy_to_python_ast(py, engine, workspace, location_policy, "")?;
     let ast_mod = py.import("ast")?;
     ast_mod.getattr("unparse")?.call1((module,))?.extract()
 }
 
+#[pyfunction(name = "_workspace_registration_snapshots")]
+fn workspace_registration_snapshots(
+    py: Python<'_>,
+    engine: PyRefMut<'_, EngineHandle>,
+    workspace: PyRef<'_, NativeMaterializationWorkspaceHandle>,
+    source: String,
+    location_source: String,
+    line_number: u32,
+) -> PyResult<(Py<PyAny>, Py<PyAny>, NativeTemplateHandle)> {
+    engine.ensure_open()?;
+    ensure_owner(engine.owner_id(), workspace.owner_id)?;
+    let tree = engine.workspace(workspace.index)?.module().clone();
+    let records =
+        crate::template_extract::extract_template_records(&location_source, &tree, line_number)?;
+    let key = crate::template_extract::template_key_from_source(&source);
+    let summary = format!("compile line={line_number} records={}", records.len());
+    let bundle = engine
+        .surface_bundle()
+        .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
+    let snapshot = crate::template_extract::structural_snapshot(
+        py,
+        bundle.snapshot(py)?,
+        &key,
+        &summary,
+        &records,
+    )?;
+    let built = crate::template_package_v2::build_package_from_module(
+        &engine,
+        source,
+        &location_source,
+        tree,
+        line_number,
+    )?;
+    let package_snapshot = built.package.snapshot(py)?;
+    let template = crate::occurrence_store::register_template_package(
+        engine,
+        built.package,
+        Some(built.module),
+    )?;
+    Ok((package_snapshot, snapshot, template))
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(workspace_registration_snapshots, m)?)?;
     m.add_class::<NativeMaterializationWorkspaceHandle>()?;
     m.add_function(wrap_pyfunction!(materialization_workspace_create, m)?)?;
     m.add_function(wrap_pyfunction!(materialization_workspace_snapshot, m)?)?;

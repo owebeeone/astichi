@@ -13,6 +13,15 @@ work.
 
 ## 1. Current snapshot
 
+- The localized native composable handoff candidate copies registered native
+  trees/packages into temporary specialization engines and rebuilds metadata
+  from the transformed tree without reparsing it. Original location text stays
+  paired with its byte offsets; emitted text still determines template keys.
+  Published composables are unchanged, and each specialized binding owns its
+  saved native engine rather than accumulating templates in a global registry.
+  The older-extension compatibility route and generic Python-AST rebuilding
+  retain their source registration paths. See `StructuralHandoffTask.md` and
+  `StructuralHandoffResult.md` for scope, validation and measurements. No release.
 - Release preparation is configured through `gearu.toml`; `RELEASE.md` owns the
   release procedure and checks. Local candidate/exact-commit gates run the full
   declared Python test matrix, strict docs build, and isolated native wheel

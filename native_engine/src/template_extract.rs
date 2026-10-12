@@ -3129,7 +3129,7 @@ pub(crate) fn template_key_from_source(source: &str) -> String {
     format!("template:{}", &digest[..16])
 }
 
-fn structural_snapshot(
+pub(crate) fn structural_snapshot(
     py: Python<'_>,
     surface_bundle: Py<PyAny>,
     template_key: &str,

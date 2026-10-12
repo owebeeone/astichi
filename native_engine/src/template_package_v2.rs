@@ -211,12 +211,23 @@ fn build_package(
     filename: Option<String>,
     line_number: u32,
 ) -> PyResult<BuiltPackage> {
+    let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
+    let module = crate::template_extract::validate_compile_module(&source, &filename)?;
+    build_package_from_module(engine, source.clone(), &source, module, line_number)
+}
+
+pub(crate) fn build_package_from_module(
+    engine: &EngineHandle,
+    source: String,
+    location_source: &str,
+    module: ast::ModModule,
+    line_number: u32,
+) -> PyResult<BuiltPackage> {
     let surface_bundle = engine
         .surface_bundle()
         .ok_or_else(|| crate::errors::schema_error("surface bundle has not been registered"))?;
-    let filename = filename.unwrap_or_else(|| "<astichi-native>".to_string());
-    let module = crate::template_extract::validate_compile_module(&source, &filename)?;
-    let records = crate::template_extract::extract_template_records(&source, &module, line_number)?;
+    let records =
+        crate::template_extract::extract_template_records(location_source, &module, line_number)?;
     let source_summary = format!("compile line={line_number} records={}", records.len());
     let template_key = crate::template_extract::template_key_from_source(&source);
 
@@ -243,7 +254,7 @@ fn build_package(
             &record.semantic_summary,
         );
     }
-    let source_map = crate::template_extract::SourceMap::new(&source);
+    let source_map = crate::template_extract::SourceMap::new(location_source);
     let scopes = extract_scopes(&module, &source_map, line_number);
     for scope in &scopes {
         package.add_scope(scope);

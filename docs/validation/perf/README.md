@@ -4,6 +4,14 @@ This directory contains repeatable performance probes for Astichi development.
 The scripts are validation tools, not supported product APIs, and should keep
 wall-time assertions out of the normal unit test suite.
 
+For a paired comparison of two Astichi snapshots with sibling YIDL checkouts,
+run `composable_handoff_compare.py --baseline BASELINE --candidate CANDIDATE`.
+Use `--engine python` for the unchanged-path control. It alternates fresh-process
+trials after one warm-up, reports YIDL phase totals and handoff call counts,
+and measures 100 two-step identifier bindings separately. Both snapshots must
+have matching release native builds and dependencies. Keep raw JSON in scratch;
+generation totals exclude interpreter startup, and no native-memory claim is made.
+
 Use these probes to capture phase timing, call counts, and profiler data before
 and after performance work. Cache outputs and profiler dumps belong in local
 scratch directories and should not be committed.

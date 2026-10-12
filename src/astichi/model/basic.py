@@ -656,12 +656,22 @@ def _native_specialization_session(
             module=module,
             engine_handle=engine,
         )
-        template = module.register_template_package_v2_source(
-            engine,
-            binding.native_source,
-            binding.native_origin.file_name,
-            binding.native_origin.line_number,
-        )
+        if binding.native_compile_template_handle is not None and hasattr(module, "_copy_template"):
+            from astichi.lower_engine.native_hot_path_registry import shared_hot_path_native_engine
+
+            source_engine = binding.native_template_engine
+            if source_engine is None:
+                source_engine = shared_hot_path_native_engine(module)
+            template = module._copy_template(
+                source_engine, binding.native_compile_template_handle, engine,
+            )
+        else:
+            template = module.register_template_package_v2_source(
+                engine,
+                binding.native_source,
+                binding.native_origin.file_name,
+                binding.native_origin.line_number,
+            )
         workspace = module.materialization_workspace_create(engine, template)
     except Exception:
         module.engine_close(engine)
@@ -733,13 +743,36 @@ def _native_reproject_specialized(
     from astichi.hygiene import analyze_names
     from astichi.lower_engine import register_native_template_source_direct
 
-    tree = module.materialization_workspace_copy_to_python_ast(engine, workspace)
-    source = f"{module.materialization_workspace_to_source(engine, workspace)}\n"
-    lower_template, inventory = register_native_template_source_direct(
-        source=source,
-        origin=piece.origin,
-        tree=tree,
-    )
+    binding = piece._lower_template
+    assert binding is not None
+    location_source = binding.native_location_source or binding.native_source
+    if hasattr(module, "_workspace_registration_snapshots"):
+        from astichi.lower_engine.facade import _register_native_template_snapshots
+        from astichi.lower_engine import ensure_current_native_surface_bundle
+
+        assert location_source is not None
+        tree = module.materialization_workspace_copy_to_python_ast(
+            engine, workspace, "native", location_source,
+        )
+        source = f"{ast.unparse(tree)}\n"
+        package_snapshot, snapshot, template = module._workspace_registration_snapshots(
+            engine, workspace, source, location_source, piece.origin.line_number,
+        )
+        saved_engine = module.engine_create()
+        ensure_current_native_surface_bundle(module=module, engine_handle=saved_engine)
+        saved_template = module._copy_template(engine, template, saved_engine)
+        lower_template, inventory = _register_native_template_snapshots(
+            module=module, source=source, origin=piece.origin, tree=tree,
+            native_package_snapshot=package_snapshot, native_snapshot=snapshot,
+            native_template_handle=saved_template, native_location_source=location_source,
+            native_template_engine=saved_engine,
+        )
+    else:
+        tree = module.materialization_workspace_copy_to_python_ast(engine, workspace)
+        source = f"{module.materialization_workspace_to_source(engine, workspace)}\n"
+        lower_template, inventory = register_native_template_source_direct(
+            source=source, origin=piece.origin, tree=tree,
+        )
     markers = recognize_markers(tree)
     provisional = BasicComposable(
         tree=tree,

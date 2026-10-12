@@ -84,7 +84,7 @@ impl NativeTemplate {
         &self.records
     }
 
-    fn package_v2(&self) -> Option<&PackageBuilder> {
+    pub(crate) fn package_v2(&self) -> Option<&PackageBuilder> {
         self.package_v2.as_ref()
     }
 
@@ -1114,7 +1114,26 @@ fn assembly_state_apply_request_batch(
     Ok(result.into_any().unbind())
 }
 
+#[pyfunction(name = "_copy_template")]
+fn copy_template(
+    source: PyRef<'_, EngineHandle>,
+    template: PyRef<'_, NativeTemplateHandle>,
+    destination: PyRefMut<'_, EngineHandle>,
+) -> PyResult<NativeTemplateHandle> {
+    source.ensure_open()?;
+    ensure_owner(source.owner_id(), template.owner_id())?;
+    let original = source.template(template.template_index())?;
+    let package = original
+        .package_v2()
+        .ok_or_else(|| {
+            crate::errors::schema_error("native template does not carry package-v2 rows")
+        })?
+        .clone();
+    register_template_package(destination, package, original.module().cloned())
+}
+
 pub fn register_module_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(copy_template, m)?)?;
     m.add_class::<NativeTemplateHandle>()?;
     m.add_class::<NativeAssemblyStateHandle>()?;
     m.add_class::<NativeOccurrenceHandle>()?;

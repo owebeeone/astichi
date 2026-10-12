@@ -137,6 +137,8 @@ class LowerTemplateBinding:
         compare=False,
     )
     native_source: str | None = field(default=None, repr=False, compare=False)
+    native_location_source: str | None = field(default=None, repr=False, compare=False)
+    native_template_engine: object | None = field(default=None, repr=False, compare=False)
     native_origin: CompileOrigin | None = field(default=None, repr=False, compare=False)
 
     def has_native_lower_package(self) -> bool:
@@ -415,6 +417,24 @@ def register_native_template_source_direct(
         source=source,
         origin=origin,
     )
+    return _register_native_template_snapshots(
+        module=module, source=source, origin=origin, tree=tree,
+        native_package_snapshot=native_package_snapshot, native_snapshot=native_snapshot,
+    )
+
+
+def _register_native_template_snapshots(
+    *,
+    module: ModuleType,
+    source: str,
+    origin: CompileOrigin,
+    tree: ast.Module,
+    native_package_snapshot: dict[str, object],
+    native_snapshot: dict[str, object],
+    native_template_handle: object | None = None,
+    native_location_source: str | None = None,
+    native_template_engine: object | None = None,
+) -> tuple[LowerTemplateBinding, Inventory]:
     native_package = package_from_snapshot(native_package_snapshot)
     (
         projection_inventory,
@@ -461,7 +481,10 @@ def register_native_template_source_direct(
             backend=_native_backend_name(module),
             native_snapshot=native_snapshot,
             native_package_snapshot=native_package_snapshot,
+            native_compile_template_handle=native_template_handle,
             native_source=source,
+            native_location_source=native_location_source,
+            native_template_engine=native_template_engine,
             native_origin=origin,
         ),
         projection_inventory,
