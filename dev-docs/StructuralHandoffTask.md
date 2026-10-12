@@ -41,6 +41,11 @@ authored source retain their existing registration paths. This is not a claim
 that all Astichi generation is parser-free or that arbitrary cross-source
 composition has acquired a new location model.
 
+The operator rejected compatibility handling for stale development binaries.
+Both added capability checks and the legacy reprojection fallback are removed;
+Python/native builds must match. Initial source registration where no saved
+native template exists remains required behavior, not mixed-build compatibility.
+
 Benchmark both baseline and candidate with the same Python, release build,
 workload and remote Windows host, using separate source directories. Run paired
 repeated YIDL generation trials, report phase timings and path counts, and avoid

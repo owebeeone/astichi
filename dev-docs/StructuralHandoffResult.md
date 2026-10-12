@@ -35,8 +35,11 @@ diagnostic correction replaces the earlier assumption of exact legacy snapshot
 parity; generated program text, bindings and source-based identity are checked
 separately.
 
-Generic Python-AST rebuilding, authored-source compilation, older native-extension
-compatibility and arbitrary cross-source composition retain their existing paths.
+Generic Python-AST rebuilding, authored-source compilation and arbitrary
+cross-source composition retain their existing paths. The operator subsequently
+rejected stale-binary compatibility: both capability checks and legacy
+reprojection fallback were removed. Python/native builds must match. The recorded
+timings preceded this cleanup; they exercised the same successful handoff path.
 This is not a claim that every Astichi source round trip has been removed.
 
 ## Verification
@@ -49,6 +52,7 @@ This is not a claim that every Astichi source round trip has been removed.
   emitted identity, immutable originals, successive bindings, absence of source
   registration, and rejection of wrong-owner/closed-source template copies.
 - Full dual-backend suite on macOS, CPython 3.14.3: **2,648 passed, 14 skipped**.
+  Repeated after removing stale-binary compatibility with the same result.
 - Full Windows suite before the final ownership-test addition: **2,644 passed,
   14 skipped, 2 failed**. Both failures independently reproduce on the original
   baseline: a test expects forward slashes where Windows `Path` uses backslashes.
