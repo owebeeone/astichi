@@ -19,6 +19,7 @@ snapshots does not create a new performance result or certify an unfinished gate
 
 These remain proposals, not current behavior:
 
+- [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md)
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)
