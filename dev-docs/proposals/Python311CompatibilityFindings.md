@@ -1,7 +1,11 @@
 # Python 3.11 compatibility scope findings
 
-Status: discoveries from the short design phase; no production correction has
-been implemented or authorized by this document.
+Status: retained discoveries from the short design phase; no production
+correction has been implemented or authorized by this document. On 2026-10-14
+the user removed Pyrolyze product changes from the Astichi 3.11 boundary and
+selected integration-test gating instead. F1 remains relevant to a separate
+Pyrolyze compatibility project, but is not a prerequisite for the amended
+[Astichi plan](Python311CompatibilityPlan.md).
 
 ## F1 — Alias-only replacement loses imported event recognition
 

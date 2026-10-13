@@ -1,5 +1,11 @@
 # Python 3.11 plan review checkpoint
 
+> Historical review checkpoint: on 2026-10-14 the user narrowed the current
+> [plan](Python311CompatibilityPlan.md) and [design](Python311CompatibilityDesign.md)
+> to same-version provenance and Python 3.11 gating of Pyrolyze integrations.
+> The verdicts below cover their original exact revisions, not that amendment.
+> Reader reconstruction and Pyrolyze product changes are no longer in scope.
+
 Status: **accepted at `1bc8d2dc0c0978c19ad8d77237718ee690b5857e` after
 Consistency and Safety reported GO; this accepts the compatibility plan only**.
 No production implementation, consumer support expansion or publication is

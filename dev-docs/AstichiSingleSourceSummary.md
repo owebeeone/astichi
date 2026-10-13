@@ -13,6 +13,14 @@ work.
 
 ## 1. Current snapshot
 
+- Python 3.11 compatibility remains unimplemented. On 2026-10-14 the user
+  narrowed the [plan](proposals/Python311CompatibilityPlan.md) and
+  [design](proposals/Python311CompatibilityDesign.md): native constructor fixes,
+  same-version provenance fixtures/checks, explicit 3.11 skips for Pyrolyze
+  integrations, packaging/CI and full verification. No custom provenance reader
+  or Pyrolyze product changes remain in scope. Earlier review verdicts cover
+  the previous exact revisions; this documentation amendment does not authorize
+  production work or change the supported-version declarations.
 - The localized native composable handoff fix on main copies registered native
   trees/packages into temporary specialization engines and rebuilds metadata
   from the transformed tree without reparsing it. Original location text stays

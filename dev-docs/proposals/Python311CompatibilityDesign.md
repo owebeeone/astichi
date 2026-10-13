@@ -1,217 +1,146 @@
 # Python 3.11 compatibility design
 
-Status: **accepted at `6dec499894cdcbdb232159def78949757e45f01e` after
-[Consistency](Python311CompatibilityDesign-ReviewConsistency-2.md) and
-[Safety](Python311CompatibilityDesign-ReviewSafety-2.md) reported GO; this accepts
-the design only**. Production implementation has not started. The
-[review checkpoint](Python311CompatibilityDesign-ReviewCheckpoint.md) records
-the bounded reader redesign and independently verified closure. The
-[accepted plan](Python311CompatibilityPlan.md) remains controlling; neither
-review authorizes the additional compiler component identified below.
+Status: **scope narrowed by the user on 2026-10-14; production implementation
+has not started**. This design supersedes the previously reviewed reader and
+Pyrolyze proposals. The [review checkpoint](Python311CompatibilityDesign-ReviewCheckpoint.md)
+preserves both historical rounds and their exact revisions; those verdicts do
+not constitute independent review of this amendment. The amended
+[plan](Python311CompatibilityPlan.md) controls the remaining work.
 
 ## Deliverable and boundary
 
-This design step adds documentation and isolated probes only. Astichi conversion,
-provenance, packaging and tests are the proposed implementation components.
-Pyrolyze's two API aliases remain a bounded proposed integration change. YIDL,
-Lifecycle, Cache, Undoable and Dataclass remain reference-only. No dependency,
-workspace, release or publication changes are proposed.
+The current deliverable is a documentation amendment only. Proposed implementation
+is confined to Astichi's three native declaration converters, golden/test
+harness, packaging, CI, version matrix and support documentation. Provenance
+encoding and decoding stay unchanged. Pyrolyze and the other workspace consumers
+are reference-only. No alias replacement, Pyrolyze compiler correction, dependency
+upgrade, workspace change, release or publication is included. This document
+and prior review acceptance do not authorize production implementation.
 
-The probe confirmed that replacing the aliases alone changes imported-event
-recognition. A correction to one existing Pyrolyze compiler helper is therefore
-proposed explicitly in the [findings record](Python311CompatibilityFindings.md).
-That component lies outside the accepted plan's API-only Pyrolyze boundary and
-requires an authorized scope amendment before production edits. It does not
-block the Astichi-only changes.
-
-Source references: Astichi `3d31bd729ef09472526237cef8d7c62c23a07d55`,
-Pyrolyze `092d055294df97666bee473126708c2868379c2d`. Current production behavior
-and supported-version declarations are unchanged.
+The user removed cross-Python-version provenance portability from the requirement
+and selected explicit 3.11 gating for integration tests that use Pyrolyze. These
+are scope choices, not claims that the earlier compatibility probes failed.
 
 ## Provenance contract
 
 Keep the existing base64 → zlib → pickle representation and public
 `encode_provenance`, `decode_provenance`, `extract_provenance` and
-`verify_round_trip` signatures. Encoding remains unchanged; existing readers and
-fixtures are not migrated to a new format. The work adds a compatible reader
-for existing AST pickles, not a new persistence system or security guarantee.
+`verify_round_trip` signatures. Keep the standard pickle decoder, root-type
+check and source/provenance mismatch check. No custom unpickler, private stdlib
+hook, constructor adapter or format migration is required in the emit layer.
 
-For syntax representable on the receiving runtime:
+Acceptance requires provenance written and read on the same supported Python
+minor version. Preserve AST values, source locations, private metadata and shared
+references under that existing path. Cross-minor pickle portability is outside
+this compatibility project; an incidental successful exchange is not a promise
+of support. Do not add a new production version-rejection mechanism solely for
+this scope amendment. Emitted Python source remains authoritative; portability
+of source without embedded provenance is a separate concern from pickle layout.
 
-- Restore node classes and field values, ordering, source locations, private
-  Astichi metadata and pickle memo references. Preserve shared objects rather
-  than substituting a freshly parsed tree.
-- Supply only understood runtime defaults, notably `type_params=[]` when an
-  ordinary 3.11 declaration is read on 3.12+. Never invent names, bodies,
-  mandatory field values or source coordinates.
-- Accept an absent or empty newer `type_params` field on 3.11. Reject nonempty
-  type parameters, including values restored later through pickle state.
-- Reject an unavailable AST node or an unsupported constructor layout with a
-  contextual `TypeError` identifying the node/runtime. Unknown semantic field
-  additions must not be silently treated as harmless metadata. Ordinary private
-  metadata remains opaque and retains its existing restoration behavior.
-- Keep the existing root-type check and source/provenance mismatch check.
-  Successful decoding never substitutes for `verify_round_trip`.
+### Golden harness
 
-The verified exchange is ordinary class/function/async-function syntax between
-3.11 and existing newer runtimes. This does not promise that newer grammar can
-run on older interpreters, or establish every generic/type-parameter exchange.
-Newer nodes and semantic fields need an explicit compatibility rule or rejection.
+The current `tests/test_ast_goldens.py` verifies both actual output provenance
+and the checked-in expected pre-materialized source's provenance. The latter
+can contain an AST pickle written on another Python minor version. It currently
+fails on 3.11 even when actual output round-trips on that interpreter.
 
-### Reconstruction mechanism
+Separate the expected source baseline from its version-specific pickle:
 
-Use a private reduction-aware reader, factored into a cohesive helper under
-`src/astichi/emit/`, called by `decode_provenance`. **Global resolution always
-returns real classes, never constructor helpers or proxies.** AST class objects
-used as metadata therefore retain receiving-runtime identity.
+- Preserve the canonical source body in
+  `tests/data/goldens/pre_materialized/` and the complete materialized baseline
+  in `tests/data/goldens/materialized/`. Continue normalized pre-source and exact
+  materialized-source comparisons for every existing case and both backends.
+- Provide expected provenance fixtures keyed by producing Python minor version
+  under `tests/data/goldens/provenance/<major.minor>/`, associated with the same
+  authored case names. Select only the target runtime's payload when assembling
+  an expected source for provenance verification. Missing required fixtures fail
+  clearly; do not silently fall back to a different minor version's pickle.
+- Generate the runtime-specific payloads from the original cases in
+  `tests/data/gold_src/` through their existing build/emit path, not by parsing
+  canonical emitted source or copying the current test result into the expected
+  baseline. Before accepting fixtures, require their emitted source bodies and
+  materialized outputs to match the canonical baselines. Source changes require
+  the normal canonical review; payload regeneration cannot bless source drift.
+- Keep verification of actual provenance on every runtime. Independently verify
+  the matching expected fixture and its emitted-source recompile/materialize
+  behavior. Preserve existing comment-marker handling and tampered-source tests.
+- Add narrow harness coverage for version selection, missing fixture diagnostics
+  and refusing source drift during fixture generation. Existing canonical cases
+  remain the end-to-end success coverage.
 
-The concrete mechanism is a subclass of CPython's Python-level
-`pickle._Unpickler`, with a copied subclass-local dispatch table and an overridden
-`REDUCE` handler. This is an explicit private stdlib dependency, isolated in the
-compatibility helper: check the required base/dispatch/stack hooks on supported
-runtimes and fail clearly if unavailable. Do not modify Python's global dispatch
-or AST classes. The full runtime matrix must exercise that adapter; 3.13 remains
-a pending gate. This does not introduce a new package dependency.
+Retain the established 3.14 canonical source/structural snapshot regeneration
+policy. Runtime-specific payload generation is a separate harness operation
+that must not overwrite the canonical source or structural snapshots. Add the
+payload sets needed by the declared supported matrix during implementation.
+All fixtures and generator configuration use repository-relative paths.
 
-At `REDUCE`, inspect the actual callable on the stack. Adapt only actual standard
-AST class constructors; preserve global loading and memo references. Delegate
-non-AST reductions unchanged, including opaque restore hooks receiving AST class
-arguments. Other pickle operations retain normal handling; unsupported AST
-constructor forms need explicit rejection or a tested compatibility rule.
-For an adapted AST reduction:
-
-1. Resolve the receiving runtime's node class and reject unavailable classes.
-2. Map positional declaration arguments by the two known layouts: functions
-   have six fields on 3.11 and a seventh `type_params` on 3.12+; classes have
-   five and six respectively. Handle legacy zero-argument/state reductions too.
-   Other nodes retain their known runtime layouts; unsupported arities fail.
-3. Allocate through the AST class's `__new__`, assign understood constructor
-   fields, and replace only that reduction's stack result with the new node.
-   The memoized class object remains unchanged. Let standard pickle restore
-   saved state and references; avoid incomplete constructors before state arrives.
-4. After loading the complete graph, normalize understood missing defaults and
-   check unsupported semantic additions in both constructor arguments and saved
-   state. Only then return the module.
-
-The post-load check is necessary: pickle state can replace constructor fields,
-and 3.11's `ast.walk` ignores `type_params` because it is absent from `_fields`.
-Check that attribute explicitly on affected declarations. A compatibility field
-must not be silently lost merely because the runtime traversal ignores it.
-
-For example, a global `ast.Module` can be memoized, invoked by a node reduction,
-and later loaded into `tree._node_types`. The adapted invocation yields a module,
-while the global memo slot still yields `ast.Module`. A non-AST reduction calling
-`restore_token(ast.Name)` likewise sees the real class before it executes. A
-post-load proxy repair is prohibited: it would be too late for that hook.
-
-Normalization uses visited identities for structural AST nodes, preserving shared
-nodes and avoiding unbounded revisits. Invalid structural cycles fail clearly;
-opaque metadata cycles are retained rather than rewritten. AST class references
-are values, not nodes to normalize. The compatibility path must not change
-non-AST hook semantics. Decoder timing should be recorded on representative
-inputs because the Python-level reader can cost more than C unpickling; no speed
-claim or new performance prerequisite follows from the design probes.
-
-The first probe used normal incomplete constructors and emitted deprecation
-warnings on newer readers. The allocation/state approach removed those warnings
-and passed with warnings treated as errors. Production code must also validate
-known layouts and semantic additions; the exploratory script is not a complete
-implementation or a replacement for negative tests.
-
-The initial global-substitution probe also failed Safety's class-reference and
-opaque-hook counterexamples. Its evidence remains retained, but that mechanism
-is superseded. The reduction-dispatch probe passed those cases across the same
-four runtimes without changing the provenance format or metadata contract.
-
-Canonical golden files stay unchanged. Source re-parsing remains the existing
-round-trip verification step, not a repair path for failed provenance decoding.
+This is test-fixture adaptation to the revised requirement. It does not repair
+cross-version provenance in production or skip source correctness checks.
 
 ## Native conversion
 
-The three declaration converters in `native_engine/src/parser_ir.rs` must select
-the receiving AST layout before supplying `type_params`. Determine the runtime
-capability once per converter context where practical; keep existing direct
-constructor paths and location handling. On 3.11, reject nonempty type parameters
-before conversion rather than omitting their semantics. Newer-only AST nodes
-also need explicit unsupported-runtime diagnostics.
+The declaration converters in `native_engine/src/parser_ir.rs` must select the
+receiving AST layout before supplying `type_params`: functions and async functions
+have six constructor fields on 3.11 and seven on 3.12+; classes have five and six
+respectively. Determine runtime capability once per converter context where
+practical, retaining direct constructors and location handling.
 
-This is separate from provenance decoding: native conversion builds a new AST,
-whereas the compatible reader restores an already saved graph. Both follow the
-same empty-versus-nonempty type-parameter rule. Neither requires changes to
-PyO3, RustPython or a compiler-wide representation.
+Reject nonempty type parameters on 3.11 before conversion rather than dropping
+semantics. Newer-only AST nodes need explicit unsupported-runtime diagnostics.
+This builds a fresh native-converted AST; it does not change provenance decoding.
+No PyO3, RustPython or compiler-wide representation change is required by the
+observed arity failures. Apply workspace control-flow/conditional-boundary rules
+in modified Rust and inspect disabled branches with suitable source checks.
 
-## Pyrolyze alias representation
+## Downstream integration gating
 
-Remove raw PEP 695 declarations from `src/pyrolyze/api.py` so 3.11 can parse the
-module. Keep the public `PyrolyzeHandler`, `SlotCallable` and `PyrolyteHandler`
-names, two-parameter subscription and existing `Annotated` marker instances.
+Astichi has no runtime dependency on Pyrolyze. Some native/Lifecycle performance
+and guard tests use it as a realistic downstream workload. Pyrolyze currently
+requires Python 3.12 and contains PEP 695 aliases that cannot parse on 3.11.
 
-On 3.12+, construct the named aliases with the standard-library `TypeAliasType`
-constructor, using separate `ParamSpec("P")`/`TypeVar("T")` pairs for each alias.
-This retains the named-alias representation and avoids importing a backport.
-On 3.11, use the corresponding `Annotated[Callable[P, T], marker]` aliases with
-separate parameter pairs. Select the representation through ordinary runtime
-control flow; do not evaluate PEP 695 source strings during production imports.
+Apply explicit 3.11 skips to the Pyrolyze-dependent cases in
+`tests/test_lifecycle_hot_path_python_gate.py`,
+`tests/test_native_success_path_guards.py` and
+`tests/test_native_hot_path_no_pydict_h2.py`. Place the gate before the relevant
+import or subprocess workload. Verify the final collected set rather than assume
+these references are exhaustive. Keep all independent checks in those modules
+running; a module-wide skip is appropriate only if every case needs that consumer.
 
-The cross-runtime public contract is subscription, callable parameter/result
-types and event/slot markers. Exact alias object types, lazy-value internals and
-newer-only typing introspection are not promised on 3.11. On newer runtimes,
-preserve alias names, type-parameter names/order and marker values. Retain the
-existing supported-runtime compiler tests before accepting this representation.
+State the consumer's unsupported runtime as the skip reason. Keep these cases
+running on their existing supported runtimes; do not remove the workload or
+convert unexpected integration failures into skips. Report collected skip IDs
+and counts separately from successful Astichi tests. Pyrolyze aliases and
+`_runtime_annotation_matches` remain untouched. The earlier helper observation
+is retained as a [separate finding](Python311CompatibilityFindings.md), not an
+Astichi implementation prerequisite.
 
-### Required recognition adjustment
+## Packaging and acceptance gates
 
-The existing `_runtime_annotation_matches` helper in
-`src/pyrolyze/compiler/kernels/v3_14/rewrite.py` returns immediately after
-unwrapping `Annotated`; it ignores its metadata. A resolved 3.11 event annotation
-therefore becomes an ordinary `Callable` and loses event recognition.
+After native and harness behavior works, update Astichi's package minimum,
+classifiers, test matrix, CI/release-wheel build selection and support docs.
+Retain the existing PyO3 ABI configuration. Build matching native extensions for
+the tested source; validate Python 3.11 wheel tags and a clean install without
+metadata bypasses, source-path overrides or consumer package-floor changes.
 
-The proposed bounded correction checks the `Annotated` metadata for the marker
-types the caller already requests before examining the underlying type. Preserve
-the existing named-alias, string, origin and fallback paths. Unmarked callables
-and slot-only annotations must not become event handlers. No kernel selection,
-rewrite architecture or runtime event mechanism changes are proposed.
+Use RED/GREEN in the existing parser and golden harnesses, with narrow negatives
+for unsupported syntax and fixture selection. Run the full dual-backend suite on
+3.11 and the existing supported matrix, all 90 structural snapshots on 3.11,
+and installed-wheel generation/materialization/execution/same-version provenance.
+Retain source/provenance mismatch rejection. Record exact counts, skip reasons,
+versions, patch scope and elapsed time. No cross-version pickle exchanges,
+private-unpickler-hook tests or Pyrolyze porting tests are acceptance gates.
 
-This exact helper adjustment is an authorization boundary, not an implicit
-prerequisite for every Astichi fix. See the separate findings record.
+## Retained exploratory evidence
 
-## Feasibility evidence and remaining gates
+The constructor-adapted diagnostic suite reported **2,578 passed, 68 failed,
+16 skipped** on 3.11. All 68 failures concerned expected provenance written on
+newer runtimes; twelve skips reached Pyrolyze's newer syntax. These results
+predate production implementation and do not establish packaged support.
 
-Isolated probes ran on CPython 3.11.14, 3.12.12, 3.14.3 and 3.15.0a5:
-
-| Probe | Result |
-| --- | --- |
-| Four ordinary-AST writers × four readers | 16 exchanges passed; restored samples compiled |
-| Location/private-state and shared-node identity | Preserved in all 16 samples |
-| Existing pre-materialized golden payloads | All 42 decoded and matched their source AST on each reader |
-| Newer `TypeAlias` payloads read on 3.11 | Explicit rejection for writers 3.12, 3.14 and 3.15 |
-| Nonempty unsupported type parameters in saved state | Explicit rejection on 3.11 |
-| Ordinary alias subscription and marker retention | Passed on all four runtimes |
-| Existing helper recognizes resolved ordinary event alias | False on all four runtimes: confirmed incompatibility |
-| Metadata-aware isolated event check | Recognized event only; plain and slot-only callables stayed negative |
-| Standard `TypeAliasType` construction on newer runtimes | Name, parameter tuple, marker and existing recognition checks passed |
-
-Remediation probes reproduced the initial reader's class-as-data corruption and
-non-AST hook failure, then checked the revised reduction-dispatch reader in
-16 same/cross-runtime exchanges. Real AST class references, opaque hook arguments
-and class memo identity were preserved; all 42 goldens and the existing 3.11
-unsupported-state/node negatives still passed on the exercised readers.
-
-These are focused reconstruction and helper probes, not full compiler, API-import,
-native, installed-wheel or suite results. Python 3.13 was not probed in this
-design step; 3.15 was an alpha interpreter. Raw scripts/logs are local exploratory
-evidence under `scratch/python311-design/`, not committed test dependencies.
-
-Implementation must use RED/GREEN coverage in the existing canonical harness:
-retain all 42 golden cases and the native parser cases; add narrow state/layout
-and unsupported-node negatives; exchange ordinary provenance across the complete
-runtime matrix. Include class-as-data, a non-AST restore hook receiving a real
-AST class before execution, and one class global shared by node reconstruction
-and metadata. Add structural/opaque cycle coverage and private-unpickler hook
-compatibility checks. For aliases, exercise actual API imports, resolved imported
-helper hints and the existing exactly-one-event-wrapper regression, plus slot
-and plain-callable cases. Use a disposable full-compiler probe before any scope
-amendment is applied. Then complete the accepted plan's native build, full suite,
-snapshot, packaging, clean-wheel and support-documentation gates. Record every
-remaining consumer blocker separately and do not lower consumer package floors
-based on these probes.
+Earlier isolated reader/alias probes exercised 3.11.14, 3.12.12, 3.14.3 and
+3.15.0a5. The reader redesign preserved AST class references and opaque restore
+hooks in sixteen writer/reader exchanges, and decoded 42 golden payloads on each
+reader. The alias probe exposed an event-recognition limitation. That evidence
+remains in local `scratch/python311-design/` and the historical review records.
+It is not a committed test dependency and no longer defines required production
+work. No new test matrix or native build has been run for this amendment.

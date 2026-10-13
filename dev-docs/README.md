@@ -19,14 +19,15 @@ snapshots does not create a new performance result or certify an unfinished gate
 
 These remain proposals, not current behavior:
 
-- [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md):
-  accepted plan after Consistency/Safety GO; implementation has not started.
-  [Review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md).
-  [Short design](proposals/Python311CompatibilityDesign.md): accepted after
-  one bounded reader redesign and replacement Consistency/Safety GO.
-  [Design review checkpoint](proposals/Python311CompatibilityDesign-ReviewCheckpoint.md)
-  preserves both rounds. The [scope finding](proposals/Python311CompatibilityFindings.md)
-  remains a proposed compiler amendment; production work has not started.
+- [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md) and
+  [short design](proposals/Python311CompatibilityDesign.md): scope narrowed by
+  the user on 2026-10-14 to same-version provenance and explicit 3.11 skips for
+  Pyrolyze integrations. Implementation has not started. The
+  [plan review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md)
+  and [design review checkpoint](proposals/Python311CompatibilityDesign-ReviewCheckpoint.md)
+  preserve the earlier broader reviews; they do not certify this amendment.
+  The [scope finding](proposals/Python311CompatibilityFindings.md) is retained
+  for separate Pyrolyze work, not an Astichi prerequisite.
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)
