@@ -1,11 +1,13 @@
 # Python 3.11 compatibility design
 
-Status: revised design draft for independent re-review after Safety P2-1;
-production implementation has not started. The
-[remediation plan](Python311CompatibilityDesign-RemPlan-1.md) records the bounded
-reader redesign and closure evidence. The [accepted plan](Python311CompatibilityPlan.md)
-remains controlling; its GO/GO did not review this later design or authorize the
-additional compiler component identified below.
+Status: **accepted at `6dec499894cdcbdb232159def78949757e45f01e` after
+[Consistency](Python311CompatibilityDesign-ReviewConsistency-2.md) and
+[Safety](Python311CompatibilityDesign-ReviewSafety-2.md) reported GO; this accepts
+the design only**. Production implementation has not started. The
+[review checkpoint](Python311CompatibilityDesign-ReviewCheckpoint.md) records
+the bounded reader redesign and independently verified closure. The
+[accepted plan](Python311CompatibilityPlan.md) remains controlling; neither
+review authorizes the additional compiler component identified below.
 
 ## Deliverable and boundary
 

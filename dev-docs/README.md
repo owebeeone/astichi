@@ -22,11 +22,11 @@ These remain proposals, not current behavior:
 - [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md):
   accepted plan after Consistency/Safety GO; implementation has not started.
   [Review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md).
-  [Short design](proposals/Python311CompatibilityDesign.md) and
-  [scope findings](proposals/Python311CompatibilityFindings.md) are later drafts.
-  The first design review found a blocking reader-boundary defect; its
-  [bounded redesign](proposals/Python311CompatibilityDesign-RemPlan-1.md)
-  has focused closure evidence and awaits independent re-review.
+  [Short design](proposals/Python311CompatibilityDesign.md): accepted after
+  one bounded reader redesign and replacement Consistency/Safety GO.
+  [Design review checkpoint](proposals/Python311CompatibilityDesign-ReviewCheckpoint.md)
+  preserves both rounds. The [scope finding](proposals/Python311CompatibilityFindings.md)
+  remains a proposed compiler amendment; production work has not started.
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)

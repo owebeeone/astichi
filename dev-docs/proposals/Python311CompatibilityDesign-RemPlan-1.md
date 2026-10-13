@@ -1,7 +1,9 @@
 # Python 3.11 design remediation — round 1
 
-Status: correction proposed and probed; reviewer closure pending. Production
-implementation remains out of scope.
+Status: **closed for design acceptance at
+`6dec499894cdcbdb232159def78949757e45f01e` by the replacement Safety reviewer**;
+both replacement axes reported GO. Production implementation remains out of
+scope. See the [review checkpoint](Python311CompatibilityDesign-ReviewCheckpoint.md).
 
 Reviewed revision: `9829790d9a9183cc99a56490e4a26eaf5b0e0eb2`.
 Consistency returned GO; Safety returned NO-GO with one P2 architectural finding
