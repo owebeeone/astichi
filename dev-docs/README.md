@@ -23,8 +23,10 @@ These remain proposals, not current behavior:
   accepted plan after Consistency/Safety GO; implementation has not started.
   [Review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md).
   [Short design](proposals/Python311CompatibilityDesign.md) and
-  [scope findings](proposals/Python311CompatibilityFindings.md) are later drafts,
-  with focused probe evidence; they have not had an independent design review.
+  [scope findings](proposals/Python311CompatibilityFindings.md) are later drafts.
+  The first design review found a blocking reader-boundary defect; its
+  [bounded redesign](proposals/Python311CompatibilityDesign-RemPlan-1.md)
+  has focused closure evidence and awaits independent re-review.
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)
