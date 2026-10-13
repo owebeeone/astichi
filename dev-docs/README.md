@@ -22,6 +22,9 @@ These remain proposals, not current behavior:
 - [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md):
   accepted plan after Consistency/Safety GO; implementation has not started.
   [Review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md).
+  [Short design](proposals/Python311CompatibilityDesign.md) and
+  [scope findings](proposals/Python311CompatibilityFindings.md) are later drafts,
+  with focused probe evidence; they have not had an independent design review.
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)
