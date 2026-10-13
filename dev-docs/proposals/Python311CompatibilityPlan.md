@@ -1,7 +1,10 @@
 # Python 3.11 compatibility plan
 
-Status: proposed implementation; the investigation is complete, production fixes
-have not started. This planning checkpoint does not change supported versions.
+Status: **accepted at `1bc8d2dc0c0978c19ad8d77237718ee690b5857e` after
+[Consistency](Python311CompatibilityPlan-ReviewConsistency.md) and
+[Safety](Python311CompatibilityPlan-ReviewSafety.md) reported GO; this accepts
+the plan only**. Production fixes have not started, and supported versions are
+unchanged. See the [review checkpoint](Python311CompatibilityPlan-ReviewCheckpoint.md).
 
 ## Goal and boundary
 

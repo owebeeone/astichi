@@ -19,7 +19,9 @@ snapshots does not create a new performance result or certify an unfinished gate
 
 These remain proposals, not current behavior:
 
-- [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md)
+- [Python 3.11 compatibility plan](proposals/Python311CompatibilityPlan.md):
+  accepted plan after Consistency/Safety GO; implementation has not started.
+  [Review checkpoint](proposals/Python311CompatibilityPlan-ReviewCheckpoint.md).
 - [Build resolver](proposals/AtichiBuildResolverProposal.md)
 - [Builder identifier binding](proposals/AstichiBindBuilderDesign.md)
 - [Import enhancements](proposals/AstichiImportProposedEnhancements.md)
